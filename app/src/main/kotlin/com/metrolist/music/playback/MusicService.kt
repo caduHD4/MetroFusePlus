@@ -103,6 +103,7 @@ import com.google.common.util.concurrent.MoreExecutors
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.WatchEndpoint
+import com.metrolist.innertube.models.YouTubeClient
 import com.metrolist.lastfm.LastFM
 import com.metrolist.music.MainActivity
 import com.metrolist.music.R
@@ -115,6 +116,13 @@ import com.metrolist.music.constants.AudioProviderMatchOverridesKey
 import com.metrolist.music.constants.AudioProviderOrderKey
 import com.metrolist.music.constants.AudioQualityKey
 import com.metrolist.music.constants.ExperimentalLiveWallpaperKey
+import com.metrolist.music.constants.ExperimentalConfirmBeforeSkipKey
+import com.metrolist.music.constants.ExperimentalDeezerFirstKey
+import com.metrolist.music.constants.ExperimentalDeezerResolverFallbackKey
+import com.metrolist.music.constants.ExperimentalPlaybackDiagnosticsKey
+import com.metrolist.music.constants.ExperimentalPreserveSongCacheOnQualityChangeKey
+import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicHistorySyncKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.playback.CanvasWallpaperService
 import com.metrolist.music.utils.PreferenceCache
@@ -285,6 +293,7 @@ import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.providers.ProviderMatchOverride
 import com.metrolist.music.providers.ProviderMatchOverrides
+import com.metrolist.music.providers.ExperimentalPlaybackPolicy
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
@@ -350,6 +359,7 @@ import java.time.LocalDateTime
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -476,6 +486,14 @@ class MusicService :
         }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var youtubeMusicHistoryFailureNotified = false
+    private val youtubeMusicHistorySyncManager =
+        YouTubeMusicHistorySyncManager(
+            scope = scope,
+            isEnabled = { dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, false) },
+            isAuthenticated = { YouTube.hasBrowserAuthentication },
+            reportPlayback = ::reportYouTubeMusicHistoryPlayback,
+        )
 
     private val binder = MusicBinder()
 
@@ -1137,34 +1155,38 @@ class MusicService :
                     InstagramAudioProvider.invalidate(mediaId)
                     YouTubeAudioProvider.invalidate(mediaId)
 
-                    // CRITICAL: Clear caches synchronously to prevent format parsing errors
-                    runBlocking(Dispatchers.IO) {
-                        try {
-                            playerCache.removeResource(mediaId)
-                            playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
-                            playerCache.removeResource(tidalFallbackCacheKey(mediaId))
-                            playerCache.removeResource(deezerFallbackCacheKey(mediaId))
-                            playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-                            playerCache.removeResource(instagramFallbackCacheKey(mediaId))
-                            playerCache.removeResource(directHttpAudioCacheKey(mediaId))
-                            playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
-                            downloadCache.removeResource(mediaId)
-                            downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
-                            downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
-                            downloadCache.removeResource(deezerFallbackCacheKey(mediaId))
-                            downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-                            downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
-                            downloadCache.removeResource(directHttpAudioCacheKey(mediaId))
-                            downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
-                            Timber.tag("MusicService").d("Cleared player and download cache for $mediaId")
-                        } catch (e: Exception) {
-                            Timber.tag("MusicService").e(e, "Failed to clear cache for $mediaId")
+                    val preserveCachedAudio =
+                        dataStore.get(ExperimentalPreserveSongCacheOnQualityChangeKey, false)
+                    if (ExperimentalPlaybackCachePolicy.shouldClearCacheOnQualityChange(preserveCachedAudio)) {
+                        // Clear cache for the base behavior because formats from different sources can be incompatible.
+                        runBlocking(Dispatchers.IO) {
+                            try {
+                                playerCache.removeResource(mediaId)
+                                playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
+                                playerCache.removeResource(tidalFallbackCacheKey(mediaId))
+                                playerCache.removeResource(deezerFallbackCacheKey(mediaId))
+                                playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+                                playerCache.removeResource(instagramFallbackCacheKey(mediaId))
+                                playerCache.removeResource(directHttpAudioCacheKey(mediaId))
+                                playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
+                                downloadCache.removeResource(mediaId)
+                                downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
+                                downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
+                                downloadCache.removeResource(deezerFallbackCacheKey(mediaId))
+                                downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+                                downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
+                                downloadCache.removeResource(directHttpAudioCacheKey(mediaId))
+                                downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
+                                Timber.tag("MusicService").d("Cleared player and download cache for $mediaId")
+                            } catch (e: Exception) {
+                                Timber.tag("MusicService").e(e, "Failed to clear cache for $mediaId")
+                            }
                         }
+                        bypassCacheForQualityChange.add(mediaId)
+                        Timber.tag("MusicService").d("Set bypass cache flag for $mediaId")
+                    } else {
+                        Timber.tag("MusicService").d("Keeping cached audio for $mediaId after quality change")
                     }
-
-                    // Set bypass flag so resolver skips cache checks
-                    bypassCacheForQualityChange.add(mediaId)
-                    Timber.tag("MusicService").d("Set bypass cache flag for $mediaId")
 
                     // Reload player at same position
                     player.stop()
@@ -1891,6 +1913,10 @@ class MusicService :
 
         player.pause()
         consecutivePlaybackErr = 0
+    }
+
+    fun skipAfterExperimentalFailure() {
+        skipOnError()
     }
 
     private fun stopOnError() {
@@ -3051,6 +3077,81 @@ class MusicService :
             .replace(Regex("\\s+"), " ")
             .trim()
 
+    private suspend fun reportYouTubeMusicHistoryPlayback(
+        videoId: String,
+        playedSeconds: Double,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val initialHistoryCount = youtubeMusicHistoryOccurrenceCount(videoId)
+            var playbackTracking =
+                YouTube
+                    .player(videoId, client = YouTubeClient.WEB_REMIX)
+                    .getOrNull()
+                    ?.playbackTracking
+            if (playbackTracking == null) {
+                delay(1.seconds)
+                playbackTracking =
+                    YouTube
+                        .player(videoId, client = YouTubeClient.WEB_REMIX)
+                        .getOrNull()
+                        ?.playbackTracking
+            }
+
+            val registration =
+                playbackTracking?.let { tracking ->
+                    YouTube
+                        .registerPlaybackTracking(
+                            playbackTracking = tracking,
+                            playedSeconds = playedSeconds,
+                        ).onFailure { error ->
+                            Timber.tag(TAG).w(error, "YouTube Music tracking request failed for %s", videoId)
+                        }.getOrNull()
+                }
+
+            if (registration != null) {
+                Timber.tag(TAG).d(
+                    "YouTube Music tracking sent for %s: playback=%d firstWatchtime=%s atr=%s finalWatchtime=%s",
+                    videoId,
+                    registration.playbackStatus,
+                    registration.firstWatchtimeStatus,
+                    registration.attributionStatus,
+                    registration.finalWatchtimeStatus,
+                )
+
+                repeat(10) {
+                    delay(2.seconds)
+                    if (youtubeMusicHistoryOccurrenceCount(videoId) > initialHistoryCount) {
+                        youtubeMusicHistoryFailureNotified = false
+                        Timber.tag(TAG).d("YouTube Music history synchronized for $videoId")
+                        return@withContext true
+                    }
+                }
+            } else if (playbackTracking == null) {
+                Timber.tag(TAG).w("Authenticated WEB_REMIX returned no tracking data for %s", videoId)
+            }
+
+            Timber.tag(TAG).w("YouTube Music history verification failed for %s", videoId)
+            if (!youtubeMusicHistoryFailureNotified) {
+                youtubeMusicHistoryFailureNotified = true
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MusicService,
+                        getString(R.string.youtube_music_history_sync_failed),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+            false
+        }
+
+    private suspend fun youtubeMusicHistoryOccurrenceCount(videoId: String): Int =
+        YouTube
+            .musicHistory()
+            .getOrNull()
+            ?.sections
+            .orEmpty()
+            .sumOf { section -> section.songs.count { it.id == videoId } }
+
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
         reason: Int,
@@ -3110,8 +3211,10 @@ class MusicService :
 
         val transitionDuration = currentPlaybackDurationIfReady()
         scrobbleManager?.onSongStop()
+        youtubeMusicHistorySyncManager.onSongStop()
         if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
             scrobbleManager?.onSongStart(transitionedMetadata, duration = transitionDuration)
+            youtubeMusicHistorySyncManager.onSongStart(transitionedMetadata, durationMs = transitionDuration)
         }
         if (player.playWhenReady && player.playbackState == Player.STATE_READY && transitionedMetadata != null) {
             scope.launch {
@@ -3252,6 +3355,12 @@ class MusicService :
                 duration = currentPlaybackDurationIfReady(),
             )
             if (player.playWhenReady) {
+                youtubeMusicHistorySyncManager.onSongStart(
+                    metadata = player.currentMetadata,
+                    durationMs = currentPlaybackDurationIfReady(),
+                )
+            }
+            if (player.playWhenReady) {
                 currentSong.value?.let { song ->
                     updateDiscordRPC(song)
                 }
@@ -3263,6 +3372,7 @@ class MusicService :
             currentLivePlaybackBitrate.value = null
             lastLivePlaybackBitrateUpdateMs = 0L
             scrobbleManager?.onSongStop()
+            youtubeMusicHistorySyncManager.onSongStop()
             discordUpdateJob?.cancel()
             stopSpotifyListeningHistory()
         }
@@ -3382,6 +3492,14 @@ class MusicService :
                 player.currentMetadata,
                 duration = currentPlaybackDurationIfReady(),
             )
+            if (player.isPlaying) {
+                youtubeMusicHistorySyncManager.onSongStart(
+                    metadata = player.currentMetadata,
+                    durationMs = currentPlaybackDurationIfReady(),
+                )
+            } else {
+                youtubeMusicHistorySyncManager.onSongPause()
+            }
         }
         if (
             events.containsAny(
@@ -4271,6 +4389,11 @@ class MusicService :
      * Handles final failure when all recovery attempts have been exhausted.
      */
     private fun handleFinalFailure() {
+        if (dataStore.get(ExperimentalConfirmBeforeSkipKey, false)) {
+            Timber.tag(TAG).d("All recovery attempts exhausted; waiting for explicit retry or skip")
+            stopOnError()
+            return
+        }
         val autoSkipOnError = dataStore.get(AutoSkipNextOnErrorKey, false)
         val autoplay = dataStore.get(AutoplayKey, true)
         val canAdvance = player.hasNextMediaItem()
@@ -5449,7 +5572,8 @@ class MusicService :
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
         val spotifyIsrc = resolveSpotifyIsrcForMatching(mediaId, song, queuedMetadata)
         val orderedProviders =
-            buildList {
+            ExperimentalPlaybackPolicy.prioritizeDeezer(
+                providers = buildList {
                 providerOverride?.provider?.let(::add)
                 if (directSoundCloudMediaId) add(AudioProviderOrderItem.SOUNDCLOUD)
                 if (directTidalUsesDeezerStreams) {
@@ -5459,7 +5583,9 @@ class MusicService :
                 }
                 if (directDeezerMediaId) add(AudioProviderOrderItem.DEEZER)
                 addAll(audioProviderOrder)
-            }.distinct()
+                }.distinct(),
+                enabled = dataStore.get(ExperimentalDeezerFirstKey, false),
+            )
 
         fun isForcedProvider(provider: AudioProviderOrderItem): Boolean =
             providerOverride?.provider == provider
@@ -5694,7 +5820,20 @@ class MusicService :
         }
 
         for (provider in orderedProviders) {
-            attemptProvider(provider)?.let { return it }
+            val startedAt = System.nanoTime()
+            val resolved =
+                if (dataStore.get(ExperimentalProviderPlaybackTimeoutKey, false)) {
+                    withTimeoutOrNull(20_000L) { attemptProvider(provider) }
+                } else {
+                    attemptProvider(provider)
+                }
+            if (dataStore.get(ExperimentalPlaybackDiagnosticsKey, false)) {
+                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+                Timber.tag(TAG).i(
+                    "Experimental playback attempt: provider=$provider durationMs=$durationMs success=${resolved != null}",
+                )
+            }
+            resolved?.let { return it }
         }
 
         if (directTidalUsesDeezerStreams) {
@@ -5932,6 +6071,7 @@ class MusicService :
             quality = quality,
             fastMode = fastMode,
             proxyUrl = proxyUrl,
+            experimentalResolverFallback = dataStore.get(ExperimentalDeezerResolverFallbackKey, false),
         )
     }
 
@@ -7550,6 +7690,7 @@ class MusicService :
         player.removeListener(sleepTimer)
         playerSilenceProcessors.remove(player)
         scrobbleManager?.destroy()
+        youtubeMusicHistorySyncManager.destroy()
         discordUpdateJob?.cancel()
         DiscordRpcManager.clear()
         DiscordRpcManager.destroy()
@@ -8432,6 +8573,8 @@ class MusicService :
             val transitionDuration = currentPlaybackDurationIfReady()
             scrobbleManager?.onSongStop()
             scrobbleManager?.onSongStart(transitionedMetadata, duration = transitionDuration)
+            youtubeMusicHistorySyncManager.onSongStop()
+            youtubeMusicHistorySyncManager.onSongStart(transitionedMetadata, durationMs = transitionDuration)
             startSpotifyListeningHistoryIfAllowed(
                 metadata = transitionedMetadata,
                 duration = transitionDuration,
@@ -8612,7 +8755,7 @@ class MusicService :
     }
 
     companion object {
-        const val ACTION_ALARM_TRIGGER = "com.metrofuse.music.action.ALARM_TRIGGER"
+        const val ACTION_ALARM_TRIGGER = "com.metrofuse.plus.action.ALARM_TRIGGER"
         const val EXTRA_ALARM_ID = "extra_alarm_id"
         const val EXTRA_ALARM_PLAYLIST_ID = "extra_alarm_playlist_id"
         const val EXTRA_ALARM_RANDOM_SONG = "extra_alarm_random_song"
