@@ -204,15 +204,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
-          echo "Creating release v${{ needs.check-version.outputs.new_version }}"
+          TAG="v${{ needs.check-version.outputs.new_version }}"
+          TITLE="${{ needs.check-version.outputs.new_version }}"
+          echo "Publishing release $TAG"
 
-          gh release create "v${{ needs.check-version.outputs.new_version }}" \
-            --title "${{ needs.check-version.outputs.new_version }}" \
-            --notes-file release_notes.md \
-            --latest \
-            release_files/*.apk
-
-          echo "Release created successfully!"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, updating notes and assets"
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes-file release_notes.md \
+              --latest
+            gh release upload "$TAG" release_files/*.apk --clobber
+            echo "Release updated successfully!"
+          else
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes-file release_notes.md \
+              --latest \
+              release_files/*.apk
+            echo "Release created successfully!"
+          fi
 
       - name: Update release summary
         run: |
