@@ -110,7 +110,7 @@ jobs:
           echo "${{ secrets.KEYSTORE }}" | base64 --decode > app/keystore/release.keystore
 
       - name: Build and Lint Release APK
-        run: ./gradlew --console=plain clean assemble${{ matrix.variantName }}Release :app:lint${{ matrix.variantName }}Release --warning-mode summary
+        run: ./gradlew --console=plain assemble${{ matrix.variantName }}Release :app:lint${{ matrix.variantName }}Release --warning-mode summary
         env:
           METROLIST_APPLICATION_ID: com.metrofuse.plus
           METROLIST_APP_NAME: MetroFuse+
