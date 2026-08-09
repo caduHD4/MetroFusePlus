@@ -2721,13 +2721,14 @@ object YouTube {
         playbackTracking: PlayerResponse.PlaybackTracking,
         playedSeconds: Double,
         playlistId: String? = null,
+        client: YouTubeClient = WEB_REMIX,
     ): Result<PlaybackTrackingRegistration> =
         runCatching {
             check(hasBrowserAuthentication) { "YouTube Music browser authentication is unavailable" }
 
             val playbackUrl =
                 requireNotNull(playbackTracking.videostatsPlaybackUrl?.baseUrl) {
-                    "Authenticated WEB_REMIX player response has no playback tracking URL"
+                    "Authenticated ${client.clientName} player response has no playback tracking URL"
                 }
             val watchtimeUrl = playbackTracking.videostatsWatchtimeUrl?.baseUrl
             val attributionUrl = playbackTracking.atrUrl?.baseUrl
@@ -2740,6 +2741,7 @@ object YouTube {
                     url = playbackUrl,
                     playlistId = playlistId,
                     cpn = cpn,
+                    client = client,
                 ).also(::requireTrackingSuccess)
 
             val firstWatchtimeResponse =
@@ -2749,6 +2751,7 @@ object YouTube {
                             url = url,
                             playlistId = playlistId,
                             cpn = cpn,
+                            client = client,
                             customParameters =
                                 mapOf(
                                     "st" to "0",
@@ -2765,6 +2768,7 @@ object YouTube {
                             url = url,
                             playlistId = playlistId,
                             cpn = cpn,
+                            client = client,
                         ).also(::requireTrackingSuccess)
                 }
 
@@ -2775,6 +2779,7 @@ object YouTube {
                             url = url,
                             playlistId = playlistId,
                             cpn = cpn,
+                            client = client,
                             customParameters =
                                 mapOf(
                                     "st" to "0,${firstWindowEnd.trackingTime()}",

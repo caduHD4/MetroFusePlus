@@ -3083,26 +3083,45 @@ class MusicService :
     ): Boolean =
         withContext(Dispatchers.IO) {
             val initialHistoryCount = youtubeMusicHistoryOccurrenceCount(videoId)
-            var playbackTracking =
-                YouTube
-                    .player(videoId, client = YouTubeClient.WEB_REMIX)
-                    .getOrNull()
-                    ?.playbackTracking
-            if (playbackTracking == null) {
-                delay(1.seconds)
-                playbackTracking =
-                    YouTube
-                        .player(videoId, client = YouTubeClient.WEB_REMIX)
-                        .getOrNull()
-                        ?.playbackTracking
-            }
+            val trackingResolution =
+                resolveWithYouTubeClientFallback(YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS) { client ->
+                    val playerResponse =
+                        YouTube
+                            .player(videoId, client = client)
+                            .onFailure { error ->
+                                Timber.tag(TAG).w(
+                                    error,
+                                    "YouTube Music player request failed for %s with %s",
+                                    videoId,
+                                    client.clientName,
+                                )
+                            }.getOrNull()
+                    val tracking =
+                        playerResponse
+                            ?.playbackTracking
+                            ?.takeIf { !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() }
+                    if (tracking == null) {
+                        Timber.tag(TAG).d(
+                            "YouTube Music player returned no usable tracking for %s with %s",
+                            videoId,
+                            client.clientName,
+                        )
+                    }
+                    tracking
+                }
 
             val registration =
-                playbackTracking?.let { tracking ->
+                trackingResolution?.let { resolution ->
+                    Timber.tag(TAG).d(
+                        "YouTube Music tracking resolved for %s with %s",
+                        videoId,
+                        resolution.client.clientName,
+                    )
                     YouTube
                         .registerPlaybackTracking(
-                            playbackTracking = tracking,
+                            playbackTracking = resolution.value,
                             playedSeconds = playedSeconds,
+                            client = resolution.client,
                         ).onFailure { error ->
                             Timber.tag(TAG).w(error, "YouTube Music tracking request failed for %s", videoId)
                         }.getOrNull()
@@ -3126,8 +3145,8 @@ class MusicService :
                         return@withContext true
                     }
                 }
-            } else if (playbackTracking == null) {
-                Timber.tag(TAG).w("Authenticated WEB_REMIX returned no tracking data for %s", videoId)
+            } else if (trackingResolution == null) {
+                Timber.tag(TAG).w("All authenticated player clients returned no tracking data for %s", videoId)
             }
 
             Timber.tag(TAG).w("YouTube Music history verification failed for %s", videoId)
