@@ -329,15 +329,22 @@ class InnerTube {
             val now = System.currentTimeMillis().toString()
             header("X-Goog-Event-Time", now)
             header("X-Goog-Request-Time", now)
-            parameter("ver", "2")
-            parameter("c", client.clientName)
-            parameter("cpn", cpn)
-
-            customParameters.forEach { (key, value) -> parameter(key, value) }
+            val requiredParameters =
+                mapOf(
+                    "ver" to "2",
+                    "c" to client.clientName,
+                    "cpn" to cpn,
+                ) + customParameters
+            requiredParameters.forEach { (key, value) ->
+                this.url.parameters.remove(key)
+                this.url.parameters.append(key, value)
+            }
 
             if (playlistId != null) {
-                parameter("list", playlistId)
-                parameter("referrer", "https://music.youtube.com/playlist?list=$playlistId")
+                this.url.parameters.remove("list")
+                this.url.parameters.append("list", playlistId)
+                this.url.parameters.remove("referrer")
+                this.url.parameters.append("referrer", "https://music.youtube.com/playlist?list=$playlistId")
             }
         }
     }

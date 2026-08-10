@@ -71,7 +71,6 @@ import com.metrolist.innertube.pages.SearchSummaryPage
 import io.ktor.client.call.body
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -81,7 +80,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import timber.log.Timber
 import java.net.Proxy
-import java.util.Locale
 import kotlin.random.Random
 
 /**
@@ -2712,9 +2710,7 @@ object YouTube {
 
     data class PlaybackTrackingRegistration(
         val playbackStatus: Int,
-        val firstWatchtimeStatus: Int?,
-        val attributionStatus: Int?,
-        val finalWatchtimeStatus: Int?,
+        val watchtimeStatus: Int,
     )
 
     suspend fun registerPlaybackTracking(
@@ -2730,11 +2726,15 @@ object YouTube {
                 requireNotNull(playbackTracking.videostatsPlaybackUrl?.baseUrl) {
                     "Authenticated ${client.clientName} player response has no playback tracking URL"
                 }
-            val watchtimeUrl = playbackTracking.videostatsWatchtimeUrl?.baseUrl
-            val attributionUrl = playbackTracking.atrUrl?.baseUrl
+            val watchtimeUrl =
+                playbackTracking.videostatsWatchtimeUrl?.baseUrl
+                    ?: error("Authenticated ${client.clientName} player response has no watchtime tracking URL")
             val cpn = randomPlaybackNonce()
-            val actualPlayedSeconds = playedSeconds.coerceAtLeast(0.1)
-            val firstWindowEnd = actualPlayedSeconds.coerceAtMost(5.54)
+            val parameters =
+                YouTubePlaybackTrackingPolicy.markWatchedParameters(
+                    playbackUrl = playbackUrl,
+                    playedSeconds = playedSeconds,
+                )
 
             val playbackResponse =
                 innerTube.registerPlayback(
@@ -2742,57 +2742,22 @@ object YouTube {
                     playlistId = playlistId,
                     cpn = cpn,
                     client = client,
+                    customParameters = parameters.playback,
                 ).also(::requireTrackingSuccess)
 
-            val firstWatchtimeResponse =
-                watchtimeUrl?.let { url ->
-                    innerTube
-                        .registerPlayback(
-                            url = url,
-                            playlistId = playlistId,
-                            cpn = cpn,
-                            client = client,
-                            customParameters =
-                                mapOf(
-                                    "st" to "0",
-                                    "et" to firstWindowEnd.trackingTime(),
-                                ),
-                        ).also(::requireTrackingSuccess)
-                }
-
-            val attributionResponse =
-                attributionUrl?.let { url ->
-                    delay(5_000)
-                    innerTube
-                        .registerPlaybackAttribution(
-                            url = url,
-                            playlistId = playlistId,
-                            cpn = cpn,
-                            client = client,
-                        ).also(::requireTrackingSuccess)
-                }
-
-            val finalWatchtimeResponse =
-                watchtimeUrl?.takeIf { actualPlayedSeconds > firstWindowEnd }?.let { url ->
-                    innerTube
-                        .registerPlayback(
-                            url = url,
-                            playlistId = playlistId,
-                            cpn = cpn,
-                            client = client,
-                            customParameters =
-                                mapOf(
-                                    "st" to "0,${firstWindowEnd.trackingTime()}",
-                                    "et" to "${firstWindowEnd.trackingTime()},${actualPlayedSeconds.trackingTime()}",
-                                ),
-                        ).also(::requireTrackingSuccess)
-                }
+            val watchtimeResponse =
+                innerTube
+                    .registerPlayback(
+                        url = watchtimeUrl,
+                        playlistId = playlistId,
+                        cpn = cpn,
+                        client = client,
+                        customParameters = parameters.watchtime,
+                    ).also(::requireTrackingSuccess)
 
             PlaybackTrackingRegistration(
                 playbackStatus = playbackResponse.status.value,
-                firstWatchtimeStatus = firstWatchtimeResponse?.status?.value,
-                attributionStatus = attributionResponse?.status?.value,
-                finalWatchtimeStatus = finalWatchtimeResponse?.status?.value,
+                watchtimeStatus = watchtimeResponse.status.value,
             )
         }
 
@@ -2809,11 +2774,6 @@ object YouTube {
             "YouTube Music tracking request failed with HTTP ${response.status.value}"
         }
     }
-
-    private fun Double.trackingTime(): String =
-        String.format(Locale.US, "%.2f", this)
-            .trimEnd('0')
-            .trimEnd('.')
 
     suspend fun next(
         endpoint: WatchEndpoint,

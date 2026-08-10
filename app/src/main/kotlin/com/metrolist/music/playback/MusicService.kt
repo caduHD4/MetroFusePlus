@@ -3082,8 +3082,7 @@ class MusicService :
         playedSeconds: Double,
     ): Boolean =
         withContext(Dispatchers.IO) {
-            val initialHistoryCount = youtubeMusicHistoryOccurrenceCount(videoId)
-            val trackingResolution =
+            val registrationResolution =
                 resolveWithYouTubeClientFallback(YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS) { client ->
                     val playerResponse =
                         YouTube
@@ -3099,57 +3098,51 @@ class MusicService :
                     val tracking =
                         playerResponse
                             ?.playbackTracking
-                            ?.takeIf { !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() }
+                            ?.takeIf {
+                                !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() &&
+                                    !it.videostatsWatchtimeUrl?.baseUrl.isNullOrBlank()
+                            }
                     if (tracking == null) {
                         Timber.tag(TAG).d(
                             "YouTube Music player returned no usable tracking for %s with %s",
                             videoId,
                             client.clientName,
                         )
+                        return@resolveWithYouTubeClientFallback null
                     }
-                    tracking
-                }
-
-            val registration =
-                trackingResolution?.let { resolution ->
                     Timber.tag(TAG).d(
                         "YouTube Music tracking resolved for %s with %s",
                         videoId,
-                        resolution.client.clientName,
+                        client.clientName,
                     )
                     YouTube
                         .registerPlaybackTracking(
-                            playbackTracking = resolution.value,
+                            playbackTracking = tracking,
                             playedSeconds = playedSeconds,
-                            client = resolution.client,
+                            client = client,
                         ).onFailure { error ->
-                            Timber.tag(TAG).w(error, "YouTube Music tracking request failed for %s", videoId)
+                            Timber.tag(TAG).w(
+                                error,
+                                "YouTube Music tracking request failed for %s with %s",
+                                videoId,
+                                client.clientName,
+                            )
                         }.getOrNull()
                 }
 
-            if (registration != null) {
+            if (registrationResolution != null) {
+                youtubeMusicHistoryFailureNotified = false
                 Timber.tag(TAG).d(
-                    "YouTube Music tracking sent for %s: playback=%d firstWatchtime=%s atr=%s finalWatchtime=%s",
+                    "YouTube Music history tracking accepted for %s with %s: playback=%d watchtime=%d",
                     videoId,
-                    registration.playbackStatus,
-                    registration.firstWatchtimeStatus,
-                    registration.attributionStatus,
-                    registration.finalWatchtimeStatus,
+                    registrationResolution.client.clientName,
+                    registrationResolution.value.playbackStatus,
+                    registrationResolution.value.watchtimeStatus,
                 )
-
-                repeat(10) {
-                    delay(2.seconds)
-                    if (youtubeMusicHistoryOccurrenceCount(videoId) > initialHistoryCount) {
-                        youtubeMusicHistoryFailureNotified = false
-                        Timber.tag(TAG).d("YouTube Music history synchronized for $videoId")
-                        return@withContext true
-                    }
-                }
-            } else if (trackingResolution == null) {
-                Timber.tag(TAG).w("All authenticated player clients returned no tracking data for %s", videoId)
+                return@withContext true
             }
 
-            Timber.tag(TAG).w("YouTube Music history verification failed for %s", videoId)
+            Timber.tag(TAG).w("All authenticated clients failed YouTube Music history tracking for %s", videoId)
             if (!youtubeMusicHistoryFailureNotified) {
                 youtubeMusicHistoryFailureNotified = true
                 withContext(Dispatchers.Main) {
@@ -3162,14 +3155,6 @@ class MusicService :
             }
             false
         }
-
-    private suspend fun youtubeMusicHistoryOccurrenceCount(videoId: String): Int =
-        YouTube
-            .musicHistory()
-            .getOrNull()
-            ?.sections
-            .orEmpty()
-            .sumOf { section -> section.songs.count { it.id == videoId } }
 
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
