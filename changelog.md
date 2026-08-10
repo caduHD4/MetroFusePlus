@@ -1,5 +1,5 @@
----v7.0.2
-# MetroFuse+ 7.0.2
+---v7.0.4
+# MetroFuse+ 7.0.4
 
 - Rebranded the application and launcher artwork as MetroFuse+.
 - Added optional concurrent source matching with ordered results.
