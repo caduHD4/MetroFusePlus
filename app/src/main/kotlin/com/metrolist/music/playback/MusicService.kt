@@ -123,6 +123,7 @@ import com.metrolist.music.constants.ExperimentalPlaybackDiagnosticsKey
 import com.metrolist.music.constants.ExperimentalPreserveSongCacheOnQualityChangeKey
 import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
 import com.metrolist.music.constants.ExperimentalYouTubeMusicHistorySyncKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicProgressiveHistorySyncKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.playback.CanvasWallpaperService
 import com.metrolist.music.utils.PreferenceCache
@@ -490,9 +491,24 @@ class MusicService :
     private val youtubeMusicHistorySyncManager =
         YouTubeMusicHistorySyncManager(
             scope = scope,
-            isEnabled = { dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, false) },
+            isEnabled = {
+                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, false) &&
+                    !dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, false)
+            },
             isAuthenticated = { YouTube.hasBrowserAuthentication },
             reportPlayback = ::reportYouTubeMusicHistoryPlayback,
+        )
+    private val youtubeMusicProgressiveHistorySyncManager =
+        YouTubeMusicProgressiveHistorySyncManager(
+            scope = scope,
+            isEnabled = {
+                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, false) &&
+                    dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, false)
+            },
+            isAuthenticated = { YouTube.hasBrowserAuthentication },
+            currentPositionMs = { player.currentPosition.coerceAtLeast(0L) },
+            startSession = ::startYouTubeMusicProgressiveHistorySession,
+            reportProgress = ::reportYouTubeMusicProgressiveHistoryProgress,
         )
 
     private val binder = MusicBinder()
@@ -3156,6 +3172,68 @@ class MusicService :
             false
         }
 
+    private suspend fun startYouTubeMusicProgressiveHistorySession(
+        videoId: String,
+    ): YouTube.ProgressivePlaybackTrackingSession? =
+        withContext(Dispatchers.IO) {
+            val client = YouTubeClient.WEB_REMIX
+            val tracking =
+                YouTube
+                    .player(videoId, client = client)
+                    .onFailure { error ->
+                        Timber.tag(TAG).w(error, "Progressive YouTube Music player request failed for %s", videoId)
+                    }.getOrNull()
+                    ?.playbackTracking
+                    ?.takeIf {
+                        !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() &&
+                            !it.videostatsWatchtimeUrl?.baseUrl.isNullOrBlank()
+                    }
+                    ?: return@withContext null
+
+            YouTube
+                .startProgressivePlaybackTracking(
+                    playbackTracking = tracking,
+                    client = client,
+                ).onFailure { error ->
+                    Timber.tag(TAG).w(error, "Progressive YouTube Music session failed for %s", videoId)
+                }.getOrNull()
+                ?.also {
+                    youtubeMusicHistoryFailureNotified = false
+                    Timber.tag(TAG).d("Progressive YouTube Music session started for %s", videoId)
+                }
+        }
+
+    private suspend fun reportYouTubeMusicProgressiveHistoryProgress(
+        session: YouTube.ProgressivePlaybackTrackingSession,
+        fromSeconds: Double,
+        toSeconds: Double,
+        state: String,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            YouTube
+                .reportProgressivePlaybackTracking(
+                    session = session,
+                    fromSeconds = fromSeconds,
+                    toSeconds = toSeconds,
+                    state = state,
+                ).onFailure { error ->
+                    Timber.tag(TAG).w(
+                        error,
+                        "Progressive YouTube Music heartbeat failed at %.2f seconds (%s)",
+                        toSeconds,
+                        state,
+                    )
+                }.getOrNull()
+                ?.also { status ->
+                    Timber.tag(TAG).d(
+                        "Progressive YouTube Music heartbeat accepted: status=%d position=%.2f state=%s",
+                        status,
+                        toSeconds,
+                        state,
+                    )
+                } != null
+        }
+
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
         reason: Int,
@@ -3216,9 +3294,14 @@ class MusicService :
         val transitionDuration = currentPlaybackDurationIfReady()
         scrobbleManager?.onSongStop()
         youtubeMusicHistorySyncManager.onSongStop()
+        youtubeMusicProgressiveHistorySyncManager.onSongStop()
         if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
             scrobbleManager?.onSongStart(transitionedMetadata, duration = transitionDuration)
             youtubeMusicHistorySyncManager.onSongStart(transitionedMetadata, durationMs = transitionDuration)
+            youtubeMusicProgressiveHistorySyncManager.onSongStart(
+                transitionedMetadata,
+                durationMs = transitionDuration,
+            )
         }
         if (player.playWhenReady && player.playbackState == Player.STATE_READY && transitionedMetadata != null) {
             scope.launch {
@@ -3363,6 +3446,10 @@ class MusicService :
                     metadata = player.currentMetadata,
                     durationMs = currentPlaybackDurationIfReady(),
                 )
+                youtubeMusicProgressiveHistorySyncManager.onSongStart(
+                    metadata = player.currentMetadata,
+                    durationMs = currentPlaybackDurationIfReady(),
+                )
             }
             if (player.playWhenReady) {
                 currentSong.value?.let { song ->
@@ -3377,6 +3464,7 @@ class MusicService :
             lastLivePlaybackBitrateUpdateMs = 0L
             scrobbleManager?.onSongStop()
             youtubeMusicHistorySyncManager.onSongStop()
+            youtubeMusicProgressiveHistorySyncManager.onSongStop()
             discordUpdateJob?.cancel()
             stopSpotifyListeningHistory()
         }
@@ -3501,8 +3589,13 @@ class MusicService :
                     metadata = player.currentMetadata,
                     durationMs = currentPlaybackDurationIfReady(),
                 )
+                youtubeMusicProgressiveHistorySyncManager.onSongStart(
+                    metadata = player.currentMetadata,
+                    durationMs = currentPlaybackDurationIfReady(),
+                )
             } else {
                 youtubeMusicHistorySyncManager.onSongPause()
+                youtubeMusicProgressiveHistorySyncManager.onSongPause()
             }
         }
         if (
@@ -7695,6 +7788,7 @@ class MusicService :
         playerSilenceProcessors.remove(player)
         scrobbleManager?.destroy()
         youtubeMusicHistorySyncManager.destroy()
+        youtubeMusicProgressiveHistorySyncManager.destroy()
         discordUpdateJob?.cancel()
         DiscordRpcManager.clear()
         DiscordRpcManager.destroy()
@@ -8579,6 +8673,11 @@ class MusicService :
             scrobbleManager?.onSongStart(transitionedMetadata, duration = transitionDuration)
             youtubeMusicHistorySyncManager.onSongStop()
             youtubeMusicHistorySyncManager.onSongStart(transitionedMetadata, durationMs = transitionDuration)
+            youtubeMusicProgressiveHistorySyncManager.onSongStop()
+            youtubeMusicProgressiveHistorySyncManager.onSongStart(
+                transitionedMetadata,
+                durationMs = transitionDuration,
+            )
             startSpotifyListeningHistoryIfAllowed(
                 metadata = transitionedMetadata,
                 duration = transitionDuration,

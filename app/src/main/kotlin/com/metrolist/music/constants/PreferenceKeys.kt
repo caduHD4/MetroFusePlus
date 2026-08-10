@@ -766,6 +766,8 @@ val ExperimentalPlaybackDiagnosticsKey = booleanPreferencesKey("experimentalPlay
 val ExperimentalAccurateProviderHealthKey = booleanPreferencesKey("experimentalAccurateProviderHealth")
 val ExperimentalPreserveSongCacheOnQualityChangeKey = booleanPreferencesKey("experimentalPreserveSongCacheOnQualityChange")
 val ExperimentalYouTubeMusicHistorySyncKey = booleanPreferencesKey("experimentalYouTubeMusicHistorySync")
+val ExperimentalYouTubeMusicProgressiveHistorySyncKey =
+    booleanPreferencesKey("experimentalYouTubeMusicProgressiveHistorySync")
 val ShowLyricsKey = booleanPreferencesKey("showLyrics")
 val LyricsTextPositionKey = stringPreferencesKey("lyricsTextPosition")
 val LyricsClickKey = booleanPreferencesKey("lyricsClick")

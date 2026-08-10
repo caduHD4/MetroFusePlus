@@ -2713,6 +2713,78 @@ object YouTube {
         val watchtimeStatus: Int,
     )
 
+    data class ProgressivePlaybackTrackingSession(
+        val playbackTracking: PlayerResponse.PlaybackTracking,
+        val playlistId: String?,
+        val client: YouTubeClient,
+        val cpn: String,
+        val startedAtMs: Long,
+    )
+
+    suspend fun startProgressivePlaybackTracking(
+        playbackTracking: PlayerResponse.PlaybackTracking,
+        playlistId: String? = null,
+        client: YouTubeClient = WEB_REMIX,
+    ): Result<ProgressivePlaybackTrackingSession> =
+        runCatching {
+            check(hasBrowserAuthentication) { "YouTube Music browser authentication is unavailable" }
+            val playbackUrl =
+                requireNotNull(playbackTracking.videostatsPlaybackUrl?.baseUrl) {
+                    "Authenticated ${client.clientName} player response has no playback tracking URL"
+                }
+            requireNotNull(playbackTracking.videostatsWatchtimeUrl?.baseUrl) {
+                "Authenticated ${client.clientName} player response has no watchtime tracking URL"
+            }
+            val cpn = randomPlaybackNonce()
+            innerTube
+                .registerPlayback(
+                    url = playbackUrl,
+                    playlistId = playlistId,
+                    cpn = cpn,
+                    client = client,
+                    customParameters = YouTubeProgressivePlaybackTrackingPolicy.playbackParameters(),
+                ).also(::requireTrackingSuccess)
+
+            ProgressivePlaybackTrackingSession(
+                playbackTracking = playbackTracking,
+                playlistId = playlistId,
+                client = client,
+                cpn = cpn,
+                startedAtMs = System.currentTimeMillis(),
+            )
+        }
+
+    suspend fun reportProgressivePlaybackTracking(
+        session: ProgressivePlaybackTrackingSession,
+        fromSeconds: Double,
+        toSeconds: Double,
+        state: String,
+    ): Result<Int> =
+        runCatching {
+            val watchtimeUrl =
+                requireNotNull(session.playbackTracking.videostatsWatchtimeUrl?.baseUrl) {
+                    "Progressive YouTube Music session has no watchtime tracking URL"
+                }
+            val elapsedSeconds =
+                (System.currentTimeMillis() - session.startedAtMs)
+                    .coerceAtLeast(0L) / 1_000.0
+            innerTube
+                .registerPlayback(
+                    url = watchtimeUrl,
+                    playlistId = session.playlistId,
+                    cpn = session.cpn,
+                    client = session.client,
+                    customParameters =
+                        YouTubeProgressivePlaybackTrackingPolicy.watchtimeParameters(
+                            fromSeconds = fromSeconds,
+                            toSeconds = toSeconds,
+                            elapsedSeconds = elapsedSeconds,
+                            state = state,
+                        ),
+                ).also(::requireTrackingSuccess)
+                .status.value
+        }
+
     suspend fun registerPlaybackTracking(
         playbackTracking: PlayerResponse.PlaybackTracking,
         playedSeconds: Double,

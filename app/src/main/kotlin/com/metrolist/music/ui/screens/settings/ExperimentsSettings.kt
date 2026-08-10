@@ -56,6 +56,7 @@ import com.metrolist.music.constants.ExperimentalPlaybackDiagnosticsKey
 import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
 import com.metrolist.music.constants.ExperimentalPreserveSongCacheOnQualityChangeKey
 import com.metrolist.music.constants.ExperimentalYouTubeMusicHistorySyncKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicProgressiveHistorySyncKey
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
@@ -131,6 +132,10 @@ fun ExperimentsSettings(
     )
     val (youTubeMusicHistorySync, onYouTubeMusicHistorySyncChange) = rememberPreference(
         key = ExperimentalYouTubeMusicHistorySyncKey,
+        defaultValue = false,
+    )
+    val (progressiveYouTubeMusicHistorySync, onProgressiveYouTubeMusicHistorySyncChange) = rememberPreference(
+        key = ExperimentalYouTubeMusicProgressiveHistorySyncKey,
         defaultValue = false,
     )
     var showAppleMusicLyricsSizeDialog by rememberSaveable { mutableStateOf(false) }
@@ -312,7 +317,7 @@ fun ExperimentsSettings(
 
         Material3SettingsGroup(
             title = stringResource(R.string.experiments_playback_reliability),
-            items = listOf(
+            items = listOfNotNull(
                 experimentalSwitchItem(
                     icon = R.drawable.speed,
                     title = stringResource(R.string.experimental_fast_provider_match_search),
@@ -376,6 +381,17 @@ fun ExperimentsSettings(
                     checked = youTubeMusicHistorySync,
                     onCheckedChange = onYouTubeMusicHistorySyncChange,
                 ),
+                if (youTubeMusicHistorySync) {
+                    experimentalSwitchItem(
+                        icon = R.drawable.history,
+                        title = stringResource(R.string.experimental_youtube_music_progressive_history_sync),
+                        description = stringResource(R.string.experimental_youtube_music_progressive_history_sync_desc),
+                        checked = progressiveYouTubeMusicHistorySync,
+                        onCheckedChange = onProgressiveYouTubeMusicHistorySyncChange,
+                    )
+                } else {
+                    null
+                },
             ),
         )
 

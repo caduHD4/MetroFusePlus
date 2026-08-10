@@ -95,6 +95,8 @@
     <string name="experimental_preserve_song_cache_on_quality_change_desc">Keeps cached audio when the selected quality changes. Playback can use the cached quality instead of downloading the new one.</string>
     <string name="experimental_youtube_music_history_sync">Sync listens to YouTube Music history</string>
     <string name="experimental_youtube_music_history_sync_desc">After a real listen, sends authenticated playback and watch-time tracking to YouTube Music. YouTube watch history must be enabled.</string>
+    <string name="experimental_youtube_music_progressive_history_sync">Test progressive YouTube Music history</string>
+    <string name="experimental_youtube_music_progressive_history_sync_desc">Uses one player-like session with real-position heartbeats while the song plays. Turn this off to keep the current My Activity-compatible mode.</string>
     <string name="youtube_music_history_sync_failed">YouTube Music did not confirm the history entry. Check that the account is still signed in and YouTube watch history is enabled.</string>
     <string name="skip_next">Skip next</string>
     <string name="experimental_apple_music_cover_fade">Fade Apple Music cover into UI</string>
