@@ -825,6 +825,12 @@
     <string name="audio_quality_very_high">O mais alto possível</string>
     <string name="autoplay">Reprodução Automática</string>
     <string name="autoplay_desc">Reproduzir automaticamente a próxima música quando a atual terminar</string>
+    <string name="next_track_preload">Pré-carregar próximas músicas</string>
+    <string name="next_track_preload_desc">Armazena antecipadamente parte das próximas músicas da fila no cache para reduzir o tempo entre faixas.</string>
+    <plurals name="next_track_preload_count">
+        <item quantity="one">%d música</item>
+        <item quantity="other">%d músicas</item>
+    </plurals>
     <string name="system_equalizer_desc">Abrir o Equalizador nativo do Android</string>
     <string name="eq_wizard">AutoEQ Wizard</string>
     <string name="eq_download_db">Baixar banco de dados do AutoEQ (17 MB)</string>

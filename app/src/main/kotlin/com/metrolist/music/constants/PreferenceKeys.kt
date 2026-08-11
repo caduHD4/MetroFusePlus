@@ -324,6 +324,7 @@ val PreventDuplicateTracksInQueueKey = booleanPreferencesKey("preventDuplicateTr
 val CrossfadeEnabledKey = booleanPreferencesKey("crossfadeEnabled")
 val CrossfadeDurationKey = floatPreferencesKey("crossfadeDurationFloat")
 val CrossfadeGaplessKey = booleanPreferencesKey("crossfadeGapless")
+val NextTrackPreloadCountKey = intPreferencesKey("nextTrackPreloadCount")
 val MetroMixEnabledKey = booleanPreferencesKey("metroMixEnabled")
 val MetroMixPresetKey = stringPreferencesKey("metroMixPreset")
 val MetroMixBarsKey = intPreferencesKey("metroMixBars")
