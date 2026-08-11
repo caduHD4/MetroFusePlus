@@ -492,8 +492,8 @@ class MusicService :
         YouTubeMusicHistorySyncManager(
             scope = scope,
             isEnabled = {
-                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, false) &&
-                    !dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, false)
+                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, true) &&
+                    !dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, true)
             },
             isAuthenticated = { YouTube.hasBrowserAuthentication },
             reportPlayback = ::reportYouTubeMusicHistoryPlayback,
@@ -502,8 +502,8 @@ class MusicService :
         YouTubeMusicProgressiveHistorySyncManager(
             scope = scope,
             isEnabled = {
-                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, false) &&
-                    dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, false)
+                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, true) &&
+                    dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, true)
             },
             isAuthenticated = { YouTube.hasBrowserAuthentication },
             currentPositionMs = { player.currentPosition.coerceAtLeast(0L) },
@@ -1172,7 +1172,7 @@ class MusicService :
                     YouTubeAudioProvider.invalidate(mediaId)
 
                     val preserveCachedAudio =
-                        dataStore.get(ExperimentalPreserveSongCacheOnQualityChangeKey, false)
+                        dataStore.get(ExperimentalPreserveSongCacheOnQualityChangeKey, true)
                     if (ExperimentalPlaybackCachePolicy.shouldClearCacheOnQualityChange(preserveCachedAudio)) {
                         // Clear cache for the base behavior because formats from different sources can be incompatible.
                         runBlocking(Dispatchers.IO) {
@@ -6168,7 +6168,7 @@ class MusicService :
             quality = quality,
             fastMode = fastMode,
             proxyUrl = proxyUrl,
-            experimentalResolverFallback = dataStore.get(ExperimentalDeezerResolverFallbackKey, false),
+            experimentalResolverFallback = dataStore.get(ExperimentalDeezerResolverFallbackKey, true),
         )
     }
 

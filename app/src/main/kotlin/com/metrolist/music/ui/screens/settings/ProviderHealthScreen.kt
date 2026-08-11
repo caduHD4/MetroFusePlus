@@ -70,7 +70,7 @@ fun ProviderHealthScreen(
     )
     val tidalResolverEndpoints by rememberPreference(TidalResolverEndpointsKey, "")
     val qobuzCustomInstances by rememberPreference(QobuzCustomInstancesKey, "")
-    val accurateProviderHealth by rememberPreference(ExperimentalAccurateProviderHealthKey, false)
+    val accurateProviderHealth by rememberPreference(ExperimentalAccurateProviderHealthKey, true)
     val targets = remember(deezerResolverUrl, tidalResolverEndpoints, qobuzCustomInstances, accurateProviderHealth) {
         ProviderHealthChecker.targets(
             deezerResolverUrl = deezerResolverUrl,

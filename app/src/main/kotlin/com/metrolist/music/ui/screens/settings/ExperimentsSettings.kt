@@ -100,7 +100,7 @@ fun ExperimentsSettings(
     )
     val (fastProviderMatchSearch, onFastProviderMatchSearchChange) = rememberPreference(
         key = ExperimentalFastProviderMatchSearchKey,
-        defaultValue = false,
+        defaultValue = true,
     )
     val (providerPlaybackTimeout, onProviderPlaybackTimeoutChange) = rememberPreference(
         key = ExperimentalProviderPlaybackTimeoutKey,
@@ -112,7 +112,7 @@ fun ExperimentsSettings(
     )
     val (deezerResolverFallback, onDeezerResolverFallbackChange) = rememberPreference(
         key = ExperimentalDeezerResolverFallbackKey,
-        defaultValue = false,
+        defaultValue = true,
     )
     val (confirmBeforeSkip, onConfirmBeforeSkipChange) = rememberPreference(
         key = ExperimentalConfirmBeforeSkipKey,
@@ -124,19 +124,19 @@ fun ExperimentsSettings(
     )
     val (accurateProviderHealth, onAccurateProviderHealthChange) = rememberPreference(
         key = ExperimentalAccurateProviderHealthKey,
-        defaultValue = false,
+        defaultValue = true,
     )
     val (preserveSongCacheOnQualityChange, onPreserveSongCacheOnQualityChange) = rememberPreference(
         key = ExperimentalPreserveSongCacheOnQualityChangeKey,
-        defaultValue = false,
+        defaultValue = true,
     )
     val (youTubeMusicHistorySync, onYouTubeMusicHistorySyncChange) = rememberPreference(
         key = ExperimentalYouTubeMusicHistorySyncKey,
-        defaultValue = false,
+        defaultValue = true,
     )
     val (progressiveYouTubeMusicHistorySync, onProgressiveYouTubeMusicHistorySyncChange) = rememberPreference(
         key = ExperimentalYouTubeMusicProgressiveHistorySyncKey,
-        defaultValue = false,
+        defaultValue = true,
     )
     var showAppleMusicLyricsSizeDialog by rememberSaveable { mutableStateOf(false) }
 

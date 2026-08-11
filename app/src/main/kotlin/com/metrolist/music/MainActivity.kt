@@ -187,6 +187,7 @@ import com.metrolist.music.ui.component.BottomSheetMenu
 import com.metrolist.music.ui.component.BottomSheetPage
 import com.metrolist.music.ui.component.LocalBottomSheetPageState
 import com.metrolist.music.ui.component.LocalMenuState
+import com.metrolist.music.ui.component.UpdateAvailableDialog
 import com.metrolist.music.ui.component.rememberBottomSheetState
 import com.metrolist.music.ui.component.shimmer.ShimmerTheme
 import com.metrolist.music.ui.menu.YouTubeSongMenu
@@ -203,6 +204,7 @@ import com.metrolist.music.ui.theme.MetrolistTheme
 import com.metrolist.music.ui.theme.extractThemeColor
 import com.metrolist.music.ui.utils.appBarScrollBehavior
 import com.metrolist.music.ui.utils.resetHeightOffset
+import com.metrolist.music.utils.ReleaseInfo
 import com.metrolist.music.utils.SyncUtils
 import com.metrolist.music.utils.Updater
 import com.metrolist.music.utils.dataStore
@@ -439,10 +441,9 @@ class MainActivity : ComponentActivity() {
                 }
         }
 
-        // Defer migration and version tracking to avoid blocking first frame
+        // Defer migration to avoid blocking first frame
         lifecycleScope.launch(Dispatchers.IO) {
             val preferences = dataStore.data.first()
-            val currentVersion = BuildConfig.VERSION_NAME
 
             // SimpMusic Removal Migration
             if (preferences[SimpMusicMigrationDoneKey] != true) {
@@ -465,14 +466,7 @@ class MainActivity : ComponentActivity() {
                         settings[PreferredLyricsProviderKey] = PreferredLyricsProvider.LRCLIB.name
                     }
                     settings[SimpMusicMigrationDoneKey] = true
-                    settings[LastSeenVersionKey] = currentVersion
                 }
-            }
-        }
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            dataStore.edit { settings ->
-                settings[LastSeenVersionKey] = BuildConfig.VERSION_NAME
             }
         }
 
@@ -500,53 +494,54 @@ class MainActivity : ComponentActivity() {
         syncUtils: SyncUtils,
     ) {
         val checkForUpdates by rememberPreference(CheckForUpdatesKey, defaultValue = true)
+        var availableUpdate by remember { mutableStateOf<ReleaseInfo?>(null) }
 
         if (BuildConfig.UPDATER_AVAILABLE) {
             LaunchedEffect(checkForUpdates) {
                 if (checkForUpdates) {
-                    withContext(Dispatchers.IO) {
-                        val updatesEnabled = dataStore.get(CheckForUpdatesKey, true)
-                        val notifEnabled = dataStore.get(UpdateNotificationsEnabledKey, true)
-                        if (!updatesEnabled) return@withContext
+                    val updatesEnabled = withContext(Dispatchers.IO) { dataStore.get(CheckForUpdatesKey, true) }
+                    if (!updatesEnabled) return@LaunchedEffect
+                    val notifEnabled =
+                        withContext(Dispatchers.IO) { dataStore.get(UpdateNotificationsEnabledKey, true) }
+                    val updateResult = withContext(Dispatchers.IO) { Updater.checkForUpdate().getOrNull() }
+                    val releaseInfo = updateResult?.first
+                    val hasUpdate = updateResult?.second == true
 
-                        Updater.checkForUpdate().onSuccess { (releaseInfo, hasUpdate) ->
-                            if (releaseInfo != null) {
-                                onLatestVersionNameChange(
-                                    if (hasUpdate) releaseInfo.versionName else BuildConfig.VERSION_NAME,
-                                )
-                                if (hasUpdate && notifEnabled) {
-                                    val downloadUrl = Updater.getDownloadUrlForCurrentVariant(releaseInfo)
-                                    if (downloadUrl != null) {
-                                        val intent = Intent(Intent.ACTION_VIEW, downloadUrl.toUri())
+                    onLatestVersionNameChange(
+                        if (hasUpdate && releaseInfo != null) releaseInfo.versionName else BuildConfig.VERSION_NAME,
+                    )
+                    availableUpdate = releaseInfo?.takeIf { hasUpdate }
 
-                                        val flags =
-                                            PendingIntent.FLAG_UPDATE_CURRENT or
-                                                (PendingIntent.FLAG_IMMUTABLE)
-                                        val pending = PendingIntent.getActivity(this@MainActivity, 1001, intent, flags)
+                    if (hasUpdate && releaseInfo != null && notifEnabled) {
+                        val downloadUrl = Updater.getDownloadUrlForCurrentVariant(releaseInfo)
+                        if (downloadUrl != null) {
+                            val intent = Intent(Intent.ACTION_VIEW, downloadUrl.toUri())
+                            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                            val pending = PendingIntent.getActivity(this@MainActivity, 1001, intent, flags)
+                            val notif =
+                                NotificationCompat
+                                    .Builder(this@MainActivity, "updates")
+                                    .setSmallIcon(R.drawable.update)
+                                    .setContentTitle(getString(R.string.update_available_title))
+                                    .setContentText(releaseInfo.versionName)
+                                    .setContentIntent(pending)
+                                    .setAutoCancel(true)
+                                    .build()
 
-                                        val notif =
-                                            NotificationCompat
-                                                .Builder(this@MainActivity, "updates")
-                                                .setSmallIcon(R.drawable.update)
-                                                .setContentTitle(getString(R.string.update_available_title))
-                                                .setContentText(releaseInfo.versionName)
-                                                .setContentIntent(pending)
-                                                .setAutoCancel(true)
-                                                .build()
-
-                                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                                            ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) ==
-                                            PackageManager.PERMISSION_GRANTED
-                                        ) {
-                                            NotificationManagerCompat.from(this@MainActivity).notify(1001, notif)
-                                        }
-                                    }
-                                }
+                            if (
+                                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                                ContextCompat.checkSelfPermission(
+                                    this@MainActivity,
+                                    Manifest.permission.POST_NOTIFICATIONS,
+                                ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                NotificationManagerCompat.from(this@MainActivity).notify(1001, notif)
                             }
                         }
                     }
                 } else {
                     onLatestVersionNameChange(BuildConfig.VERSION_NAME)
+                    availableUpdate = null
                 }
             }
         }
@@ -672,6 +667,14 @@ class MainActivity : ComponentActivity() {
             pureBlack = pureBlack,
             themeColor = themeColor,
         ) {
+            availableUpdate?.let { releaseInfo ->
+                UpdateAvailableDialog(
+                    releaseInfo = releaseInfo,
+                    downloadUrl = Updater.getDownloadUrlForCurrentVariant(releaseInfo),
+                    onDismiss = { availableUpdate = null },
+                )
+            }
+
             BoxWithConstraints(
                 modifier =
                     Modifier
@@ -1018,7 +1021,16 @@ class MainActivity : ComponentActivity() {
                     LocalChangelogState provides showChangelog,
                 ) {
                     if (showChangelog.value) {
-                        ChangelogScreen(onDismiss = { showChangelog.value = false })
+                        ChangelogScreen(
+                            onDismiss = {
+                                showChangelog.value = false
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    dataStore.edit { settings ->
+                                        settings[LastSeenVersionKey] = BuildConfig.VERSION_NAME
+                                    }
+                                }
+                            },
+                        )
                     }
 
                     if (useGalaxyAppBackground) {

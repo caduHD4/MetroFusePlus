@@ -19,6 +19,7 @@ import java.util.Locale
 data class ReleaseInfo(
     val tagName: String,
     val versionName: String,
+    val releaseUrl: String,
     val description: String,
     val releaseDate: String,
     val assets: List<ReleaseAsset>
@@ -124,7 +125,7 @@ object Updater {
         return assets
     }
 
-    private fun inferAssetTarget(name: String): Pair<String, String>? {
+    internal fun inferAssetTarget(name: String): Pair<String, String>? {
         val lowerName = name.lowercase()
         if (!lowerName.endsWith(".apk")) return null
         if (lowerName.contains("debug")) return null
@@ -156,13 +157,10 @@ object Updater {
 
     private fun parseReleaseInfo(json: JSONObject): ReleaseInfo {
         val tagName = json.getString("tag_name")
-        val displayName = json.optString("name")
-            .trim()
-            .ifBlank { tagName }
-
         return ReleaseInfo(
             tagName = tagName,
-            versionName = displayName,
+            versionName = tagName.removePrefix("v"),
+            releaseUrl = json.getString("html_url"),
             description = json.optString("body"),
             releaseDate = json.getString("published_at"),
             assets = parseAssets(json.getJSONArray("assets"))

@@ -66,7 +66,7 @@ object ProviderMatchSearch {
         withContext(Dispatchers.IO) {
             val order = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
             val spotifyIsrc = resolveSpotifyIsrc(context, metadata)
-            if (context.dataStore.get(ExperimentalFastProviderMatchSearchKey, false)) {
+            if (context.dataStore.get(ExperimentalFastProviderMatchSearchKey, true)) {
                 return@withContext searchExperimental(
                     context = context,
                     metadata = metadata,

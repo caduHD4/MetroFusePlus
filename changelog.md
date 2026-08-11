@@ -1,3 +1,12 @@
+---v7.0.5
+# MetroFuse+ 7.0.5
+
+- Fixed the Home pull-to-refresh job cancelling itself and leaving the loading indicator spinning indefinitely.
+- Enabled fast audio-source search, Deezer resolver fallback, accurate SoundCloud health rows, cached-audio priority, YouTube Music history sync and progressive history tracking by default for users without an existing preference.
+- Added an automatic in-app update dialog at startup with the matching APK download and a link to the release changelog.
+- Fixed version tracking so the in-app changelog is marked as seen only after it is dismissed.
+- Updated the built-in updater to use the canonical `caduHD4/MetroFusePlus` repository.
+
 ---v7.0.4
 # MetroFuse+ 7.0.4
 
