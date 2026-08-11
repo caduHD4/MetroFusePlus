@@ -14,7 +14,6 @@ import androidx.core.net.toUri
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
@@ -56,8 +55,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
@@ -68,7 +65,6 @@ import com.metrolist.music.ui.screens.settings.AndroidAutoSection
 import com.metrolist.music.ui.screens.settings.deserializeSections
 import com.metrolist.music.ui.screens.settings.serializeSections
 
-@androidx.annotation.OptIn(UnstableApi::class)
 class MediaLibrarySessionCallback
 @Inject
 constructor(
@@ -82,13 +78,8 @@ constructor(
     var toggleStartRadio: () -> Unit = {}
     var toggleLibrary: () -> Unit = {}
     var addToTargetPlaylist: () -> Unit = {}
-    private val automotiveControllers = mutableSetOf<MediaSession.ControllerInfo>()
-    private val _isAutomotiveControllerConnected = MutableStateFlow(false)
-    val isAutomotiveControllerConnected = _isAutomotiveControllerConnected.asStateFlow()
 
     fun release() {
-        automotiveControllers.clear()
-        _isAutomotiveControllerConnected.value = false
         scope.cancel()
     }
 
@@ -96,10 +87,6 @@ constructor(
         session: MediaSession,
         controller: MediaSession.ControllerInfo,
     ): MediaSession.ConnectionResult {
-        if (session.isAutomotiveController(controller) || session.isAutoCompanionController(controller)) {
-            automotiveControllers += controller
-            _isAutomotiveControllerConnected.value = true
-        }
         val connectionResult = super.onConnect(session, controller)
         return MediaSession.ConnectionResult.accept(
             connectionResult.availableSessionCommands
@@ -113,15 +100,6 @@ constructor(
                 .build(),
             connectionResult.availablePlayerCommands,
         )
-    }
-
-    override fun onDisconnected(
-        session: MediaSession,
-        controller: MediaSession.ControllerInfo,
-    ) {
-        automotiveControllers -= controller
-        _isAutomotiveControllerConnected.value = automotiveControllers.isNotEmpty()
-        super.onDisconnected(session, controller)
     }
 
     override fun onCustomCommand(
