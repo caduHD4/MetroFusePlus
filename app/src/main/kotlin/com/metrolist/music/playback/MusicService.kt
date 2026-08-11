@@ -187,6 +187,7 @@ import com.metrolist.music.constants.MetroMixPreset
 import com.metrolist.music.constants.MetroMixPresetKey
 import com.metrolist.music.constants.MetroMixVolumeCurve
 import com.metrolist.music.constants.MetroMixVolumeCurveKey
+import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.MediaSessionConstants
 import com.metrolist.music.constants.MediaSessionConstants.CommandAddToTargetPlaylist
 import com.metrolist.music.constants.MediaSessionConstants.CommandToggleLike
@@ -636,6 +637,7 @@ class MusicService :
 
     lateinit var player: ExoPlayer
         private set
+    private var nextTrackPreloadCoordinator: NextTrackPreloadCoordinator? = null
     private var secondaryPlayer: ExoPlayer? = null
     private var fadingPlayer: ExoPlayer? = null
     private var isCrossfading = false
@@ -1022,6 +1024,20 @@ class MusicService :
 
         connectivityManager = getSystemService()!!
         connectivityObserver = NetworkConnectivityObserver(this)
+        nextTrackPreloadCoordinator =
+            NextTrackPreloadCoordinator(
+                parentScope = scope,
+                player = player,
+                canPreload = {
+                    isNetworkConnected.value &&
+                        player.isPlaying &&
+                        dataStore.get(EnableSongCacheKey, true)
+                },
+                isPreparedElsewhere = { mediaId ->
+                    secondaryPlayer?.currentMediaItem?.mediaId == mediaId
+                },
+                preload = ::preloadNextTrack,
+            )
 
         val screenStateFilter =
             IntentFilter().apply {
@@ -1120,6 +1136,7 @@ class MusicService :
         scope.launch {
             connectivityObserver.networkStatus.collect { isConnected ->
                 isNetworkConnected.value = isConnected
+                nextTrackPreloadCoordinator?.requestRefresh()
                 if (isConnected && waitingForNetworkConnection.value) {
                     triggerRetry()
                 }
@@ -1129,6 +1146,52 @@ class MusicService :
                     }
                 }
             }
+        }
+
+        var lastPreloadSelectionSignature: Int? = null
+        scope.launch {
+            dataStore.data
+                .map { prefs ->
+                    val selectionSignature =
+                        listOf(
+                            prefs[AudioQualityKey],
+                            prefs[TidalAudioQualityKey],
+                            prefs[TidalResolverEndpointsKey],
+                            prefs[DeezerAudioQualityKey],
+                            prefs[DeezerResolverUrlKey],
+                            prefs[DeezerFastModeKey],
+                            prefs[DeezerProxyModeKey],
+                            prefs[DeezerProxyUrlKey],
+                            prefs[SoundCloudAudioQualityKey],
+                            prefs[SoundCloudAuthTokenKey],
+                            prefs[AppleAudioQualityKey],
+                            prefs[AmazonAudioQualityKey],
+                            prefs[QobuzBackendKey],
+                            prefs[QobuzCountryKey],
+                            prefs[AudioProviderOrderKey],
+                            prefs[AudioProviderMatchOverridesKey],
+                            prefs[InstagramCookieKey],
+                            prefs[InstagramUserAgentKey],
+                            prefs[InstagramAppIdKey],
+                            prefs[InstagramUuidKey],
+                            prefs[ProxyEnabledKey],
+                            prefs[StopOnProviderErrorKey],
+                        ).hashCode()
+                    (prefs[NextTrackPreloadCountKey] ?: NextTrackPreloadPolicy.DEFAULT_COUNT) to selectionSignature
+                }.distinctUntilChanged()
+                .collect { (count, selectionSignature) ->
+                    val coordinator = nextTrackPreloadCoordinator ?: return@collect
+                    if (
+                        lastPreloadSelectionSignature != null &&
+                        lastPreloadSelectionSignature != selectionSignature
+                    ) {
+                        cleanupSecondaryCrossfadePlayer(scheduleNext = false)
+                        coordinator.invalidateSelection().forEach(::invalidateResolvedProviderStream)
+                    }
+                    lastPreloadSelectionSignature = selectionSignature
+                    coordinator.updateCount(count)
+                    coordinator.requestRefresh()
+                }
         }
 
         // Watch for audio quality setting changes
@@ -4089,6 +4152,7 @@ class MusicService :
         QobuzAudioProvider.invalidate(mediaId)
         TidalAudioProvider.invalidate(mediaId)
         DeezerAudioProvider.invalidate(mediaId)
+        AmazonAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
         InstagramAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
@@ -5252,7 +5316,7 @@ class MusicService :
                             .build()
                     }
                 } ?: run {
-                    clearResolvedStreamCache(mediaId)
+                    songUrlCache.remove(mediaId)
                 }
 
                 val queuedMetadataForDatabase = queuedMetadataForPlaybackDatabase(mediaId, song)
@@ -5495,6 +5559,215 @@ class MusicService :
         }
     }
 
+    private suspend fun preloadNextTrack(target: NextTrackPreloadTarget) {
+        val mediaItem = target.mediaItem
+        val mediaId = mediaItem.mediaIdForPlaybackSource() ?: return
+        val queuedMetadata = mediaItem.metadata
+        if (
+            mediaId.isBlank() ||
+            queuedMetadata?.isEpisode == true ||
+            queuedMetadata?.isVideoSong == true ||
+            mediaId.isLocalMediaId()
+        ) {
+            return
+        }
+
+        val song = database.getSongByIdBlocking(mediaId)
+        if (song?.song?.isLocal == true || song?.song?.isEpisode == true) return
+
+        val selectionKey = currentStreamSelectionKey()
+        val now = System.currentTimeMillis()
+        val cachedResolution = songUrlCache[mediaId]?.takeIf {
+            it.expiresAtMs > now + PRELOAD_MIN_URL_LIFETIME_MS &&
+                it.selectionKey == selectionKey
+        }
+
+        cachedResolution?.let { cached ->
+            val targetBytes = NextTrackPreloadPolicy.targetBytes(
+                queueDistance = target.queueDistance,
+                bitrate = cached.format.bitrate,
+                contentLength = cached.format.contentLength,
+            )
+            val cachedBytes = contiguousCachedPrefix(cached.cacheKey, targetBytes)
+            if (cachedBytes >= targetBytes) {
+                Timber.tag(PRELOAD_TAG).d(
+                    "Cache hit: mediaId=%s distance=%d cached=%d target=%d cacheKey=%s",
+                    mediaId,
+                    target.queueDistance,
+                    cachedBytes,
+                    targetBytes,
+                    cached.cacheKey,
+                )
+                return
+            }
+        }
+
+        val resolved = cachedResolution?.toPlaybackStreamResolution() ?: run {
+            songUrlCache.remove(mediaId)
+            val resolution = resolveOnlineStream(
+                mediaId = mediaId,
+                song = song,
+                queuedMetadata = queuedMetadata,
+                allowUserFeedback = false,
+            )
+            database.query {
+                queuedMetadataForPlaybackDatabase(mediaId, song)?.let { insert(it) }
+                upsert(resolution.format)
+            }
+            songUrlCache[mediaId] = resolution.toCachedSongStream(selectionKey)
+            resolution
+        }
+
+        if (!resolved.supportsProgressivePreload()) {
+            Timber.tag(PRELOAD_TAG).d(
+                "Skipped unsupported stream: mediaId=%s mime=%s cacheKey=%s",
+                mediaId,
+                resolved.mimeType,
+                resolved.cacheKey,
+            )
+            return
+        }
+
+        val targetBytes = NextTrackPreloadPolicy.targetBytes(
+            queueDistance = target.queueDistance,
+            bitrate = resolved.format.bitrate,
+            contentLength = resolved.format.contentLength,
+        )
+        val cachedBefore = contiguousCachedPrefix(resolved.cacheKey, targetBytes)
+        val missingRange = NextTrackPreloadPolicy.missingRange(cachedBefore, targetBytes)
+        if (missingRange == null) {
+            Timber.tag(PRELOAD_TAG).d(
+                "Cache hit: mediaId=%s distance=%d cached=%d target=%d cacheKey=%s",
+                mediaId,
+                target.queueDistance,
+                cachedBefore,
+                targetBytes,
+                resolved.cacheKey,
+            )
+            return
+        }
+
+        Timber.tag(PRELOAD_TAG).d(
+            "Starting: mediaId=%s distance=%d target=%d cachedBefore=%d provider=%s cacheKey=%s",
+            mediaId,
+            target.queueDistance,
+            targetBytes,
+            cachedBefore,
+            resolved.providerLabel(),
+            resolved.cacheKey,
+        )
+        val startedAt = System.nanoTime()
+        val dataSource = DeezerAudioAwareDataSourceFactory(createCacheDataSource()).createDataSource()
+        var readBytes = 0L
+        try {
+            dataSource.open(
+                DataSpec.Builder()
+                    .setUri(resolved.uri)
+                    .setKey(resolved.cacheKey)
+                    .setPosition(missingRange.position)
+                    .setLength(missingRange.length)
+                    .build(),
+            )
+            val buffer = ByteArray(PRELOAD_READ_BUFFER_BYTES)
+            while (readBytes < missingRange.length && coroutineContext.isActive) {
+                val requested = minOf(buffer.size.toLong(), missingRange.length - readBytes).toInt()
+                val read = dataSource.read(buffer, 0, requested)
+                if (read == C.RESULT_END_OF_INPUT) break
+                if (read <= 0) break
+                readBytes += read
+            }
+            if (!coroutineContext.isActive) throw CancellationException("Preload cancelled")
+        } finally {
+            runCatching(dataSource::close)
+        }
+
+        val cachedAfter = contiguousCachedPrefix(resolved.cacheKey, targetBytes)
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+        Timber.tag(PRELOAD_TAG).d(
+            "Completed: mediaId=%s cachedBefore=%d cachedAfter=%d downloaded=%d elapsedMs=%d provider=%s cacheKey=%s",
+            mediaId,
+            cachedBefore,
+            cachedAfter,
+            (cachedAfter - cachedBefore).coerceAtLeast(readBytes.coerceAtMost(missingRange.length)),
+            elapsedMs,
+            resolved.providerLabel(),
+            resolved.cacheKey,
+        )
+    }
+
+    private fun contiguousCachedPrefix(
+        cacheKey: String,
+        targetBytes: Long,
+    ): Long {
+        if (targetBytes <= 0) return 0L
+        val cachedLength = playerCache.getCachedLength(cacheKey, 0, targetBytes)
+        return cachedLength.takeIf { it > 0 }?.coerceAtMost(targetBytes) ?: 0L
+    }
+
+    private fun CachedSongStream.toPlaybackStreamResolution() =
+        PlaybackStreamResolution(
+            uri = uri,
+            expiresAtMs = expiresAtMs,
+            cacheKey = cacheKey,
+            format = format,
+            mimeType = mimeType,
+            drmLicenseUri = drmLicenseUri,
+            kid = kid,
+            decryptionKey = decryptionKey,
+        )
+
+    private fun PlaybackStreamResolution.toCachedSongStream(selectionKey: String) =
+        CachedSongStream(
+            uri = uri,
+            expiresAtMs = expiresAtMs,
+            cacheKey = cacheKey,
+            selectionKey = selectionKey,
+            format = format,
+            mimeType = mimeType,
+            drmLicenseUri = drmLicenseUri,
+            kid = kid,
+            decryptionKey = decryptionKey,
+        )
+
+    private fun PlaybackStreamResolution.supportsProgressivePreload(): Boolean {
+        val parsedUri = uri.toUri()
+        val scheme = parsedUri.scheme?.lowercase(Locale.US)
+        val path = parsedUri.path.orEmpty().lowercase(Locale.US)
+        return drmLicenseUri.isNullOrBlank() &&
+            tempFilePath.isNullOrBlank() &&
+            !cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) &&
+            mimeType != MimeTypes.APPLICATION_MPD &&
+            mimeType != MimeTypes.APPLICATION_M3U8 &&
+            !path.endsWith(".mpd") &&
+            !path.endsWith(".m3u8") &&
+            (scheme == "http" || scheme == "https" || DeezerAudioDataSource.isDeezerUri(parsedUri))
+    }
+
+    private fun PlaybackStreamResolution.providerLabel(): String =
+        when {
+            cacheKey.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) -> "qobuz"
+            isTidalFallbackCacheKey(cacheKey) -> "tidal"
+            cacheKey.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) -> "deezer"
+            cacheKey.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) -> "soundcloud"
+            cacheKey.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) -> "instagram"
+            cacheKey.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) -> "apple"
+            cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) -> "amazon"
+            cacheKey.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX) -> "youtube"
+            cacheKey.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) -> "direct"
+            else -> "unknown"
+        }
+
+    private fun invalidateResolvedProviderStream(mediaId: String) {
+        songUrlCache.remove(mediaId)
+        QobuzAudioProvider.invalidate(mediaId)
+        TidalAudioProvider.invalidate(mediaId)
+        DeezerAudioProvider.invalidate(mediaId)
+        AmazonAudioProvider.invalidate(mediaId)
+        SoundCloudAudioProvider.invalidate(mediaId)
+        InstagramAudioProvider.invalidate(mediaId)
+        YouTubeAudioProvider.invalidate(mediaId)
+    }
+
     private fun resolvePlaybackStreamBlocking(
         mediaId: String,
         song: Song?,
@@ -5537,6 +5810,7 @@ class MusicService :
         mediaId: String,
         song: Song?,
         queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
+        allowUserFeedback: Boolean = true,
     ): PlaybackStreamResolution {
         if (mediaId.toUri().isTidalPlaybackCdnUri()) {
             return PlaybackStreamResolution(
@@ -5647,7 +5921,9 @@ class MusicService :
         }
 
         fun showProviderWarning(message: String) {
-            showPlaybackToast(message)
+            if (allowUserFeedback) {
+                showPlaybackToast(message)
+            }
         }
 
         var soundCloudAttempt: Result<PlaybackStreamResolution> =
@@ -6634,7 +6910,7 @@ class MusicService :
                 kid = cached.kid,
                 decryptionKey = cached.decryptionKey
             )
-        } ?: clearResolvedStreamCache(mediaId)
+        } ?: songUrlCache.remove(mediaId)
 
         if (tidalPrimary) {
             mediaItem.buildPendingTidalRoute(
@@ -7745,6 +8021,8 @@ class MusicService :
     override fun onDestroy() {
         isRunning = false
         SpotifyCanvasClient.setListeningHistoryFailureReporter(null)
+        nextTrackPreloadCoordinator?.destroy()
+        nextTrackPreloadCoordinator = null
 
         if (!::player.isInitialized) {
             try {
@@ -8465,6 +8743,7 @@ class MusicService :
 
         secPlayer.prepare()
         secPlayer.playWhenReady = true
+        nextTrackPreloadCoordinator?.requestRefresh()
 
         crossfadePrepareJob =
             scope.launch {
@@ -8626,6 +8905,8 @@ class MusicService :
         fadingPlayer = currentPlayer
         player = nextPlayer
         secondaryPlayer = null
+        nextTrackPreloadCoordinator?.updatePlayer(player)
+        nextTrackPreloadCoordinator?.requestRefresh()
 
         fadingPlayer?.removeListener(this)
         fadingPlayer?.removeListener(sleepTimer)
@@ -8821,6 +9102,7 @@ class MusicService :
             }
         }
         secondaryPlayer = null
+        nextTrackPreloadCoordinator?.requestRefresh()
         isCrossfading = false
         activeMetroMixRuntimePreset = null
         activeMetroMixRuntimeProfile = null
@@ -8887,6 +9169,9 @@ class MusicService :
         private const val MIN_GAIN_MB = -2400 // Minimum gain in millibels (-24 dB)
 
         private const val TAG = "MusicService"
+        private const val PRELOAD_TAG = "NextTrackPreload"
+        private const val PRELOAD_MIN_URL_LIFETIME_MS = 60_000L
+        private const val PRELOAD_READ_BUFFER_BYTES = 64 * 1024
 
         // Was 4_000L — too short given the underlying OkHttpClient's own
         // 8s connect / 10s read timeouts, plus the token endpoint's cold-start
