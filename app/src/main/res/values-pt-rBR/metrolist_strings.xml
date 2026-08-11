@@ -827,6 +827,7 @@
     <string name="autoplay_desc">Reproduzir automaticamente a próxima música quando a atual terminar</string>
     <string name="next_track_preload">Pré-carregar próximas músicas</string>
     <string name="next_track_preload_desc">Armazena antecipadamente parte das próximas músicas da fila no cache para reduzir o tempo entre faixas.</string>
+    <string name="next_track_preload_disabled">Desativado</string>
     <plurals name="next_track_preload_count">
         <item quantity="one">%d música</item>
         <item quantity="other">%d músicas</item>
