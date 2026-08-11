@@ -4879,20 +4879,21 @@ class MusicService :
                     .Factory()
                     .setCache(playerCache)
                     .setUpstreamDataSourceFactory(
-                        DefaultDataSource.Factory(
-                            this,
-                            OkHttpDataSource.Factory(
-                                OkHttpClient
-                                    .Builder()
-                                    .proxy(YouTube.proxy)
-                                    .proxyAuthenticator { _, response ->
+                        DeezerAudioAwareDataSourceFactory(
+                            DefaultDataSource.Factory(
+                                this,
+                                OkHttpDataSource.Factory(
+                                    OkHttpClient
+                                        .Builder()
+                                        .proxy(YouTube.proxy)
+                                        .proxyAuthenticator { _, response ->
                                         YouTube.proxyAuth?.let { auth ->
                                             response.request
                                                 .newBuilder()
                                                 .header("Proxy-Authorization", auth)
                                                 .build()
                                         } ?: response.request
-                                    }.addInterceptor { chain ->
+                                        }.addInterceptor { chain ->
                                         var request = chain.request()
                                         if (request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY) != null) {
                                             val clientName = request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY)
@@ -4968,7 +4969,8 @@ class MusicService :
                                             request = builder.build()
                                         }
                                         chain.proceed(request)
-                                    }.build(),
+                                        }.build(),
+                                ),
                             ),
                         ),
                     ),
@@ -5208,9 +5210,7 @@ class MusicService :
         val resolvingFactory =
             ResolvingDataSource.Factory(
                 AmazonFfmpegAwareDataSourceFactory(
-                    DeezerAudioAwareDataSourceFactory(
-                        createCacheDataSource(),
-                    ),
+                    createCacheDataSource(),
                 ),
             ) { dataSpec ->
                 val explicitProviderMediaId =
@@ -5657,7 +5657,7 @@ class MusicService :
             resolved.cacheKey,
         )
         val startedAt = System.nanoTime()
-        val dataSource = DeezerAudioAwareDataSourceFactory(createCacheDataSource()).createDataSource()
+        val dataSource = createCacheDataSource().createDataSource()
         var readBytes = 0L
         try {
             dataSource.open(
@@ -5736,6 +5736,7 @@ class MusicService :
         return drmLicenseUri.isNullOrBlank() &&
             tempFilePath.isNullOrBlank() &&
             !cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) &&
+            parsedUri.getQueryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) != "1" &&
             mimeType != MimeTypes.APPLICATION_MPD &&
             mimeType != MimeTypes.APPLICATION_M3U8 &&
             !path.endsWith(".mpd") &&
