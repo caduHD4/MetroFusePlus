@@ -350,6 +350,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -5659,26 +5660,27 @@ class MusicService :
         val startedAt = System.nanoTime()
         val dataSource = createCacheDataSource().createDataSource()
         var readBytes = 0L
-        try {
-            dataSource.open(
-                DataSpec.Builder()
-                    .setUri(resolved.uri)
-                    .setKey(resolved.cacheKey)
-                    .setPosition(missingRange.position)
-                    .setLength(missingRange.length)
-                    .build(),
-            )
-            val buffer = ByteArray(PRELOAD_READ_BUFFER_BYTES)
-            while (readBytes < missingRange.length && coroutineContext.isActive) {
-                val requested = minOf(buffer.size.toLong(), missingRange.length - readBytes).toInt()
-                val read = dataSource.read(buffer, 0, requested)
-                if (read == C.RESULT_END_OF_INPUT) break
-                if (read <= 0) break
-                readBytes += read
+        runInterruptible(Dispatchers.IO) {
+            try {
+                dataSource.open(
+                    DataSpec.Builder()
+                        .setUri(resolved.uri)
+                        .setKey(resolved.cacheKey)
+                        .setPosition(missingRange.position)
+                        .setLength(missingRange.length)
+                        .build(),
+                )
+                val buffer = ByteArray(PRELOAD_READ_BUFFER_BYTES)
+                while (readBytes < missingRange.length && !Thread.currentThread().isInterrupted) {
+                    val requested = minOf(buffer.size.toLong(), missingRange.length - readBytes).toInt()
+                    val read = dataSource.read(buffer, 0, requested)
+                    if (read == C.RESULT_END_OF_INPUT) break
+                    if (read <= 0) break
+                    readBytes += read
+                }
+            } finally {
+                runCatching(dataSource::close)
             }
-            if (!coroutineContext.isActive) throw CancellationException("Preload cancelled")
-        } finally {
-            runCatching(dataSource::close)
         }
 
         val cachedAfter = contiguousCachedPrefix(resolved.cacheKey, targetBytes)
