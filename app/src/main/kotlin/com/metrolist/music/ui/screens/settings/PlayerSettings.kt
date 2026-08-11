@@ -399,7 +399,7 @@ fun PlayerSettings(
                             Text(stringResource(R.string.next_track_preload_desc))
                             Text(
                                 if (nextTrackPreloadCount == 0) {
-                                    stringResource(R.string.disabled)
+                                    stringResource(R.string.next_track_preload_disabled)
                                 } else {
                                     pluralStringResource(
                                         R.plurals.next_track_preload_count,
