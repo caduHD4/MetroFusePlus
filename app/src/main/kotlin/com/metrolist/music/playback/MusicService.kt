@@ -1256,7 +1256,7 @@ class MusicService :
             currentMediaMetadata.distinctUntilChangedBy { it?.id },
             dataStore.data.map { it[ShowLyricsKey] ?: false }.distinctUntilChanged(),
             dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
-            mediaLibrarySessionCallback.isAutomotiveControllerConnected.distinctUntilChanged(),
+            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
         ) { mediaMetadata, showLyrics, showAndroidAutoLyrics, automotiveConnected ->
             Triple(mediaMetadata, showLyrics, showAndroidAutoLyrics && automotiveConnected)
         }.collectLatest(scope) { (mediaMetadata, showLyrics, showAndroidAutoLyrics) ->
@@ -1280,7 +1280,7 @@ class MusicService :
         combine(
             currentMediaMetadata.distinctUntilChangedBy { it?.id },
             dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
-            mediaLibrarySessionCallback.isAutomotiveControllerConnected.distinctUntilChanged(),
+            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
         ) { mediaMetadata, enabled, automotiveConnected ->
             Triple(mediaMetadata, enabled, automotiveConnected)
         }.collectLatest(scope) { (mediaMetadata, enabled, automotiveConnected) ->
@@ -1304,9 +1304,9 @@ class MusicService :
                 if (lines.isEmpty()) return@collectLatest
 
                 var lastLineIndex: Int? = null
-                var lastSubtitle: String? = null
+                var lastSubtitle: CharSequence? = null
 
-                while (isActive && player.currentMediaItem?.mediaId == mediaId) {
+                while (coroutineContext.isActive && player.currentMediaItem?.mediaId == mediaId) {
                     val lyricsOffsetMs = currentSong.value
                         ?.takeIf { it.id == mediaId }
                         ?.song
