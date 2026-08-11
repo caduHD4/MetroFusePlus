@@ -107,6 +107,7 @@ import com.metrolist.innertube.models.YouTubeClient
 import com.metrolist.lastfm.LastFM
 import com.metrolist.music.MainActivity
 import com.metrolist.music.R
+import com.metrolist.music.constants.AndroidAutoSyncedLyricsKey
 import com.metrolist.music.constants.AndroidAutoTargetPlaylistKey
 import com.metrolist.music.constants.AudioNormalizationKey
 import com.metrolist.music.constants.AudioOffload
@@ -250,6 +251,7 @@ import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.Event
 import com.metrolist.music.db.entities.FormatEntity
 import com.metrolist.music.db.entities.LyricsEntity
+import com.metrolist.music.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.RelatedSongMap
 import com.metrolist.music.db.entities.Song
@@ -273,6 +275,7 @@ import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.extensions.toPersistQueue
 import com.metrolist.music.extensions.toQueue
 import com.metrolist.music.lyrics.LyricsHelper
+import com.metrolist.music.lyrics.LyricsUtils
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.models.PersistPlayerState
 import com.metrolist.music.models.PersistQueue
@@ -1252,10 +1255,12 @@ class MusicService :
         combine(
             currentMediaMetadata.distinctUntilChangedBy { it?.id },
             dataStore.data.map { it[ShowLyricsKey] ?: false }.distinctUntilChanged(),
-        ) { mediaMetadata, showLyrics ->
-            mediaMetadata to showLyrics
-        }.collectLatest(scope) { (mediaMetadata, showLyrics) ->
-            if (showLyrics && mediaMetadata != null && database
+            dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
+            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
+        ) { mediaMetadata, showLyrics, showAndroidAutoLyrics, automotiveConnected ->
+            Triple(mediaMetadata, showLyrics, showAndroidAutoLyrics && automotiveConnected)
+        }.collectLatest(scope) { (mediaMetadata, showLyrics, showAndroidAutoLyrics) ->
+            if ((showLyrics || showAndroidAutoLyrics) && mediaMetadata != null && database
                     .lyrics(mediaMetadata.id)
                     .first() == null
             ) {
@@ -1269,6 +1274,60 @@ class MusicService :
                         ),
                     )
                 }
+            }
+        }
+
+        combine(
+            currentMediaMetadata.distinctUntilChangedBy { it?.id },
+            dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
+            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
+        ) { mediaMetadata, enabled, automotiveConnected ->
+            Triple(mediaMetadata, enabled, automotiveConnected)
+        }.collectLatest(scope) { (mediaMetadata, enabled, automotiveConnected) ->
+            if (!enabled || !automotiveConnected || mediaMetadata == null || mediaMetadata.isEpisode) {
+                return@collectLatest
+            }
+
+            val mediaId = mediaMetadata.id
+            val originalSubtitle: CharSequence? = player.currentMediaItem
+                ?.takeIf { it.mediaId == mediaId }
+                ?.mediaMetadata
+                ?.subtitle
+
+            try {
+                val lyricsEntity = withTimeoutOrNull(30_000L) {
+                    database.lyrics(mediaId).first { it != null }
+                } ?: return@collectLatest
+                if (lyricsEntity.lyrics == LYRICS_NOT_FOUND) return@collectLatest
+
+                val lines = LyricsUtils.parseLyrics(lyricsEntity.lyrics)
+                if (lines.isEmpty()) return@collectLatest
+
+                var lastLineIndex: Int? = null
+                var lastSubtitle: CharSequence? = null
+
+                while (coroutineContext.isActive && player.currentMediaItem?.mediaId == mediaId) {
+                    val lyricsOffsetMs = currentSong.value
+                        ?.takeIf { it.id == mediaId }
+                        ?.song
+                        ?.lyricsOffset
+                        ?.toLong()
+                        ?: 0L
+                    val currentLine = AndroidAutoLyrics.currentLine(
+                        lines = lines,
+                        positionMs = player.currentPosition.coerceAtLeast(0L),
+                        offsetMs = lyricsOffsetMs,
+                    )
+                    val subtitle = currentLine?.text ?: originalSubtitle
+                    if (currentLine?.index != lastLineIndex || subtitle != lastSubtitle) {
+                        replaceCurrentMediaSubtitle(mediaId, subtitle)
+                        lastLineIndex = currentLine?.index
+                        lastSubtitle = subtitle
+                    }
+                    delay(AndroidAutoLyrics.UPDATE_INTERVAL_MS)
+                }
+            } finally {
+                replaceCurrentMediaSubtitle(mediaId, originalSubtitle)
             }
         }
 
@@ -2480,6 +2539,28 @@ class MusicService :
             applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
         }
         player.prepare()
+    }
+
+    private fun replaceCurrentMediaSubtitle(
+        mediaId: String,
+        subtitle: CharSequence?,
+    ) {
+        val index = player.currentMediaItemIndex
+        if (index == C.INDEX_UNSET || index !in 0 until player.mediaItemCount) return
+
+        val mediaItem = player.getMediaItemAt(index)
+        if (mediaItem.mediaId != mediaId || mediaItem.mediaMetadata.subtitle == subtitle) return
+
+        player.replaceMediaItem(
+            index,
+            mediaItem.buildUpon()
+                .setMediaMetadata(
+                    mediaItem.mediaMetadata.buildUpon()
+                        .setSubtitle(subtitle)
+                        .build(),
+                )
+                .build(),
+        )
     }
 
     fun toggleLibrary() {
