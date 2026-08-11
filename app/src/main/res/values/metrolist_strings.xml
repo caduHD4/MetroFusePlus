@@ -1314,6 +1314,9 @@
     <string name="android_auto_target_playlist_auto">Not set</string>
     <string name="added_to_playlist">Added to playlist</string>
     <string name="android_auto_target_playlist_not_set">No playlist selected. Choose one in Android Auto settings</string>
+    <string name="android_auto_experimental">Experimental</string>
+    <string name="android_auto_synced_lyrics">Show synchronized lyrics</string>
+    <string name="android_auto_synced_lyrics_desc">Send the current synchronized line as the player subtitle while Android Auto is connected. Display depends on the car screen and the line may also appear on other connected media controls</string>
 
     <!-- Stats time transfer -->
     <string name="time_transfer_title">Time transfer</string>
