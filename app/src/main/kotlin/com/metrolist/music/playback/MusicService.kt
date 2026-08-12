@@ -340,6 +340,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest as collectLatestSuspending
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -1304,13 +1305,13 @@ class MusicService :
             database.lyrics(mediaId)
                 .filterNotNull()
                 .distinctUntilChanged()
-                .collectLatest { lyricsEntity ->
+                .collectLatestSuspending { lyricsEntity ->
                     val generation = ++automotiveLyricsGeneration
-                    if (lyricsEntity.lyrics == LYRICS_NOT_FOUND) return@collectLatest
+                    if (lyricsEntity.lyrics == LYRICS_NOT_FOUND) return@collectLatestSuspending
 
                     try {
                         val lines = LyricsUtils.parseLyrics(lyricsEntity.lyrics)
-                        if (lines.isEmpty()) return@collectLatest
+                        if (lines.isEmpty()) return@collectLatestSuspending
 
                         var lastSegmentKey: Pair<Int, Int>? = null
                         var lastSubtitle: CharSequence? = null
