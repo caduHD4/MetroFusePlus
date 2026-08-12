@@ -346,6 +346,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -702,6 +703,7 @@ class MusicService :
 
     private var loudnessSetupJob: Job? = null
     private var loudnessSetupGeneration: Long = 0L
+    private var automotiveLyricsGeneration: Long = 0L
 
     @Volatile
     private var normalizationEnabledCached: Boolean = false
@@ -1284,6 +1286,7 @@ class MusicService :
         ) { mediaMetadata, enabled, automotiveConnected ->
             Triple(mediaMetadata, enabled, automotiveConnected)
         }.collectLatest(scope) { (mediaMetadata, enabled, automotiveConnected) ->
+            ++automotiveLyricsGeneration
             if (!enabled || !automotiveConnected || mediaMetadata == null || mediaMetadata.isEpisode) {
                 return@collectLatest
             }
@@ -1294,41 +1297,103 @@ class MusicService :
                 ?.mediaMetadata
                 ?.subtitle
 
-            try {
-                val lyricsEntity = withTimeoutOrNull(30_000L) {
-                    database.lyrics(mediaId).first { it != null }
-                } ?: return@collectLatest
-                if (lyricsEntity.lyrics == LYRICS_NOT_FOUND) return@collectLatest
+            withTimeoutOrNull(30_000L) {
+                database.lyrics(mediaId).first { it != null }
+            } ?: return@collectLatest
 
-                val lines = LyricsUtils.parseLyrics(lyricsEntity.lyrics)
-                if (lines.isEmpty()) return@collectLatest
+            database.lyrics(mediaId)
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collectLatest { lyricsEntity ->
+                    val generation = ++automotiveLyricsGeneration
+                    if (lyricsEntity.lyrics == LYRICS_NOT_FOUND) return@collectLatest
 
-                var lastLineIndex: Int? = null
-                var lastSubtitle: CharSequence? = null
+                    try {
+                        val lines = LyricsUtils.parseLyrics(lyricsEntity.lyrics)
+                        if (lines.isEmpty()) return@collectLatest
 
-                while (coroutineContext.isActive && player.currentMediaItem?.mediaId == mediaId) {
-                    val lyricsOffsetMs = currentSong.value
-                        ?.takeIf { it.id == mediaId }
-                        ?.song
-                        ?.lyricsOffset
-                        ?.toLong()
-                        ?: 0L
-                    val currentLine = AndroidAutoLyrics.currentLine(
-                        lines = lines,
-                        positionMs = player.currentPosition.coerceAtLeast(0L),
-                        offsetMs = lyricsOffsetMs,
-                    )
-                    val subtitle = currentLine?.text ?: originalSubtitle
-                    if (currentLine?.index != lastLineIndex || subtitle != lastSubtitle) {
-                        replaceCurrentMediaSubtitle(mediaId, subtitle)
-                        lastLineIndex = currentLine?.index
-                        lastSubtitle = subtitle
+                        var lastSegmentKey: Pair<Int, Int>? = null
+                        var lastSubtitle: CharSequence? = null
+                        var lastLoggedLineIndex: Int? = null
+
+                        while (
+                            coroutineContext.isActive &&
+                            generation == automotiveLyricsGeneration &&
+                            player.currentMediaItem?.mediaId == mediaId
+                        ) {
+                            val lyricsOffsetMs = currentSong.value
+                                ?.takeIf { it.id == mediaId }
+                                ?.song
+                                ?.lyricsOffset
+                                ?.toLong()
+                                ?: 0L
+                            val trackDurationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }
+                            val sampledPositionMs = player.currentPosition.coerceAtLeast(0L)
+                            var currentLine = AndroidAutoLyrics.currentLine(
+                                lines = lines,
+                                positionMs = sampledPositionMs,
+                                offsetMs = lyricsOffsetMs,
+                                trackDurationMs = trackDurationMs,
+                            )
+
+                            val confirmedPositionMs = player.currentPosition.coerceAtLeast(0L)
+                            if (confirmedPositionMs != sampledPositionMs) {
+                                currentLine = AndroidAutoLyrics.currentLine(
+                                    lines = lines,
+                                    positionMs = confirmedPositionMs,
+                                    offsetMs = lyricsOffsetMs,
+                                    trackDurationMs = trackDurationMs,
+                                )
+                            }
+                            if (
+                                generation != automotiveLyricsGeneration ||
+                                player.currentMediaItem?.mediaId != mediaId
+                            ) {
+                                break
+                            }
+
+                            val subtitle = currentLine?.text ?: originalSubtitle
+                            val segmentKey = currentLine?.let { it.index to it.segmentIndex }
+                            if (
+                                currentLine != null &&
+                                currentLine.segments.size > 1 &&
+                                currentLine.index != lastLoggedLineIndex
+                            ) {
+                                Timber.tag("AutomotiveLyrics").d(
+                                    "Segmented mediaId=%s line=%d window=%d..%d segments=%s transitions=%s",
+                                    mediaId,
+                                    currentLine.index,
+                                    currentLine.windowStartMs,
+                                    currentLine.windowEndMs,
+                                    currentLine.segments.joinToString(" | ") { it.text },
+                                    currentLine.segments.joinToString(",") { it.startTimeMs.toString() },
+                                )
+                                lastLoggedLineIndex = currentLine.index
+                            }
+                            if (segmentKey != lastSegmentKey || subtitle != lastSubtitle) {
+                                replaceCurrentMediaSubtitle(mediaId, subtitle)
+                                lastSegmentKey = segmentKey
+                                lastSubtitle = subtitle
+                            }
+                            delay(AndroidAutoLyrics.UPDATE_INTERVAL_MS)
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        Timber.tag("AutomotiveLyrics").w(
+                            error,
+                            "Failed to update synced lyrics for mediaId=%s",
+                            mediaId,
+                        )
+                    } finally {
+                        if (
+                            generation == automotiveLyricsGeneration &&
+                            player.currentMediaItem?.mediaId == mediaId
+                        ) {
+                            replaceCurrentMediaSubtitle(mediaId, originalSubtitle)
+                        }
                     }
-                    delay(AndroidAutoLyrics.UPDATE_INTERVAL_MS)
                 }
-            } finally {
-                replaceCurrentMediaSubtitle(mediaId, originalSubtitle)
-            }
         }
 
         dataStore.data
