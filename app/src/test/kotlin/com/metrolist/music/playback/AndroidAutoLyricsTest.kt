@@ -24,22 +24,22 @@ class AndroidAutoLyricsTest {
 
     @Test
     fun followsCurrentLineAcrossSeek() {
-        assertEquals(
-            AndroidAutoLyrics.CurrentLine(1, "Second line"),
-            AndroidAutoLyrics.currentLine(lines, 2_500L),
-        )
-        assertEquals(
-            AndroidAutoLyrics.CurrentLine(0, "First line"),
-            AndroidAutoLyrics.currentLine(lines, 1_200L),
-        )
+        val secondLine = AndroidAutoLyrics.currentLine(lines, 2_500L)
+        assertEquals(1, secondLine?.index)
+        assertEquals(0, secondLine?.segmentIndex)
+        assertEquals("Second line", secondLine?.text)
+
+        val firstLine = AndroidAutoLyrics.currentLine(lines, 1_200L)
+        assertEquals(0, firstLine?.index)
+        assertEquals(0, firstLine?.segmentIndex)
+        assertEquals("First line", firstLine?.text)
     }
 
     @Test
     fun appliesStoredLyricsOffset() {
-        assertEquals(
-            AndroidAutoLyrics.CurrentLine(1, "Second line"),
-            AndroidAutoLyrics.currentLine(lines, 1_600L, offsetMs = 500L),
-        )
+        val currentLine = AndroidAutoLyrics.currentLine(lines, 1_600L, offsetMs = 500L)
+        assertEquals(1, currentLine?.index)
+        assertEquals("Second line", currentLine?.text)
     }
 
     @Test
@@ -70,8 +70,44 @@ class AndroidAutoLyricsTest {
     }
 
     @Test
-    fun limitsSubtitleForGlanceableCarDisplay() {
-        val longLine = listOf(LyricsEntry(0L, "x".repeat(200)))
-        assertEquals(96, AndroidAutoLyrics.currentLine(longLine, 0L)?.text?.length)
+    fun segmentsLongSubtitleWithoutDiscardingText() {
+        val text = "This is a long lyric line that should be displayed as several readable pieces without losing any words"
+        val longLine = listOf(
+            LyricsEntry(0L, text),
+            LyricsEntry(8_000L, "Next line"),
+        )
+
+        val currentLine = AndroidAutoLyrics.currentLine(longLine, 0L)
+
+        assertEquals(0, currentLine?.segmentIndex)
+        assertEquals(text, currentLine?.segments?.joinToString(" ") { it.text })
+        assertEquals(8_000L, currentLine?.windowEndMs)
+    }
+
+    @Test
+    fun usesPlayerPositionToSelectSegmentAfterSeek() {
+        val text = "First readable phrase, followed by another phrase, and a final phrase for the driver"
+        val longLine = listOf(
+            LyricsEntry(1_000L, text),
+            LyricsEntry(9_000L, "Next line"),
+        )
+        val first = AndroidAutoLyrics.currentLine(longLine, 1_000L)!!
+        val secondStart = first.segments[1].startTimeMs
+
+        val afterSeek = AndroidAutoLyrics.currentLine(longLine, secondStart + 1L)
+
+        assertEquals(1, afterSeek?.segmentIndex)
+        assertEquals(first.segments[1].text, afterSeek?.text)
+    }
+
+    @Test
+    fun usesTrackDurationForLastLineAndFallsBackWhenUnknown() {
+        val lastLine = listOf(LyricsEntry(2_000L, "A sufficiently long final lyric line that needs more than one display segment"))
+
+        assertEquals(12_000L, AndroidAutoLyrics.currentLine(lastLine, 2_000L, trackDurationMs = 12_000L)?.windowEndMs)
+        assertEquals(
+            2_000L + AutomotiveLyricSegmenter.LAST_LINE_FALLBACK_DURATION_MS,
+            AndroidAutoLyrics.currentLine(lastLine, 2_000L)?.windowEndMs,
+        )
     }
 }
