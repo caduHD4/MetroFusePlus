@@ -37,8 +37,10 @@ import com.metrolist.music.utils.AppUpdateManager
 import com.metrolist.music.utils.ReleaseAsset
 import com.metrolist.music.utils.ReleaseInfo
 import com.metrolist.music.utils.UpdateDownloadProgress
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 @Composable
@@ -88,7 +90,9 @@ fun UpdateAvailableDialog(
         downloadJob =
             coroutineScope.launch {
                 AppUpdateManager
-                    .downloadApk(context, asset) { progress -> downloadProgress = progress }
+                    .downloadApk(context, asset) { progress ->
+                        withContext(Dispatchers.Main.immediate) { downloadProgress = progress }
+                    }
                     .onSuccess { apk ->
                         downloadedApk = apk
                         install(apk)
