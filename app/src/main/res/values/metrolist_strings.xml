@@ -1326,6 +1326,13 @@
 
     <!-- Player and Audio Settings -->
     <string name="audio_quality_very_high">Highest possible</string>
+    <string name="next_track_preload">Preload next tracks</string>
+    <string name="next_track_preload_desc">Stores part of the upcoming tracks in the cache ahead of time to reduce the delay between tracks.</string>
+    <string name="next_track_preload_disabled">Disabled</string>
+    <plurals name="next_track_preload_count">
+        <item quantity="one">%d track</item>
+        <item quantity="other">%d tracks</item>
+    </plurals>
     <string name="autoplay">Autoplay</string>
     <string name="autoplay_desc">Automatically play the next song when the current one ends</string>
     <string name="apple_music_fallback">Apple Music fallback</string>

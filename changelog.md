@@ -1,3 +1,10 @@
+---v7.0.6
+# MetroFuse+ 7.0.6
+
+- Added configurable preloading for the next 0–10 queue tracks to reduce the delay between songs.
+- Reused the playback resolver and cache with adaptive preload sizes, queue-aware shuffle/repeat navigation, limited concurrency and cancellation of obsolete work.
+- Added safe handling for cache hits and partial cache entries while leaving unsupported adaptive, DRM and special-provider streams to normal playback.
+
 ---v7.0.5
 # MetroFuse+ 7.0.5
 

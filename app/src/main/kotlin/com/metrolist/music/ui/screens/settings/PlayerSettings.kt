@@ -58,6 +58,7 @@ import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.constants.MetroMixEnabledKey
 import com.metrolist.music.constants.MetroMixPreset
 import com.metrolist.music.constants.MetroMixPresetKey
+import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
@@ -123,6 +124,10 @@ fun PlayerSettings(
     val (crossfadeGapless, onCrossfadeGaplessChange) = rememberPreference(
         CrossfadeGaplessKey,
         defaultValue = true
+    )
+    val (nextTrackPreloadCount, onNextTrackPreloadCountChange) = rememberPreference(
+        NextTrackPreloadCountKey,
+        defaultValue = 3
     )
     val (metroMixEnabled, onMetroMixEnabledChange) = rememberPreference(
         MetroMixEnabledKey,
@@ -385,6 +390,34 @@ fun PlayerSettings(
                         )
                     },
                     onClick = { onStopOnProviderErrorChange(!stopOnProviderError) }
+                ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.cached),
+                    title = { Text(stringResource(R.string.next_track_preload)) },
+                    description = {
+                        Column {
+                            Text(stringResource(R.string.next_track_preload_desc))
+                            Text(
+                                if (nextTrackPreloadCount == 0) {
+                                    stringResource(R.string.next_track_preload_disabled)
+                                } else {
+                                    pluralStringResource(
+                                        R.plurals.next_track_preload_count,
+                                        nextTrackPreloadCount,
+                                        nextTrackPreloadCount,
+                                    )
+                                }
+                            )
+                            Slider(
+                                value = nextTrackPreloadCount.toFloat(),
+                                onValueChange = {
+                                    onNextTrackPreloadCountChange(it.roundToInt().coerceIn(0, 10))
+                                },
+                                valueRange = 0f..10f,
+                                steps = 9,
+                            )
+                        }
+                    },
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.shuffle),
