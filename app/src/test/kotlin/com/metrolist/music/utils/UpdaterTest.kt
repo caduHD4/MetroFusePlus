@@ -21,4 +21,21 @@ class UpdaterTest {
         )
         assertNull(Updater.inferAssetTarget("MetroFusePlus-izzy.apk"))
     }
+
+    @Test
+    fun selectsOnlyCompatibleReleaseAsset() {
+        val arm64Foss = ReleaseAsset("arm64.apk", "arm64", 1L, "arm64-v8a", "foss")
+        val universalFoss = ReleaseAsset("universal.apk", "universal", 1L, "universal", "foss")
+        val arm64Gms = ReleaseAsset("gms.apk", "gms", 1L, "arm64-v8a", "gms")
+
+        assertEquals(
+            arm64Foss,
+            Updater.selectCompatibleAsset(listOf(universalFoss, arm64Gms, arm64Foss), "arm64-v8a", "foss"),
+        )
+        assertEquals(
+            universalFoss,
+            Updater.selectCompatibleAsset(listOf(universalFoss, arm64Gms), "x86_64", "foss"),
+        )
+        assertNull(Updater.selectCompatibleAsset(listOf(arm64Gms), "arm64-v8a", "foss"))
+    }
 }

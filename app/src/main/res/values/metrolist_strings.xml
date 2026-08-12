@@ -561,6 +561,15 @@
     <string name="update_available_message">MetroFuse+ %1$s is available.</string>
     <string name="update_now">Update</string>
     <string name="not_now">Not now</string>
+    <string name="update_install">Install</string>
+    <string name="update_retry">Retry</string>
+    <string name="update_download_progress">%1$s of %2$s</string>
+    <string name="update_download_stats">%1$s/s • elapsed %2$s • remaining %3$s</string>
+    <string name="update_size_unknown">unknown size</string>
+    <string name="update_download_failed">The update could not be downloaded. Check your connection and try again.</string>
+    <string name="update_install_failed">The Android installer could not be opened.</string>
+    <string name="update_install_permission_required">Allow MetroFuse+ to install unknown apps, then tap Install again.</string>
+    <string name="update_apk_not_found">No compatible APK was found in this release.</string>
     <string name="update_channel_name">App updates</string>
     <string name="update_channel_desc">Notifications about new app versions</string>
 

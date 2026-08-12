@@ -230,18 +230,21 @@ object Updater {
     /**
      * Get the download URL for the correct app variant
      */
-    fun getDownloadUrlForCurrentVariant(releaseInfo: ReleaseInfo): String? {
+    fun getAssetForCurrentVariant(releaseInfo: ReleaseInfo): ReleaseAsset? {
         val (currentArch, currentVariant) = getCurrentAppVariant()
-        
-        val matchingAsset = releaseInfo.assets
-            .find { it.architecture == currentArch && it.variant == currentVariant }
-            ?: releaseInfo.assets.find { it.architecture == "universal" && it.variant == currentVariant }
-            ?: releaseInfo.assets.find { it.variant == currentVariant }
-            ?: releaseInfo.assets.find { it.architecture == "universal" }
-            ?: releaseInfo.assets.firstOrNull()
-
-        return matchingAsset?.downloadUrl
+        return selectCompatibleAsset(releaseInfo.assets, currentArch, currentVariant)
     }
+
+    internal fun selectCompatibleAsset(
+        assets: List<ReleaseAsset>,
+        architecture: String,
+        variant: String,
+    ): ReleaseAsset? =
+        assets.find { it.architecture == architecture && it.variant == variant }
+            ?: assets.find { it.architecture == "universal" && it.variant == variant }
+
+    fun getDownloadUrlForCurrentVariant(releaseInfo: ReleaseInfo): String? =
+        getAssetForCurrentVariant(releaseInfo)?.downloadUrl
 
     /**
      * Get all available download URLs for a release

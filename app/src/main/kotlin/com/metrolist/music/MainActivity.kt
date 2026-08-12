@@ -513,9 +513,9 @@ class MainActivity : ComponentActivity() {
                     availableUpdate = releaseInfo?.takeIf { hasUpdate }
 
                     if (hasUpdate && releaseInfo != null && notifEnabled) {
-                        val downloadUrl = Updater.getDownloadUrlForCurrentVariant(releaseInfo)
-                        if (downloadUrl != null) {
-                            val intent = Intent(Intent.ACTION_VIEW, downloadUrl.toUri())
+                        val releaseAsset = Updater.getAssetForCurrentVariant(releaseInfo)
+                        if (releaseAsset != null) {
+                            val intent = Intent(this@MainActivity, MainActivity::class.java)
                             val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                             val pending = PendingIntent.getActivity(this@MainActivity, 1001, intent, flags)
                             val notif =
@@ -670,7 +670,7 @@ class MainActivity : ComponentActivity() {
             availableUpdate?.let { releaseInfo ->
                 UpdateAvailableDialog(
                     releaseInfo = releaseInfo,
-                    downloadUrl = Updater.getDownloadUrlForCurrentVariant(releaseInfo),
+                    releaseAsset = Updater.getAssetForCurrentVariant(releaseInfo),
                     onDismiss = { availableUpdate = null },
                 )
             }

@@ -1,3 +1,11 @@
+---v7.0.7
+# MetroFuse+ 7.0.7
+
+- Added in-app APK downloads for GitHub updates instead of redirecting to the browser.
+- Added live download progress with transferred size, speed, elapsed time and estimated remaining time.
+- Added secure APK handoff through FileProvider, unknown-source permission handling, retry and cancellation.
+- Changed update notifications to open MetroFuse+ directly instead of opening the APK URL.
+
 ---v7.0.6
 # MetroFuse+ 7.0.6
 
