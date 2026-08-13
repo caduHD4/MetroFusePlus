@@ -1,3 +1,9 @@
+---v7.0.10
+# MetroFuse+ 7.0.10
+
+- Fixed release compilation for the persistent in-app update banner.
+- Kept the fixed update banner with inline changelog, internal installation and swipe-up dismissal.
+
 ---v7.0.9
 # MetroFuse+ 7.0.9
 
