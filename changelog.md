@@ -1,3 +1,10 @@
+---v7.0.8
+# MetroFuse+ 7.0.8
+
+- Added experimental synchronized lyrics to Android Auto playback metadata.
+- Added adaptive segmentation for long lyric lines so the complete text can be shown without delaying the next synchronized line.
+- Added Unicode-safe word and punctuation boundaries, visual-width balancing, proportional timing and seek-aware segment updates.
+
 ---v7.0.7
 # MetroFuse+ 7.0.7
 

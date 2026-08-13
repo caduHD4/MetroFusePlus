@@ -1338,6 +1338,9 @@
     <string name="next_track_preload">Preload next tracks</string>
     <string name="next_track_preload_desc">Stores part of the upcoming tracks in the cache ahead of time to reduce the delay between tracks.</string>
     <string name="next_track_preload_disabled">Disabled</string>
+    <string name="android_auto_experimental">Experimental</string>
+    <string name="android_auto_synced_lyrics">Show synchronized lyrics</string>
+    <string name="android_auto_synced_lyrics_desc">Send synchronized lyrics as adaptive player subtitles while Android Auto is connected.</string>
     <plurals name="next_track_preload_count">
         <item quantity="one">%d track</item>
         <item quantity="other">%d tracks</item>

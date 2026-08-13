@@ -107,6 +107,7 @@ import com.metrolist.innertube.models.YouTubeClient
 import com.metrolist.lastfm.LastFM
 import com.metrolist.music.MainActivity
 import com.metrolist.music.R
+import com.metrolist.music.constants.AndroidAutoSyncedLyricsKey
 import com.metrolist.music.constants.AndroidAutoTargetPlaylistKey
 import com.metrolist.music.constants.AudioNormalizationKey
 import com.metrolist.music.constants.AudioOffload
@@ -251,6 +252,7 @@ import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.Event
 import com.metrolist.music.db.entities.FormatEntity
 import com.metrolist.music.db.entities.LyricsEntity
+import com.metrolist.music.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.RelatedSongMap
 import com.metrolist.music.db.entities.Song
@@ -274,6 +276,7 @@ import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.extensions.toPersistQueue
 import com.metrolist.music.extensions.toQueue
 import com.metrolist.music.lyrics.LyricsHelper
+import com.metrolist.music.lyrics.LyricsUtils
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.models.PersistPlayerState
 import com.metrolist.music.models.PersistQueue
@@ -338,12 +341,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest as collectLatestSuspending
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -702,6 +707,7 @@ class MusicService :
 
     private var loudnessSetupJob: Job? = null
     private var loudnessSetupGeneration: Long = 0L
+    private var automotiveLyricsGeneration: Long = 0L
 
     @Volatile
     private var normalizationEnabledCached: Boolean = false
@@ -1316,10 +1322,12 @@ class MusicService :
         combine(
             currentMediaMetadata.distinctUntilChangedBy { it?.id },
             dataStore.data.map { it[ShowLyricsKey] ?: false }.distinctUntilChanged(),
-        ) { mediaMetadata, showLyrics ->
-            mediaMetadata to showLyrics
-        }.collectLatest(scope) { (mediaMetadata, showLyrics) ->
-            if (showLyrics && mediaMetadata != null && database
+            dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
+            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
+        ) { mediaMetadata, showLyrics, showAndroidAutoLyrics, automotiveConnected ->
+            Triple(mediaMetadata, showLyrics, showAndroidAutoLyrics && automotiveConnected)
+        }.collectLatest(scope) { (mediaMetadata, showLyrics, showAndroidAutoLyrics) ->
+            if ((showLyrics || showAndroidAutoLyrics) && mediaMetadata != null && database
                     .lyrics(mediaMetadata.id)
                     .first() == null
             ) {
@@ -1336,6 +1344,122 @@ class MusicService :
             }
         }
 
+        combine(
+            currentMediaMetadata.distinctUntilChangedBy { it?.id },
+            dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
+            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
+        ) { mediaMetadata, enabled, automotiveConnected ->
+            Triple(mediaMetadata, enabled, automotiveConnected)
+        }.collectLatest(scope) { (mediaMetadata, enabled, automotiveConnected) ->
+            ++automotiveLyricsGeneration
+            if (!enabled || !automotiveConnected || mediaMetadata == null || mediaMetadata.isEpisode) {
+                return@collectLatest
+            }
+
+            val mediaId = mediaMetadata.id
+            val originalSubtitle: CharSequence? = player.currentMediaItem
+                ?.takeIf { it.mediaId == mediaId }
+                ?.mediaMetadata
+                ?.subtitle
+
+            withTimeoutOrNull(30_000L) {
+                database.lyrics(mediaId).first { it != null }
+            } ?: return@collectLatest
+
+            database.lyrics(mediaId)
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collectLatestSuspending { lyricsEntity ->
+                    val generation = ++automotiveLyricsGeneration
+                    if (lyricsEntity.lyrics == LYRICS_NOT_FOUND) return@collectLatestSuspending
+
+                    try {
+                        val lines = LyricsUtils.parseLyrics(lyricsEntity.lyrics)
+                        if (lines.isEmpty()) return@collectLatestSuspending
+
+                        var lastSegmentKey: Pair<Int, Int>? = null
+                        var lastSubtitle: CharSequence? = null
+                        var lastLoggedLineIndex: Int? = null
+
+                        while (
+                            coroutineContext.isActive &&
+                            generation == automotiveLyricsGeneration &&
+                            player.currentMediaItem?.mediaId == mediaId
+                        ) {
+                            val lyricsOffsetMs = currentSong.value
+                                ?.takeIf { it.id == mediaId }
+                                ?.song
+                                ?.lyricsOffset
+                                ?.toLong()
+                                ?: 0L
+                            val trackDurationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }
+                            val sampledPositionMs = player.currentPosition.coerceAtLeast(0L)
+                            var currentLine = AndroidAutoLyrics.currentLine(
+                                lines = lines,
+                                positionMs = sampledPositionMs,
+                                offsetMs = lyricsOffsetMs,
+                                trackDurationMs = trackDurationMs,
+                            )
+
+                            val confirmedPositionMs = player.currentPosition.coerceAtLeast(0L)
+                            if (confirmedPositionMs != sampledPositionMs) {
+                                currentLine = AndroidAutoLyrics.currentLine(
+                                    lines = lines,
+                                    positionMs = confirmedPositionMs,
+                                    offsetMs = lyricsOffsetMs,
+                                    trackDurationMs = trackDurationMs,
+                                )
+                            }
+                            if (
+                                generation != automotiveLyricsGeneration ||
+                                player.currentMediaItem?.mediaId != mediaId
+                            ) {
+                                break
+                            }
+
+                            val subtitle = currentLine?.text ?: originalSubtitle
+                            val segmentKey = currentLine?.let { it.index to it.segmentIndex }
+                            if (
+                                currentLine != null &&
+                                currentLine.segments.size > 1 &&
+                                currentLine.index != lastLoggedLineIndex
+                            ) {
+                                Timber.tag("AutomotiveLyrics").d(
+                                    "Segmented mediaId=%s line=%d window=%d..%d segments=%s transitions=%s",
+                                    mediaId,
+                                    currentLine.index,
+                                    currentLine.windowStartMs,
+                                    currentLine.windowEndMs,
+                                    currentLine.segments.joinToString(" | ") { it.text },
+                                    currentLine.segments.joinToString(",") { it.startTimeMs.toString() },
+                                )
+                                lastLoggedLineIndex = currentLine.index
+                            }
+                            if (segmentKey != lastSegmentKey || subtitle != lastSubtitle) {
+                                replaceCurrentMediaSubtitle(mediaId, subtitle)
+                                lastSegmentKey = segmentKey
+                                lastSubtitle = subtitle
+                            }
+                            delay(AndroidAutoLyrics.UPDATE_INTERVAL_MS)
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        Timber.tag("AutomotiveLyrics").w(
+                            error,
+                            "Failed to update synced lyrics for mediaId=%s",
+                            mediaId,
+                        )
+                    } finally {
+                        if (
+                            generation == automotiveLyricsGeneration &&
+                            player.currentMediaItem?.mediaId == mediaId
+                        ) {
+                            replaceCurrentMediaSubtitle(mediaId, originalSubtitle)
+                        }
+                    }
+                }
+        }
         dataStore.data
             .map { (it[SkipSilenceKey] ?: false) to (it[SkipSilenceInstantKey] ?: false) }
             .distinctUntilChanged()
@@ -2544,6 +2668,28 @@ class MusicService :
             applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
         }
         player.prepare()
+    }
+
+    private fun replaceCurrentMediaSubtitle(
+        mediaId: String,
+        subtitle: CharSequence?,
+    ) {
+        val index = player.currentMediaItemIndex
+        if (index == C.INDEX_UNSET || index !in 0 until player.mediaItemCount) return
+
+        val mediaItem = player.getMediaItemAt(index)
+        if (mediaItem.mediaId != mediaId || mediaItem.mediaMetadata.subtitle == subtitle) return
+
+        player.replaceMediaItem(
+            index,
+            mediaItem.buildUpon()
+                .setMediaMetadata(
+                    mediaItem.mediaMetadata.buildUpon()
+                        .setSubtitle(subtitle)
+                        .build(),
+                )
+                .build(),
+        )
     }
 
     fun toggleLibrary() {
