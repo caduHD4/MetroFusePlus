@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialogDefaults
@@ -187,7 +188,7 @@ import com.metrolist.music.ui.component.BottomSheetMenu
 import com.metrolist.music.ui.component.BottomSheetPage
 import com.metrolist.music.ui.component.LocalBottomSheetPageState
 import com.metrolist.music.ui.component.LocalMenuState
-import com.metrolist.music.ui.component.UpdateAvailableDialog
+import com.metrolist.music.ui.component.UpdateAvailableBanner
 import com.metrolist.music.ui.component.rememberBottomSheetState
 import com.metrolist.music.ui.component.shimmer.ShimmerTheme
 import com.metrolist.music.ui.menu.YouTubeSongMenu
@@ -667,14 +668,6 @@ class MainActivity : ComponentActivity() {
             pureBlack = pureBlack,
             themeColor = themeColor,
         ) {
-            availableUpdate?.let { releaseInfo ->
-                UpdateAvailableDialog(
-                    releaseInfo = releaseInfo,
-                    releaseAsset = Updater.getAssetForCurrentVariant(releaseInfo),
-                    onDismiss = { availableUpdate = null },
-                )
-            }
-
             BoxWithConstraints(
                 modifier =
                     Modifier
@@ -1058,12 +1051,13 @@ class MainActivity : ComponentActivity() {
                         containerColor = chromeBg,
                         snackbarHost = { SnackbarHost(snackbarHostState) },
                         topBar = {
-                            AnimatedVisibility(
-                                visible = shouldShowTopBar,
-                                enter = fadeIn(animationSpec = tween(durationMillis = 300)),
-                                exit = fadeOut(animationSpec = tween(durationMillis = 200)),
-                            ) {
-                                Row {
+                            Column {
+                                AnimatedVisibility(
+                                    visible = shouldShowTopBar,
+                                    enter = fadeIn(animationSpec = tween(durationMillis = 300)),
+                                    exit = fadeOut(animationSpec = tween(durationMillis = 200)),
+                                ) {
+                                    Row {
                                     TopAppBar(
                                         title = {
                                             if (isHomeRoute) {
@@ -1218,6 +1212,14 @@ class MainActivity : ComponentActivity() {
                                                     cutoutInsets.only(WindowInsetsSides.Start + WindowInsetsSides.End)
                                                 },
                                             ),
+                                    )
+                                    }
+                                }
+                                availableUpdate?.let { releaseInfo ->
+                                    UpdateAvailableBanner(
+                                        releaseInfo = releaseInfo,
+                                        releaseAsset = Updater.getAssetForCurrentVariant(releaseInfo),
+                                        onDismiss = { availableUpdate = null },
                                     )
                                 }
                             }
