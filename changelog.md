@@ -1,3 +1,9 @@
+---v7.0.9
+# MetroFuse+ 7.0.9
+
+- Replaced the automatic update modal with a persistent in-app update banner at the top of the app.
+- Added inline release notes, in-app update installation controls and swipe-up dismissal for the update banner.
+
 ---v7.0.8
 # MetroFuse+ 7.0.8
 
