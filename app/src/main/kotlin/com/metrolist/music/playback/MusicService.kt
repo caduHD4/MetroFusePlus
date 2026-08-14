@@ -361,6 +361,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.io.File
+import java.io.IOException
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.time.LocalDateTime
@@ -1031,6 +1032,7 @@ class MusicService :
 
         connectivityManager = getSystemService()!!
         connectivityObserver = NetworkConnectivityObserver(this)
+        isNetworkConnected.value = connectivityObserver.isCurrentlyConnected()
         nextTrackPreloadCoordinator =
             NextTrackPreloadCoordinator(
                 parentScope = scope,
@@ -1247,22 +1249,7 @@ class MusicService :
                         // Clear cache for the base behavior because formats from different sources can be incompatible.
                         runBlocking(Dispatchers.IO) {
                             try {
-                                playerCache.removeResource(mediaId)
-                                playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
-                                playerCache.removeResource(tidalFallbackCacheKey(mediaId))
-                                playerCache.removeResource(deezerFallbackCacheKey(mediaId))
-                                playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-                                playerCache.removeResource(instagramFallbackCacheKey(mediaId))
-                                playerCache.removeResource(directHttpAudioCacheKey(mediaId))
-                                playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
-                                downloadCache.removeResource(mediaId)
-                                downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
-                                downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
-                                downloadCache.removeResource(deezerFallbackCacheKey(mediaId))
-                                downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-                                downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
-                                downloadCache.removeResource(directHttpAudioCacheKey(mediaId))
-                                downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
+                                removeCachedAudio(mediaId)
                                 Timber.tag("MusicService").d("Cleared player and download cache for $mediaId")
                             } catch (e: Exception) {
                                 Timber.tag("MusicService").e(e, "Failed to clear cache for $mediaId")
@@ -4183,6 +4170,13 @@ class MusicService :
             .tag(TAG)
             .w(error, "Player error occurred for $mediaId: errorCode=${error.errorCode}, message=${error.message}")
 
+        if (!isNetworkConnected.value) {
+            Timber.tag(TAG).d("Playback failed while offline; preserving cached audio for $mediaId")
+            reportException(error)
+            waitOnNetworkError()
+            return
+        }
+
         if (isTidalSourceRoutingError(error)) {
             Timber.tag(TAG).d("TIDAL source routing retry needed for $mediaId")
             handleTidalSourceRoutingRetry(mediaId)
@@ -4205,11 +4199,6 @@ class MusicService :
         }
 
         reportException(error)
-
-        // Aggressive cache clearing for all playback errors
-        if (mediaId != null) {
-            performAggressiveCacheClear(mediaId)
-        }
 
         if (isCurrentTidalLiveManifestPlayback()) {
             Timber.tag(TAG).d("TIDAL live manifest playback failed; retrying as progressive stream")
@@ -4261,7 +4250,7 @@ class MusicService :
                 return
             }
 
-            !isNetworkConnected.value || isNetworkRelatedError(error) -> {
+            isNetworkRelatedError(error) -> {
                 Timber.tag(TAG).d("Network-related error detected, waiting for connection")
                 waitOnNetworkError()
                 return
@@ -4294,37 +4283,13 @@ class MusicService :
     private fun performAggressiveCacheClear(mediaId: String) {
         Timber.tag(TAG).d("Performing aggressive cache clear for $mediaId")
 
-        // Clear URL cache
-        songUrlCache.remove(mediaId)
-        QobuzAudioProvider.invalidate(mediaId)
-        TidalAudioProvider.invalidate(mediaId)
-        DeezerAudioProvider.invalidate(mediaId)
-        AmazonAudioProvider.invalidate(mediaId)
-        SoundCloudAudioProvider.invalidate(mediaId)
-        InstagramAudioProvider.invalidate(mediaId)
-        YouTubeAudioProvider.invalidate(mediaId)
+        invalidateResolvedProviderStream(mediaId)
 
-        // Clear player cache
         try {
-            playerCache.removeResource(mediaId)
-            playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
-            playerCache.removeResource(tidalFallbackCacheKey(mediaId))
-            playerCache.removeResource(deezerFallbackCacheKey(mediaId))
-            playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-            playerCache.removeResource(instagramFallbackCacheKey(mediaId))
-            playerCache.removeResource(directHttpAudioCacheKey(mediaId))
-            playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
-            downloadCache.removeResource(mediaId)
-            downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
-            downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
-            downloadCache.removeResource(deezerFallbackCacheKey(mediaId))
-            downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-            downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
-            downloadCache.removeResource(directHttpAudioCacheKey(mediaId))
-            downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
-            Timber.tag(TAG).d("Cleared player cache for $mediaId")
+            removeCachedAudio(mediaId)
+            Timber.tag(TAG).d("Cleared cached audio for $mediaId")
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to clear player cache for $mediaId")
+            Timber.tag(TAG).e(e, "Failed to clear cached audio for $mediaId")
         }
 
         Timber.tag(TAG).d("Cleared provider resolver caches for $mediaId")
@@ -4487,8 +4452,7 @@ class MusicService :
             scope.launch {
                 Timber.tag(TAG).d("Handling page reload error for $mediaId")
 
-                // Clear all caches including decryption caches
-                performAggressiveCacheClear(mediaId)
+                invalidateResolvedProviderStream(mediaId)
 
                 // Additional delay for page reload errors as they may be rate-limited
                 delay(RETRY_DELAY_MS * 2)
@@ -4514,14 +4478,7 @@ class MusicService :
 
         incrementRetryCount(mediaId)
 
-        // Clear the cached URL
-        songUrlCache.remove(mediaId)
-        QobuzAudioProvider.invalidate(mediaId)
-        TidalAudioProvider.invalidate(mediaId)
-        DeezerAudioProvider.invalidate(mediaId)
-        SoundCloudAudioProvider.invalidate(mediaId)
-        InstagramAudioProvider.invalidate(mediaId)
-        YouTubeAudioProvider.invalidate(mediaId)
+        invalidateResolvedProviderStream(mediaId)
         Timber.tag(TAG).d("Cleared cached URL for $mediaId")
 
         retryJob?.cancel()
@@ -4540,14 +4497,8 @@ class MusicService :
     }
 
     /**
-     * Handles IO_FILE_NOT_FOUND (ENOENT) by purging any cached state for the
-     * media item and forcing the resolver to fetch a fresh stream URL.
-     *
-     * The aggressive cache clear at the top of [onPlayerError] already drops
-     * the player cache entry and the cached stream URL, so re-preparing the
-     * player here causes the resolver to take the "fetch fresh stream" path
-     * instead of attempting another cache read for a file that no longer
-     * exists on disk.
+     * Handles IO_FILE_NOT_FOUND (ENOENT) by removing the corrupt resource and
+     * forcing the resolver to fetch a fresh stream URL.
      */
     private fun handleFileNotFoundError(mediaId: String?) {
         if (mediaId == null) {
@@ -4556,6 +4507,7 @@ class MusicService :
         }
 
         incrementRetryCount(mediaId)
+        performAggressiveCacheClear(mediaId)
 
         retryJob?.cancel()
         retryJob =
@@ -4595,7 +4547,7 @@ class MusicService :
                     return@launch
                 }
 
-                performAggressiveCacheClear(mediaId)
+                invalidateResolvedProviderStream(mediaId)
                 delay(250L)
                 player.seekTo(currentIndex, currentPosition)
                 player.prepare()
@@ -4621,7 +4573,7 @@ class MusicService :
         retryJob?.cancel()
         retryJob =
             scope.launch {
-                performAggressiveCacheClear(mediaId)
+                invalidateResolvedProviderStream(mediaId)
                 delay(RETRY_DELAY_MS)
 
                 val currentIndex = player.currentMediaItemIndex
@@ -5419,6 +5371,22 @@ class MusicService :
                     return@Factory dataSpec
                 }
 
+                if (!isNetworkConnected.value) {
+                    findCompleteCachedKey(mediaId, song?.format?.contentLength)?.let { cacheKey ->
+                        Timber.tag(CACHE_TAG).d("Offline cache hit: mediaId=%s cacheKey=%s", mediaId, cacheKey)
+                        return@Factory dataSpec
+                            .buildUpon()
+                            .setKey(cacheKey)
+                            .build()
+                    }
+                    Timber.tag(CACHE_TAG).d("Offline cache miss: mediaId=%s", mediaId)
+                    throw PlaybackException(
+                        "Audio is not fully cached and no network connection is available",
+                        IOException("No complete cached resource for $mediaId"),
+                        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                    )
+                }
+
                 val shouldBypassUrlCache =
                     bypassCacheForQualityChange.contains(mediaId)
                 val requestedFallbackKey = dataSpec.key?.takeIf(::isProviderFallbackCacheKey)
@@ -5566,23 +5534,8 @@ class MusicService :
             }?.takeIf { it > 0 }
 
     private fun clearResolvedStreamCache(mediaId: String) {
-        songUrlCache.remove(mediaId)
-        playerCache.removeResource(mediaId)
-        playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
-        playerCache.removeResource(tidalFallbackCacheKey(mediaId))
-        playerCache.removeResource(deezerFallbackCacheKey(mediaId))
-        playerCache.removeResource(amazonFallbackCacheKey(mediaId))
-        playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-        playerCache.removeResource(instagramFallbackCacheKey(mediaId))
-        playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
-        downloadCache.removeResource(mediaId)
-        downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
-        downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
-        downloadCache.removeResource(deezerFallbackCacheKey(mediaId))
-        downloadCache.removeResource(amazonFallbackCacheKey(mediaId))
-        downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
-        downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
-        downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
+        invalidateResolvedProviderStream(mediaId)
+        removeCachedAudio(mediaId)
     }
 
     fun setProviderMatchOverride(
@@ -5608,13 +5561,6 @@ class MusicService :
             }
             withContext(Dispatchers.Main) {
                 clearResolvedStreamCache(mediaId)
-                QobuzAudioProvider.invalidate(mediaId)
-                TidalAudioProvider.invalidate(mediaId)
-                DeezerAudioProvider.invalidate(mediaId)
-                AmazonAudioProvider.invalidate(mediaId)
-                SoundCloudAudioProvider.invalidate(mediaId)
-                InstagramAudioProvider.invalidate(mediaId)
-                YouTubeAudioProvider.invalidate(mediaId)
                 if (player.currentMediaItem?.mediaId == mediaId) {
                     val currentPosition = player.currentPosition.coerceAtLeast(0L)
                     val wasPlaying = player.playWhenReady
@@ -5916,6 +5862,57 @@ class MusicService :
         InstagramAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
     }
+
+    private fun removeCachedAudio(mediaId: String) {
+        val keys =
+            (
+                PlaybackCacheIndex.keysForMediaId(playerCache.keys, mediaId) +
+                    PlaybackCacheIndex.keysForMediaId(downloadCache.keys, mediaId) +
+                    mediaId
+            ).distinct()
+        keys.forEach { key ->
+            playerCache.removeResource(key)
+            downloadCache.removeResource(key)
+        }
+    }
+
+    private fun findCompleteCachedKey(
+        mediaId: String,
+        fallbackContentLength: Long?,
+    ): String? {
+        val override = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
+        val preferredProviderKeys =
+            buildList {
+                override?.provider?.let { add(cacheKeyForProvider(it, mediaId)) }
+                songUrlCache[mediaId]?.cacheKey?.let(::add)
+                add(mediaId)
+                AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
+                    .mapTo(this) { provider -> cacheKeyForProvider(provider, mediaId) }
+            }
+        val discoveredKeys =
+            PlaybackCacheIndex.keysForMediaId(playerCache.keys + downloadCache.keys, mediaId)
+        return (preferredProviderKeys + discoveredKeys)
+            .distinct()
+            .firstOrNull { key ->
+                downloadCache.isFullyCached(key, fallbackContentLength) ||
+                    playerCache.isFullyCached(key, fallbackContentLength)
+            }
+    }
+
+    private fun cacheKeyForProvider(
+        provider: AudioProviderOrderItem,
+        mediaId: String,
+    ): String =
+        when (provider) {
+            AudioProviderOrderItem.SOUNDCLOUD -> soundCloudFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.TIDAL -> tidalFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.DEEZER -> deezerFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.INSTAGRAM -> instagramFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.QOBUZ -> qobuzFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.AMAZON_MUSIC -> amazonFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackCacheKey(mediaId)
+        }
 
     private fun resolvePlaybackStreamBlocking(
         mediaId: String,
@@ -9318,6 +9315,7 @@ class MusicService :
         private const val MIN_GAIN_MB = -2400 // Minimum gain in millibels (-24 dB)
 
         private const val TAG = "MusicService"
+        private const val CACHE_TAG = "PlaybackCache"
         private const val PRELOAD_TAG = "NextTrackPreload"
         private const val PRELOAD_MIN_URL_LIFETIME_MS = 60_000L
         private const val PRELOAD_READ_BUFFER_BYTES = 64 * 1024
