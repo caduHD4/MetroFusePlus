@@ -1,3 +1,11 @@
+---v7.0.11
+# MetroFuse+ 7.0.11
+
+- Fixed offline playback so fully cached songs play without resolving online providers.
+- Prevented network, expired URL and provider errors from deleting valid cached audio.
+- Changed the Cached playlist to show only complete, reproducible audio resources.
+- Preserved manual provider overrides while safely discarding an incorrect cached match.
+
 ---v7.0.10
 # MetroFuse+ 7.0.10
 
