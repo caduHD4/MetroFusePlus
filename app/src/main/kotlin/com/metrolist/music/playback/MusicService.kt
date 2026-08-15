@@ -5371,14 +5371,26 @@ class MusicService :
                     return@Factory dataSpec
                 }
 
-                if (!isNetworkConnected.value) {
+                val shouldBypassUrlCache = bypassCacheForQualityChange.contains(mediaId)
+                if (!shouldBypassUrlCache) {
+                    val cacheLookupStartedAt = SystemClock.elapsedRealtime()
                     findCompleteCachedKey(mediaId, song?.format?.contentLength)?.let { cacheKey ->
-                        Timber.tag(CACHE_TAG).d("Offline cache hit: mediaId=%s cacheKey=%s", mediaId, cacheKey)
+                        Timber.tag(CACHE_TAG).d(
+                            "Complete cache hit: mediaId=%s cacheKey=%s lookupMs=%d",
+                            mediaId,
+                            cacheKey,
+                            SystemClock.elapsedRealtime() - cacheLookupStartedAt,
+                        )
                         return@Factory dataSpec
                             .buildUpon()
                             .setKey(cacheKey)
                             .build()
                     }
+                }
+
+                val hasValidatedNetwork = connectivityObserver.isCurrentlyConnected()
+                isNetworkConnected.value = hasValidatedNetwork
+                if (!hasValidatedNetwork) {
                     Timber.tag(CACHE_TAG).d("Offline cache miss: mediaId=%s", mediaId)
                     throw PlaybackException(
                         "Audio is not fully cached and no network connection is available",
@@ -5387,8 +5399,6 @@ class MusicService :
                     )
                 }
 
-                val shouldBypassUrlCache =
-                    bypassCacheForQualityChange.contains(mediaId)
                 val requestedFallbackKey = dataSpec.key?.takeIf(::isProviderFallbackCacheKey)
                 songUrlCache[mediaId]?.takeIf {
                     !shouldBypassUrlCache &&
