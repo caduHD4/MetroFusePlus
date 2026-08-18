@@ -19,8 +19,8 @@ if (localPropertiesFile.exists()) {
 }
 
 val baseApplicationId = "com.metrofuse.plus"
-val metroFuseVersionCode = 714
-val metroFuseVersionName = "7.0.14"
+val metroFuseVersionCode = 715
+val metroFuseVersionName = "7.0.15"
 val metroFuseUpdateRepository = "caduHD4/MetroFusePlus"
 val discordRpcApplicationId = "1508739806186963045"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }

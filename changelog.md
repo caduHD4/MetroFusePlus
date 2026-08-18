@@ -1,3 +1,9 @@
+---v7.0.15
+# MetroFuse+ 7.0.15
+
+- Fixed progressive YouTube Music history sync stopping when WEB_REMIX cannot create an authenticated tracking session.
+- Added authenticated client fallback for progressive history sessions while preserving the same client for subsequent playback heartbeats.
+
 ---v7.0.14
 # MetroFuse+ 7.0.14
 
