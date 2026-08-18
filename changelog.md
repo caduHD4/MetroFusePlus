@@ -1,3 +1,9 @@
+---v7.0.17
+# MetroFuse+ 7.0.17
+
+- Fixed the ANDROID_MUSIC history tracking client context by sending its required Android SDK and OS fields.
+- Updated the isolated ANDROID_MUSIC tracking identity to a verified client version and matching User-Agent.
+
 ---v7.0.16
 # MetroFuse+ 7.0.16
 
