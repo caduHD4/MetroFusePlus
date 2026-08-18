@@ -1,3 +1,9 @@
+---v7.0.18
+# MetroFuse+ 7.0.18
+
+- Fixed ANDROID_MUSIC YouTube Music history tracking by removing the browser-only account sync identifier from its native player context.
+- Preserved the authenticated cookie and SAPISID request path used by ANDROID_MUSIC while keeping WEB_REMIX unchanged.
+
 ---v7.0.17
 # MetroFuse+ 7.0.17
 
