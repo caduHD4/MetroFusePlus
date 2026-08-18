@@ -1,6 +1,7 @@
 package com.metrolist.music.playback
 
 import com.metrolist.innertube.models.YouTubeClient
+import com.metrolist.innertube.models.YouTubeLocale
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -65,6 +66,7 @@ class YouTubeMusicPlaybackTrackingFallbackTest {
         assertEquals("30", clients[1].androidSdkVersion)
         assertEquals("Android", clients[1].osName)
         assertEquals("11", clients[1].osVersion)
+        assertTrue(!clients[1].sendDataSyncIdInContext)
     }
 
     @Test
@@ -77,5 +79,24 @@ class YouTubeMusicPlaybackTrackingFallbackTest {
             )
 
         assertEquals(listOf("ANDROID_MUSIC", "WEB"), clients.map(YouTubeClient::clientName))
+    }
+
+    @Test
+    fun androidMusicTrackingKeepsDataSyncIdOutOfThePlayerContext() {
+        val androidMusic =
+            youTubeMusicHistoryTrackingClients(
+                useWebRemix = false,
+                useAndroidMusic = true,
+                useWeb = false,
+            ).single()
+
+        val context =
+            androidMusic.toContext(
+                locale = YouTubeLocale(gl = "BR", hl = "pt-BR"),
+                visitorData = "visitor",
+                dataSyncId = "account-sync-id",
+            )
+
+        assertNull(context.user.onBehalfOfUser)
     }
 }

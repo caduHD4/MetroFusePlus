@@ -29,6 +29,9 @@ private val YOUTUBE_MUSIC_TRACKING_ANDROID_MUSIC =
         osName = "Android",
         osVersion = "11",
         androidSdkVersion = "30",
+        // ANDROID_MUSIC authenticates with the request cookie/SAPISID headers. Do not send the
+        // browser-only data sync id as context.user.onBehalfOfUser.
+        sendDataSyncIdInContext = false,
     )
 
 internal val YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS =
