@@ -1,3 +1,10 @@
+---v7.0.14
+# MetroFuse+ 7.0.14
+
+- Fixed YouTube Music playback for videos rejected by the legacy VR, iOS and Web clients by prioritizing the existing visionOS client with the current visitor session.
+- Prevented successful Innertube responses without a directly playable audio URL from being cached as reusable playback responses.
+- Preserved normal provider fallback when YouTube returns only unsupported server-driven ABR metadata.
+
 ---v7.0.13
 # MetroFuse+ 7.0.13
 
