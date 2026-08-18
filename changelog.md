@@ -1,3 +1,10 @@
+---v7.0.16
+# MetroFuse+ 7.0.16
+
+- Added experimental YouTube Music history tracking client controls for WEB_REMIX, ANDROID_MUSIC and WEB.
+- Automatic tracking now tries WEB_REMIX, then ANDROID_MUSIC, then WEB when no client is selected.
+- Keeps manually selected clients in the chosen product priority, including standard YouTube history as an optional fallback.
+
 ---v7.0.15
 # MetroFuse+ 7.0.15
 
