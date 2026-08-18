@@ -297,8 +297,10 @@ import com.metrolist.music.playback.queues.filterVideoSongs
 import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
+import com.metrolist.music.providers.ProviderFallbackMatcher
 import com.metrolist.music.providers.ProviderMatchOverride
 import com.metrolist.music.providers.ProviderMatchOverrides
+import com.metrolist.music.providers.ProviderMatchSearch
 import com.metrolist.music.providers.ExperimentalPlaybackPolicy
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.qobuz.QobuzAudioProvider
@@ -6133,11 +6135,21 @@ class MusicService :
                 }
             }
 
-        suspend fun attemptProvider(provider: AudioProviderOrderItem): PlaybackStreamResolution? {
-            if (provider in attemptedProviders) return null
+        suspend fun attemptProvider(
+            provider: AudioProviderOrderItem,
+            candidateTrackId: String? = null,
+        ): PlaybackStreamResolution? {
+            if (candidateTrackId == null && provider in attemptedProviders) return null
             if (!provider.isPlaybackProvider()) return null
             if (directTidalUsesDeezerStreams && provider != AudioProviderOrderItem.DEEZER) return null
             if (!canAttemptOrderedProvider(provider) && !isForcedProvider(provider)) return null
+            val attemptMediaId = candidateTrackId?.let { trackId ->
+                ProviderMatchOverride(
+                    provider = provider,
+                    providerTrackId = trackId,
+                    label = trackId,
+                ).providerMediaId()
+            } ?: providerMediaId(provider)
             when (provider) {
                 AudioProviderOrderItem.SOUNDCLOUD -> {
                     attemptedProviders += provider
@@ -6148,7 +6160,7 @@ class MusicService :
                             queuedMetadata = queuedMetadata,
                             authToken = soundCloudAuthToken,
                             quality = soundCloudQuality,
-                            queryMediaId = providerMediaId(provider),
+                            queryMediaId = attemptMediaId,
                         )
                     }
                     soundCloudAttempt.getOrNull()?.let { return it }
@@ -6160,7 +6172,7 @@ class MusicService :
                     attemptedProviders += provider
                     tidalAttempt = runCatching {
                         TidalAudioProvider.resolve(
-                            query = buildTidalQuery(providerMediaId(provider), song, queuedMetadata, spotifyIsrc),
+                            query = buildTidalQuery(attemptMediaId, song, queuedMetadata, spotifyIsrc),
                             cacheDir = cacheDir,
                             preferAtmos = false,
                             preferLiveDash = false,
@@ -6184,7 +6196,7 @@ class MusicService :
                     deezerAttempt = runCatching {
                         DeezerAudioProvider.resolve(
                             buildDeezerQuery(
-                                mediaId = providerMediaId(provider),
+                                mediaId = attemptMediaId,
                                 song = song,
                                 metadataOverride = queuedMetadata,
                                 resolverUrl = deezerResolverUrl,
@@ -6206,7 +6218,7 @@ class MusicService :
                 AudioProviderOrderItem.AMAZON_MUSIC -> {
                     attemptedProviders += provider
                     val amazonQuery = buildAmazonQuery(
-                        mediaId = providerMediaId(provider),
+                        mediaId = attemptMediaId,
                         song = song,
                         metadataOverride = queuedMetadata,
                     )
@@ -6298,7 +6310,7 @@ class MusicService :
                     attemptedProviders += provider
                     youtubeAttempt = runCatching {
                         resolveYouTubeFallback(
-                            mediaId = providerMediaId(provider),
+                            mediaId = attemptMediaId,
                             cacheMediaId = mediaId,
                         )
                     }
@@ -6335,7 +6347,7 @@ class MusicService :
                 AudioProviderOrderItem.QOBUZ -> {
                     attemptedProviders += provider
                     qobuzAttempt = runCatching {
-                        QobuzAudioProvider.resolve(buildQobuzQuery(providerMediaId(provider), song, queuedMetadata, spotifyIsrc))
+                        QobuzAudioProvider.resolve(buildQobuzQuery(attemptMediaId, song, queuedMetadata, spotifyIsrc))
                     }
                     qobuzAttempt.getOrNull()?.let { resolved ->
                         Timber.tag("MusicService").i("Using Qobuz stream for $mediaId: ${resolved.label}")
@@ -6390,6 +6402,42 @@ class MusicService :
         }
         youtubeAttempt.getOrNull()?.let { return it }
 
+        val fallbackMetadata = queuedMetadata ?: song?.toMediaMetadata()
+        if (providerOverride == null && fallbackMetadata != null) {
+            val searchedCandidates = runCatching {
+                ProviderMatchSearch.search(
+                    context = this@MusicService,
+                    metadata = fallbackMetadata,
+                    perProviderLimit = 4,
+                )
+            }.onFailure { error ->
+                Timber.tag(TAG).w(error, "Automatic candidate fallback search failed for $mediaId")
+            }.getOrDefault(emptyList())
+
+            val safeCandidates = ProviderFallbackMatcher.selectSafeCandidates(
+                metadata = fallbackMetadata,
+                candidates = searchedCandidates.filterNot { candidate ->
+                    candidate.provider == AudioProviderOrderItem.YOUTUBE_MUSIC &&
+                        candidate.providerTrackId == mediaId
+                },
+                providerOrder = orderedProviders,
+            )
+
+            for (candidate in safeCandidates) {
+                Timber.tag(TAG).i(
+                    "Retrying playback with safe candidate: mediaId=$mediaId " +
+                        "provider=${candidate.provider} trackId=${candidate.providerTrackId}",
+                )
+                attemptProvider(candidate.provider, candidate.providerTrackId)?.let { resolved ->
+                    Timber.tag(TAG).i(
+                        "Automatic candidate fallback selected: mediaId=$mediaId " +
+                            "provider=${candidate.provider} trackId=${candidate.providerTrackId}",
+                    )
+                    return resolved
+                }
+            }
+        }
+
         val youtubeError = youtubeAttempt.exceptionOrNull()
             ?: IllegalStateException("YouTube fallback failed")
         val soundCloudError = soundCloudAttempt.exceptionOrNull()
@@ -6425,8 +6473,12 @@ class MusicService :
         val qobuzDetail = qobuzAttempt.exceptionOrNull()?.readableMessage()
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
+        val providerDetails =
+            "${qobuzDetail}${tidalDetail}${deezerDetail}${instagramDetail}${appleDetail}" +
+                "SoundCloud failed: ${soundCloudError.readableMessage()}; " +
+                "YouTube failed: ${youtubeError.readableMessage()}"
         throw PlaybackException(
-            "${qobuzDetail}${tidalDetail}${deezerDetail}${instagramDetail}${appleDetail}SoundCloud failed: ${soundCloudError.readableMessage()}; YouTube failed: ${youtubeError.readableMessage()}",
+            "No compatible audio source was found for ${fallbackMetadata?.title ?: mediaId}. $providerDetails",
             youtubeError,
             PlaybackException.ERROR_CODE_REMOTE_ERROR,
         )

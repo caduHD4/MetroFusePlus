@@ -234,7 +234,7 @@ object YouTubeAudioProvider {
             }
         }
 
-        // Race all 3 clients in parallel — no sequential fallback needed.
+        // Race all configured clients in parallel — no sequential fallback needed.
         val channel = Channel<Resolved>(innertubePlaybackClients.size)
         val candidateFailures = ConcurrentHashMap<String, String>()
 
@@ -299,18 +299,19 @@ object YouTubeAudioProvider {
             return null
         }
 
-        val playerResponse = withContext(Dispatchers.IO) {
+        val playerResult = withContext(Dispatchers.IO) {
             val signatureTimestamp = if (client.useSignatureTimestamp) signatureTimestampDeferred.await() else null
             YouTube.player(
                 videoId = videoId,
                 signatureTimestamp = signatureTimestamp,
                 client = client,
                 poToken = poTokenResult?.playerRequestPoToken
-            ).getOrNull()
+            )
         }
 
+        val playerResponse = playerResult.getOrNull()
         if (playerResponse == null) {
-            failures[candidate.key] = "player response null"
+            failures[candidate.key] = playerResult.exceptionOrNull()?.readableMessage() ?: "player response null"
             return null
         }
         if (playerResponse.playabilityStatus.status != "OK") {
@@ -328,39 +329,23 @@ object YouTubeAudioProvider {
             return null
         }
 
-        // Apply n-parameter transformation and PoToken to the stream URL if required.
-        if (client.useWebPoTokens) {
-            try {
-                var streamUrl = resolved.mediaUri
-                // Prioritize NewPipe throttling deobfuscation
-                val newPipeUrl = NewPipeExtractor.getThrottlingDeobfuscatedUrl(videoId, streamUrl)
-                if (newPipeUrl != null && newPipeUrl != streamUrl) {
-                    streamUrl = newPipeUrl
-                } else {
-                    // Fallback to CipherDeobfuscator
-                    val transformedUrl = CipherDeobfuscator.transformNParamInUrl(streamUrl)
-                    if (transformedUrl != streamUrl) {
-                        streamUrl = transformedUrl
-                    }
+        try {
+            var streamUrl = resolved.mediaUri
+            poTokenResult?.streamingDataPoToken?.let { streamingPoToken ->
+                val uri = Uri.parse(streamUrl)
+                if (uri.getQueryParameter("pot") == null) {
+                    val separator = if (streamUrl.contains("?")) "&" else "?"
+                    streamUrl = "${streamUrl}${separator}pot=${Uri.encode(streamingPoToken)}"
                 }
-
-                // Append pot= parameter if streaming poToken is available
-                poTokenResult?.streamingDataPoToken?.let { streamingPoToken ->
-                    val uri = Uri.parse(streamUrl)
-                    if (uri.getQueryParameter("pot") == null) {
-                        val separator = if (streamUrl.contains("?")) "&" else "?"
-                        streamUrl = "${streamUrl}${separator}pot=${Uri.encode(streamingPoToken)}"
-                    }
-                }
-
-                if (streamUrl != resolved.mediaUri) {
-                    resolved = resolved.copy(mediaUri = streamUrl)
-                }
-            } catch (e: Exception) {
-                failures[candidate.key] = "n-transform/poToken failed: ${e.readableMessage()}"
-                Timber.tag(TAG).e(e, "Failed to apply n-transform or PoToken to stream URL")
-                return null // Return null if transformation/PoToken fails
             }
+
+            if (streamUrl != resolved.mediaUri) {
+                resolved = resolved.copy(mediaUri = streamUrl)
+            }
+        } catch (e: Exception) {
+            failures[candidate.key] = "poToken append failed: ${e.readableMessage()}"
+            Timber.tag(TAG).e(e, "Failed to append YouTube streaming PoToken")
+            return null
         }
 
         return resolved
@@ -373,7 +358,7 @@ object YouTubeAudioProvider {
      * [Resolved] without any network validation. Shared by the client race
      * and the playerResponseCache hit path.
      */
-    private fun buildResolvedFromPlayerResponse(
+    private suspend fun buildResolvedFromPlayerResponse(
         playerResponse: PlayerResponse,
         videoId: String,
         now: Long,
@@ -387,8 +372,7 @@ object YouTubeAudioProvider {
         val format = selectInnertubeAudioFormats(playerResponse, expectedDurationMs).firstOrNull()
             ?: return null
 
-        val streamUrl = NewPipeUtils.getStreamUrl(format, videoId).getOrNull()
-            ?: format.url
+        val streamUrl = resolveFormatUrl(format, videoId)
             ?: return null
 
         val expiresAtMs = resolveExpiryMs(
@@ -414,6 +398,31 @@ object YouTubeAudioProvider {
             perceptualLoudnessDb = playerResponse.playerConfig?.audioConfig?.perceptualLoudnessDb,
             expiresAtMs = expiresAtMs,
         )
+    }
+
+    private suspend fun resolveFormatUrl(
+        format: PlayerResponse.StreamingData.Format,
+        videoId: String,
+    ): String? {
+        val rawUrl = format.url?.takeIf { it.isNotBlank() } ?: run {
+            val signatureCipher = format.signatureCipher ?: format.cipher
+            val customUrl = signatureCipher
+                ?.takeIf { it.isNotBlank() }
+                ?.let { CipherDeobfuscator.deobfuscateStreamUrl(it, videoId) }
+            customUrl ?: NewPipeUtils.getStreamUrl(format, videoId).getOrNull()
+        } ?: return null
+
+        return try {
+            val newPipeUrl = NewPipeExtractor.getThrottlingDeobfuscatedUrl(videoId, rawUrl)
+            if (newPipeUrl != null && newPipeUrl != rawUrl) {
+                newPipeUrl
+            } else {
+                CipherDeobfuscator.transformNParamInUrl(rawUrl)
+            }
+        } catch (error: Exception) {
+            Timber.tag(TAG).w(error, "YouTube n-parameter transform failed for $videoId")
+            rawUrl
+        }
     }
 
     fun invalidate(videoId: String) {

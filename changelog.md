@@ -1,3 +1,13 @@
+---v7.0.13
+# MetroFuse+ 7.0.13
+
+- Added a safe automatic fallback to exact provider candidates when strict metadata matching rejects otherwise playable sources.
+- Fixed misleading playback errors that appeared to blame Qobuz when every configured provider had been attempted.
+- Fixed YouTube Music `signatureCipher` resolution by routing signed formats through the existing cipher deobfuscator.
+- Preserved Innertube failure details instead of discarding them as generic null responses.
+- Applied YouTube `n` parameter transformation consistently, including cached player responses.
+- Prioritized complete cached audio before online provider resolution and removed the unnecessary network delay for cached playback.
+
 ---v7.0.11
 # MetroFuse+ 7.0.11
 
