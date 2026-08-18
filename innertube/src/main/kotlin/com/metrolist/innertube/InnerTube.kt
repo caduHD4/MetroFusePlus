@@ -317,6 +317,31 @@ class InnerTube {
         )
     }
 
+    /**
+     * Requests the tracking metadata for an authenticated playback session.
+     *
+     * This deliberately does not validate stream playability or race audio clients: history
+     * tracking only needs the URLs returned in playbackTracking, and must remain independent
+     * from the client that supplied the audio stream.
+     */
+    suspend fun playerTracking(
+        videoId: String,
+        playlistId: String?,
+        client: YouTubeClient,
+    ): HttpResponse =
+        withRetry {
+            httpClient.post("player") {
+                ytClient(client, setLogin = true)
+                setBody(
+                    PlayerBody(
+                        context = client.toContext(locale, visitorData, dataSyncId),
+                        videoId = videoId,
+                        playlistId = playlistId,
+                    ),
+                )
+            }
+        }
+
     suspend fun registerPlayback(
         url: String,
         cpn: String,

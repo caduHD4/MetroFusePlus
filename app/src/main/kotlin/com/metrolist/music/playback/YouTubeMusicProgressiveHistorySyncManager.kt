@@ -11,6 +11,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal class YouTubeMusicProgressiveHistorySyncManager(
     private val scope: CoroutineScope,
@@ -27,6 +29,7 @@ internal class YouTubeMusicProgressiveHistorySyncManager(
     private var generation = 0L
     private var sessionJob: Job? = null
     private var heartbeatJob: Job? = null
+    private val reportMutex = Mutex()
 
     fun onSongStart(metadata: MediaMetadata?, durationMs: Long?) {
         val videoId = metadata?.id?.let(YouTubeMusicHistorySyncPolicy::videoIdOrNull) ?: return stop()
@@ -54,10 +57,34 @@ internal class YouTubeMusicProgressiveHistorySyncManager(
         if (session == null) beginSession(videoId) else scheduleHeartbeats()
     }
 
-    fun onSongStop() {
-        val position = currentPositionMs().coerceAtLeast(0L)
-        val state = YouTubeMusicProgressiveHistorySyncPolicy.finalState(position, activeDurationMs)
-        finish(state)
+    fun onSeek(
+        oldPositionMs: Long,
+        newPositionMs: Long,
+    ) {
+        val currentSession = session ?: return
+        val expectedGeneration = generation
+        scope.launch {
+            reportMutex.withLock {
+                if (expectedGeneration != generation || session !== currentSession) return@withLock
+                val oldPosition = oldPositionMs.coerceAtLeast(0L)
+                val (fromMs, toMs) =
+                    YouTubeMusicProgressiveHistorySyncPolicy.progressWindow(
+                        lastReportedPositionMs,
+                        oldPosition,
+                    )
+                reportProgress(currentSession, fromMs / 1_000.0, toMs / 1_000.0, "playing")
+                if (expectedGeneration == generation) {
+                    lastReportedPositionMs = newPositionMs.coerceAtLeast(0L)
+                }
+            }
+        }
+    }
+
+    fun onSongStop(ended: Boolean = false) {
+        val position = maxOf(currentPositionMs().coerceAtLeast(0L), lastReportedPositionMs)
+        val state =
+            if (ended) "ended" else YouTubeMusicProgressiveHistorySyncPolicy.finalState(position, activeDurationMs)
+        finish(state, positionMs = position)
     }
 
     fun destroy() = finish("paused")
@@ -65,6 +92,7 @@ internal class YouTubeMusicProgressiveHistorySyncManager(
     private fun beginSession(videoId: String) {
         if (sessionJob != null || session != null) return
         val expectedGeneration = generation
+        val initialPositionMs = currentPositionMs().coerceAtLeast(0L)
         sessionJob =
             scope.launch {
                 val startedSession = startSession(videoId)
@@ -76,7 +104,7 @@ internal class YouTubeMusicProgressiveHistorySyncManager(
                     isEnabled()
                 ) {
                     session = startedSession
-                    lastReportedPositionMs = currentPositionMs().coerceAtLeast(0L)
+                    lastReportedPositionMs = initialPositionMs
                     scheduleHeartbeats()
                 }
             }
@@ -97,32 +125,47 @@ internal class YouTubeMusicProgressiveHistorySyncManager(
             }
     }
 
-    private fun sendCurrentProgress(state: String) {
+    private fun sendCurrentProgress(
+        state: String,
+        finalReport: Boolean = false,
+        positionMs: Long = currentPositionMs().coerceAtLeast(0L),
+    ) {
         val currentSession = session ?: return
         val expectedGeneration = generation
-        val positionMs = currentPositionMs().coerceAtLeast(0L)
-        val (fromMs, toMs) =
-            YouTubeMusicProgressiveHistorySyncPolicy.progressWindow(lastReportedPositionMs, positionMs)
+        val finalStartPositionMs = lastReportedPositionMs
         scope.launch {
-            if (
-                reportProgress(
-                    currentSession,
-                    fromMs / 1_000.0,
-                    toMs / 1_000.0,
-                    state,
-                ) && expectedGeneration == generation
-            ) {
-                lastReportedPositionMs = positionMs
+            reportMutex.withLock {
+                if (!finalReport && (expectedGeneration != generation || session !== currentSession)) {
+                    return@withLock
+                }
+                val (fromMs, toMs) =
+                    YouTubeMusicProgressiveHistorySyncPolicy.progressWindow(
+                        if (finalReport) finalStartPositionMs else lastReportedPositionMs,
+                        positionMs,
+                    )
+                if (
+                    reportProgress(
+                        currentSession,
+                        fromMs / 1_000.0,
+                        toMs / 1_000.0,
+                        state,
+                    ) && !finalReport && expectedGeneration == generation
+                ) {
+                    lastReportedPositionMs = positionMs
+                }
             }
         }
     }
 
-    private fun finish(state: String) {
+    private fun finish(
+        state: String,
+        positionMs: Long = maxOf(currentPositionMs().coerceAtLeast(0L), lastReportedPositionMs),
+    ) {
         heartbeatJob?.cancel()
         heartbeatJob = null
         sessionJob?.cancel()
         sessionJob = null
-        sendCurrentProgress(state)
+        sendCurrentProgress(state, finalReport = true, positionMs = positionMs)
         generation++
         activeVideoId = null
         activeDurationMs = null

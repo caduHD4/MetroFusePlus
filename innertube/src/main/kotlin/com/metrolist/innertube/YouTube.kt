@@ -25,6 +25,7 @@ import com.metrolist.innertube.models.WatchEndpoint
 import com.metrolist.innertube.models.WatchEndpoint.WatchEndpointMusicSupportedConfigs.WatchEndpointMusicConfig.Companion.MUSIC_VIDEO_TYPE_ATV
 import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.YouTubeClient
+import com.metrolist.innertube.models.YouTubeClient.Companion.ANDROID_MUSIC
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_REMIX
 import com.metrolist.innertube.models.YouTubeLocale
@@ -2686,6 +2687,15 @@ object YouTube {
             innerTube.player(videoId, playlistId, signatureTimestamp, poToken, client).body<PlayerResponse>()
         }
 
+    suspend fun playerTracking(
+        videoId: String,
+        playlistId: String? = null,
+        client: YouTubeClient = ANDROID_MUSIC,
+    ): Result<PlayerResponse> =
+        runCatching {
+            innerTube.playerTracking(videoId, playlistId, client).body<PlayerResponse>()
+        }
+
     suspend fun registerPlayback(
         playlistId: String? = null,
         playbackTracking: String,
@@ -2744,6 +2754,18 @@ object YouTube {
                     client = client,
                     customParameters = YouTubeProgressivePlaybackTrackingPolicy.playbackParameters(),
                 ).also(::requireTrackingSuccess)
+
+            playbackTracking.atrUrl?.baseUrl?.let { attributionUrl ->
+                runCatching {
+                    innerTube
+                        .registerPlaybackAttribution(
+                            url = attributionUrl,
+                            playlistId = playlistId,
+                            cpn = cpn,
+                            client = client,
+                        ).also(::requireTrackingSuccess)
+                }
+            }
 
             ProgressivePlaybackTrackingSession(
                 playbackTracking = playbackTracking,

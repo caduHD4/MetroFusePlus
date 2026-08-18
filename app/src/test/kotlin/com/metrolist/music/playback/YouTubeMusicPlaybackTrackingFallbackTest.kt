@@ -61,12 +61,12 @@ class YouTubeMusicPlaybackTrackingFallbackTest {
                 useWeb = false,
             )
 
-        assertEquals(listOf("WEB_REMIX", "ANDROID_MUSIC", "WEB"), clients.map(YouTubeClient::clientName))
-        assertEquals("7.27.52", clients[1].clientVersion)
-        assertEquals("30", clients[1].androidSdkVersion)
-        assertEquals("Android", clients[1].osName)
-        assertEquals("11", clients[1].osVersion)
-        assertTrue(!clients[1].sendDataSyncIdInContext)
+        assertEquals(listOf("ANDROID_MUSIC"), clients.map(YouTubeClient::clientName))
+        assertEquals("7.27.52", clients[0].clientVersion)
+        assertEquals("30", clients[0].androidSdkVersion)
+        assertEquals("Android", clients[0].osName)
+        assertEquals("11", clients[0].osVersion)
+        assertTrue(!clients[0].sendDataSyncIdInContext)
     }
 
     @Test

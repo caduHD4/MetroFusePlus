@@ -3306,7 +3306,7 @@ class MusicService :
                 resolveWithYouTubeClientFallback(trackingClients) { client ->
                     val playerResponse =
                         YouTube
-                            .player(videoId, client = client)
+                            .playerTracking(videoId, client = client)
                             .onFailure { error ->
                                 Timber.tag(TAG).w(
                                     error,
@@ -3385,7 +3385,7 @@ class MusicService :
                 resolveWithYouTubeClientFallback(trackingClients) { client ->
                     val tracking =
                         YouTube
-                            .player(videoId, client = client)
+                            .playerTracking(videoId, client = client)
                             .onFailure { error ->
                                 Timber.tag(TAG).w(
                                     error,
@@ -3525,7 +3525,9 @@ class MusicService :
         val transitionDuration = currentPlaybackDurationIfReady()
         scrobbleManager?.onSongStop()
         youtubeMusicHistorySyncManager.onSongStop()
-        youtubeMusicProgressiveHistorySyncManager.onSongStop()
+        youtubeMusicProgressiveHistorySyncManager.onSongStop(
+            ended = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+        )
         if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
             scrobbleManager?.onSongStart(transitionedMetadata, duration = transitionDuration)
             youtubeMusicHistorySyncManager.onSongStart(transitionedMetadata, durationMs = transitionDuration)
@@ -3695,7 +3697,7 @@ class MusicService :
             lastLivePlaybackBitrateUpdateMs = 0L
             scrobbleManager?.onSongStop()
             youtubeMusicHistorySyncManager.onSongStop()
-            youtubeMusicProgressiveHistorySyncManager.onSongStop()
+            youtubeMusicProgressiveHistorySyncManager.onSongStop(ended = playbackState == Player.STATE_ENDED)
             discordUpdateJob?.cancel()
             stopSpotifyListeningHistory()
         }
@@ -8654,6 +8656,10 @@ class MusicService :
             scheduleAudioFormatRefresh(mediaId)
         }
         if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+            youtubeMusicProgressiveHistorySyncManager.onSeek(
+                oldPositionMs = oldPosition.positionMs.takeUnless { it == C.TIME_UNSET } ?: 0L,
+                newPositionMs = newPosition.positionMs.takeUnless { it == C.TIME_UNSET } ?: player.currentPosition,
+            )
             val seekPosition =
                 newPosition.positionMs
                     .takeUnless { it == C.TIME_UNSET }

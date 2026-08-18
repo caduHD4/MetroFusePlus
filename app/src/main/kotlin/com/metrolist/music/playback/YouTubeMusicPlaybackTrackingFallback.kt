@@ -36,9 +36,7 @@ private val YOUTUBE_MUSIC_TRACKING_ANDROID_MUSIC =
 
 internal val YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS =
     listOf(
-        YOUTUBE_MUSIC_TRACKING_WEB_REMIX,
         YOUTUBE_MUSIC_TRACKING_ANDROID_MUSIC,
-        YOUTUBE_MUSIC_TRACKING_WEB,
     )
 
 internal fun youTubeMusicHistoryTrackingClients(
