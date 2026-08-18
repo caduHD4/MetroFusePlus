@@ -50,4 +50,28 @@ class YouTubeMusicPlaybackTrackingFallbackTest {
     fun progressiveTrackingFallbackOnlyUsesAuthenticatedClients() {
         assertTrue(YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS.all(YouTubeClient::loginSupported))
     }
+
+    @Test
+    fun automaticHistoryTrackingUsesTheConfiguredFallbackOrder() {
+        val clients =
+            youTubeMusicHistoryTrackingClients(
+                useWebRemix = false,
+                useAndroidMusic = false,
+                useWeb = false,
+            )
+
+        assertEquals(listOf("WEB_REMIX", "ANDROID_MUSIC", "WEB"), clients.map(YouTubeClient::clientName))
+    }
+
+    @Test
+    fun selectedHistoryTrackingClientsReplaceAutomaticFallback() {
+        val clients =
+            youTubeMusicHistoryTrackingClients(
+                useWebRemix = false,
+                useAndroidMusic = true,
+                useWeb = true,
+            )
+
+        assertEquals(listOf("ANDROID_MUSIC", "WEB"), clients.map(YouTubeClient::clientName))
+    }
 }

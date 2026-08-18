@@ -871,5 +871,11 @@
     <string name="unpin">Desfixar</string>
     <string name="experimental_youtube_music_history_sync">Sincronizar reproduções com o histórico do YouTube Music</string>
     <string name="experimental_youtube_music_history_sync_desc">Após uma reprodução real, envia o acompanhamento autenticado de reprodução e tempo assistido ao YouTube Music. O histórico do YouTube deve estar ativado.</string>
+    <string name="experimental_youtube_music_history_client_web_remix">Usar WEB_REMIX no histórico</string>
+    <string name="experimental_youtube_music_history_client_web_remix_desc">Identifica o acompanhamento como YouTube Music web. Deixe todos os clientes desativados para usar a ordem automática.</string>
+    <string name="experimental_youtube_music_history_client_android_music">Usar ANDROID_MUSIC no histórico</string>
+    <string name="experimental_youtube_music_history_client_android_music_desc">Identifica o acompanhamento como o app Android do YouTube Music. Deixe todos os clientes desativados para usar a ordem automática.</string>
+    <string name="experimental_youtube_music_history_client_web">Usar WEB no histórico</string>
+    <string name="experimental_youtube_music_history_client_web_desc">Registra como histórico do YouTube comum. Deixe todos os clientes desativados para usar a ordem automática.</string>
     <string name="youtube_music_history_sync_failed">O YouTube Music não confirmou a entrada no histórico. Verifique se a conta continua conectada e se o histórico do YouTube está ativado.</string>
 </resources>

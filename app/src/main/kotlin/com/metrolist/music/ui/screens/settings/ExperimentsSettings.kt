@@ -56,7 +56,10 @@ import com.metrolist.music.constants.ExperimentalPlaybackDiagnosticsKey
 import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
 import com.metrolist.music.constants.ExperimentalPreserveSongCacheOnQualityChangeKey
 import com.metrolist.music.constants.ExperimentalYouTubeMusicHistorySyncKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryAndroidMusicKey
 import com.metrolist.music.constants.ExperimentalYouTubeMusicProgressiveHistorySyncKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryWebKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryWebRemixKey
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
@@ -137,6 +140,18 @@ fun ExperimentsSettings(
     val (progressiveYouTubeMusicHistorySync, onProgressiveYouTubeMusicHistorySyncChange) = rememberPreference(
         key = ExperimentalYouTubeMusicProgressiveHistorySyncKey,
         defaultValue = true,
+    )
+    val (youTubeMusicHistoryWebRemix, onYouTubeMusicHistoryWebRemixChange) = rememberPreference(
+        key = ExperimentalYouTubeMusicHistoryWebRemixKey,
+        defaultValue = false,
+    )
+    val (youTubeMusicHistoryAndroidMusic, onYouTubeMusicHistoryAndroidMusicChange) = rememberPreference(
+        key = ExperimentalYouTubeMusicHistoryAndroidMusicKey,
+        defaultValue = false,
+    )
+    val (youTubeMusicHistoryWeb, onYouTubeMusicHistoryWebChange) = rememberPreference(
+        key = ExperimentalYouTubeMusicHistoryWebKey,
+        defaultValue = false,
     )
     var showAppleMusicLyricsSizeDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -388,6 +403,39 @@ fun ExperimentsSettings(
                         description = stringResource(R.string.experimental_youtube_music_progressive_history_sync_desc),
                         checked = progressiveYouTubeMusicHistorySync,
                         onCheckedChange = onProgressiveYouTubeMusicHistorySyncChange,
+                    )
+                } else {
+                    null
+                },
+                if (youTubeMusicHistorySync) {
+                    experimentalSwitchItem(
+                        icon = R.drawable.history,
+                        title = stringResource(R.string.experimental_youtube_music_history_client_web_remix),
+                        description = stringResource(R.string.experimental_youtube_music_history_client_web_remix_desc),
+                        checked = youTubeMusicHistoryWebRemix,
+                        onCheckedChange = onYouTubeMusicHistoryWebRemixChange,
+                    )
+                } else {
+                    null
+                },
+                if (youTubeMusicHistorySync) {
+                    experimentalSwitchItem(
+                        icon = R.drawable.history,
+                        title = stringResource(R.string.experimental_youtube_music_history_client_android_music),
+                        description = stringResource(R.string.experimental_youtube_music_history_client_android_music_desc),
+                        checked = youTubeMusicHistoryAndroidMusic,
+                        onCheckedChange = onYouTubeMusicHistoryAndroidMusicChange,
+                    )
+                } else {
+                    null
+                },
+                if (youTubeMusicHistorySync) {
+                    experimentalSwitchItem(
+                        icon = R.drawable.history,
+                        title = stringResource(R.string.experimental_youtube_music_history_client_web),
+                        description = stringResource(R.string.experimental_youtube_music_history_client_web_desc),
+                        checked = youTubeMusicHistoryWeb,
+                        onCheckedChange = onYouTubeMusicHistoryWebChange,
                     )
                 } else {
                     null

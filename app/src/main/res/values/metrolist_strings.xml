@@ -97,6 +97,12 @@
     <string name="experimental_youtube_music_history_sync_desc">After a real listen, sends authenticated playback and watch-time tracking to YouTube Music. YouTube watch history must be enabled.</string>
     <string name="experimental_youtube_music_progressive_history_sync">Test progressive YouTube Music history</string>
     <string name="experimental_youtube_music_progressive_history_sync_desc">Uses one player-like session with real-position heartbeats while the song plays. Turn this off to keep the current My Activity-compatible mode.</string>
+    <string name="experimental_youtube_music_history_client_web_remix">Use WEB_REMIX for history tracking</string>
+    <string name="experimental_youtube_music_history_client_web_remix_desc">Identifies tracking as YouTube Music web. Leave every client off to use the automatic order.</string>
+    <string name="experimental_youtube_music_history_client_android_music">Use ANDROID_MUSIC for history tracking</string>
+    <string name="experimental_youtube_music_history_client_android_music_desc">Identifies tracking as the YouTube Music Android client. Leave every client off to use the automatic order.</string>
+    <string name="experimental_youtube_music_history_client_web">Use WEB for history tracking</string>
+    <string name="experimental_youtube_music_history_client_web_desc">Registers as standard YouTube web history. Leave every client off to use the automatic order.</string>
     <string name="youtube_music_history_sync_failed">YouTube Music did not confirm the history entry. Check that the account is still signed in and YouTube watch history is enabled.</string>
     <string name="skip_next">Skip next</string>
     <string name="experimental_apple_music_cover_fade">Fade Apple Music cover into UI</string>

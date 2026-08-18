@@ -125,7 +125,10 @@ import com.metrolist.music.constants.ExperimentalPlaybackDiagnosticsKey
 import com.metrolist.music.constants.ExperimentalPreserveSongCacheOnQualityChangeKey
 import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
 import com.metrolist.music.constants.ExperimentalYouTubeMusicHistorySyncKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryAndroidMusicKey
 import com.metrolist.music.constants.ExperimentalYouTubeMusicProgressiveHistorySyncKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryWebKey
+import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryWebRemixKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.playback.CanvasWallpaperService
 import com.metrolist.music.utils.PreferenceCache
@@ -3298,8 +3301,9 @@ class MusicService :
         playedSeconds: Double,
     ): Boolean =
         withContext(Dispatchers.IO) {
+            val trackingClients = configuredYouTubeMusicHistoryTrackingClients()
             val registrationResolution =
-                resolveWithYouTubeClientFallback(YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS) { client ->
+                resolveWithYouTubeClientFallback(trackingClients) { client ->
                     val playerResponse =
                         YouTube
                             .player(videoId, client = client)
@@ -3376,8 +3380,9 @@ class MusicService :
         videoId: String,
     ): YouTube.ProgressivePlaybackTrackingSession? =
         withContext(Dispatchers.IO) {
+            val trackingClients = configuredYouTubeMusicHistoryTrackingClients()
             val sessionResolution =
-                resolveWithYouTubeClientFallback(YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS) { client ->
+                resolveWithYouTubeClientFallback(trackingClients) { client ->
                     val tracking =
                         YouTube
                             .player(videoId, client = client)
@@ -3421,6 +3426,13 @@ class MusicService :
                 }
             }
         }
+
+    private fun configuredYouTubeMusicHistoryTrackingClients(): List<YouTubeClient> =
+        youTubeMusicHistoryTrackingClients(
+            useWebRemix = dataStore.get(ExperimentalYouTubeMusicHistoryWebRemixKey, false),
+            useAndroidMusic = dataStore.get(ExperimentalYouTubeMusicHistoryAndroidMusicKey, false),
+            useWeb = dataStore.get(ExperimentalYouTubeMusicHistoryWebKey, false),
+        )
 
     private suspend fun reportYouTubeMusicProgressiveHistoryProgress(
         session: YouTube.ProgressivePlaybackTrackingSession,
