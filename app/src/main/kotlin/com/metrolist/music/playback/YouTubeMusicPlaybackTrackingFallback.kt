@@ -22,10 +22,19 @@ private val YOUTUBE_MUSIC_TRACKING_WEB =
         loginSupported = true,
     )
 
+private val YOUTUBE_MUSIC_TRACKING_ANDROID_MUSIC =
+    YouTubeClient.ANDROID_MUSIC.copy(
+        clientVersion = "7.27.52",
+        userAgent = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
+        osName = "Android",
+        osVersion = "11",
+        androidSdkVersion = "30",
+    )
+
 internal val YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS =
     listOf(
         YOUTUBE_MUSIC_TRACKING_WEB_REMIX,
-        YouTubeClient.ANDROID_MUSIC,
+        YOUTUBE_MUSIC_TRACKING_ANDROID_MUSIC,
         YOUTUBE_MUSIC_TRACKING_WEB,
     )
 
@@ -36,7 +45,7 @@ internal fun youTubeMusicHistoryTrackingClients(
 ): List<YouTubeClient> =
     buildList {
         if (useWebRemix) add(YOUTUBE_MUSIC_TRACKING_WEB_REMIX)
-        if (useAndroidMusic) add(YouTubeClient.ANDROID_MUSIC)
+        if (useAndroidMusic) add(YOUTUBE_MUSIC_TRACKING_ANDROID_MUSIC)
         if (useWeb) add(YOUTUBE_MUSIC_TRACKING_WEB)
     }.ifEmpty { YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS }
 
