@@ -88,6 +88,7 @@ object YouTubeAudioProvider {
     private val extractorDownloader = BravePipeExtractorDownloader(httpClient)
     private val poTokenGenerator = PoTokenGenerator()
     private val innertubePlaybackClients = listOf(
+        PlaybackClientCandidate("visionos", YouTubeClient.VISIONOS),
         PlaybackClientCandidate("android_vr_no_auth", YouTubeClient.ANDROID_VR_NO_AUTH),
         PlaybackClientCandidate("android_vr_143", YouTubeClient.ANDROID_VR_1_43_32),
         PlaybackClientCandidate("tv_embedded", YouTubeClient.TVHTML5_SIMPLY_EMBEDDED_PLAYER),
@@ -319,15 +320,15 @@ object YouTubeAudioProvider {
             return null
         }
 
-        // Cache the successful player response, tagged with its client key,
-        // so a later cache hit rebuilds headers for the right client.
-        playerResponseCache[videoId] = CachedPlayerResponse(playerResponse, candidate.key, System.currentTimeMillis())
-
         var resolved = buildResolvedFromPlayerResponse(playerResponse, videoId, now, candidate.key)
         if (resolved == null) {
             failures[candidate.key] = "no usable audio format in player response"
             return null
         }
+
+        // A playable status can still contain only SABR metadata and no direct stream URL.
+        // Cache the response only after it has produced a stream supported by this resolver.
+        playerResponseCache[videoId] = CachedPlayerResponse(playerResponse, candidate.key, System.currentTimeMillis())
 
         try {
             var streamUrl = resolved.mediaUri
