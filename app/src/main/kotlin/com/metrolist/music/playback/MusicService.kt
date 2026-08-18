@@ -3376,31 +3376,50 @@ class MusicService :
         videoId: String,
     ): YouTube.ProgressivePlaybackTrackingSession? =
         withContext(Dispatchers.IO) {
-            val client = YouTubeClient.WEB_REMIX
-            val tracking =
-                YouTube
-                    .player(videoId, client = client)
-                    .onFailure { error ->
-                        Timber.tag(TAG).w(error, "Progressive YouTube Music player request failed for %s", videoId)
-                    }.getOrNull()
-                    ?.playbackTracking
-                    ?.takeIf {
-                        !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() &&
-                            !it.videostatsWatchtimeUrl?.baseUrl.isNullOrBlank()
-                    }
-                    ?: return@withContext null
+            val sessionResolution =
+                resolveWithYouTubeClientFallback(YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS) { client ->
+                    val tracking =
+                        YouTube
+                            .player(videoId, client = client)
+                            .onFailure { error ->
+                                Timber.tag(TAG).w(
+                                    error,
+                                    "Progressive YouTube Music player request failed for %s with %s",
+                                    videoId,
+                                    client.clientName,
+                                )
+                            }.getOrNull()
+                            ?.playbackTracking
+                            ?.takeIf {
+                                !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() &&
+                                    !it.videostatsWatchtimeUrl?.baseUrl.isNullOrBlank()
+                            }
+                            ?: return@resolveWithYouTubeClientFallback null
 
-            YouTube
-                .startProgressivePlaybackTracking(
-                    playbackTracking = tracking,
-                    client = client,
-                ).onFailure { error ->
-                    Timber.tag(TAG).w(error, "Progressive YouTube Music session failed for %s", videoId)
-                }.getOrNull()
-                ?.also {
-                    youtubeMusicHistoryFailureNotified = false
-                    Timber.tag(TAG).d("Progressive YouTube Music session started for %s", videoId)
+                    YouTube
+                        .startProgressivePlaybackTracking(
+                            playbackTracking = tracking,
+                            client = client,
+                        ).onFailure { error ->
+                            Timber.tag(TAG).w(
+                                error,
+                                "Progressive YouTube Music session failed for %s with %s",
+                                videoId,
+                                client.clientName,
+                            )
+                        }.getOrNull()
                 }
+
+            sessionResolution?.let { resolution ->
+                resolution.value.also {
+                    youtubeMusicHistoryFailureNotified = false
+                    Timber.tag(TAG).d(
+                        "Progressive YouTube Music session started for %s with %s",
+                        videoId,
+                        resolution.client.clientName,
+                    )
+                }
+            }
         }
 
     private suspend fun reportYouTubeMusicProgressiveHistoryProgress(

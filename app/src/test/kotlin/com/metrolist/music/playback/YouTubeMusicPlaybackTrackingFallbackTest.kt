@@ -4,6 +4,7 @@ import com.metrolist.innertube.models.YouTubeClient
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class YouTubeMusicPlaybackTrackingFallbackTest {
@@ -44,4 +45,9 @@ class YouTubeMusicPlaybackTrackingFallbackTest {
             assertNull(result)
             assertEquals(listOf("WEB_REMIX", "ANDROID_MUSIC"), attemptedClients)
         }
+
+    @Test
+    fun progressiveTrackingFallbackOnlyUsesAuthenticatedClients() {
+        assertTrue(YOUTUBE_MUSIC_HISTORY_TRACKING_CLIENTS.all(YouTubeClient::loginSupported))
+    }
 }
