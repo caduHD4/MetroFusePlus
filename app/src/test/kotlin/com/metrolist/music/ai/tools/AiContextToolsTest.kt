@@ -3,10 +3,13 @@ package com.metrolist.music.ai.tools
 import com.metrolist.music.ai.model.AiPermissions
 import com.metrolist.music.ai.model.AiQueueItemContext
 import com.metrolist.music.ai.model.AiToolContext
+import com.metrolist.music.ai.model.AiUiContext
+import com.metrolist.music.ai.model.AiUiContextType
 import com.metrolist.music.ai.model.CurrentLyricsContext
 import com.metrolist.music.ai.playlist.AiSessionArtifacts
 import com.metrolist.music.ai.tools.context.GetLyricsTool
 import com.metrolist.music.ai.tools.context.GetQueueTool
+import com.metrolist.music.ai.tools.context.GetUiContextTool
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -87,15 +90,33 @@ class AiContextToolsTest {
         assertEquals("translation", payload["translatedLyrics"]!!.jsonPrimitive.content)
     }
 
+    @Test
+    fun `UI context tool returns typed bounded route context`() = runBlocking {
+        val result =
+            GetUiContextTool().execute(
+                JsonObject(emptyMap()),
+                context(
+                    permissions = AiPermissions(),
+                    uiContext = AiUiContext(AiUiContextType.ALBUM, resourceId = "album-id"),
+                ),
+            ) as AiToolResult.Success
+        val payload = result.payload.jsonObject
+
+        assertEquals("album", payload["type"]!!.jsonPrimitive.content)
+        assertEquals("album-id", payload["resourceId"]!!.jsonPrimitive.content)
+    }
+
     private fun context(
         permissions: AiPermissions,
         queue: List<AiQueueItemContext> = emptyList(),
         lyrics: CurrentLyricsContext? = null,
+        uiContext: AiUiContext? = null,
     ) = AiToolContext(
         permissions = permissions,
         currentMusic = null,
         artifacts = AiSessionArtifacts(),
         queue = queue,
         lyrics = lyrics,
+        uiContext = uiContext,
     )
 }

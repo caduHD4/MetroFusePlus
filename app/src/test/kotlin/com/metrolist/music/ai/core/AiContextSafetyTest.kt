@@ -3,6 +3,8 @@ package com.metrolist.music.ai.core
 import com.metrolist.music.ai.model.AiConversationMessage
 import com.metrolist.music.ai.model.AiPermissions
 import com.metrolist.music.ai.model.AiQueueItemContext
+import com.metrolist.music.ai.model.AiUiContext
+import com.metrolist.music.ai.model.AiUiContextType
 import com.metrolist.music.ai.model.CurrentLyricsContext
 import com.metrolist.music.ai.model.CurrentMusicContext
 import com.metrolist.music.ai.playlist.AiSessionArtifacts
@@ -56,6 +58,36 @@ class AiContextSafetyTest {
 
         assertTrue('\u0000' !in sanitized)
         assertEquals(AiDataSanitizer.MAX_USER_MESSAGE_CHARS, sanitized.length)
+    }
+
+    @Test
+    fun `playlist UI context exposes its trusted id only with playlist permission`() {
+        val builder = AiContextBuilder(AiDataSanitizer())
+        val artifacts = AiSessionArtifacts()
+        val hidden =
+            builder.build(
+                permissions = AiPermissions(playlists = false),
+                currentMusic = null,
+                queue = emptyList(),
+                queueTotal = 0,
+                lyrics = null,
+                uiContext = AiUiContext(AiUiContextType.PLAYLIST, resourceId = "LP_REAL"),
+                artifacts = artifacts,
+            )
+        val visible =
+            builder.build(
+                permissions = AiPermissions(playlists = true),
+                currentMusic = null,
+                queue = emptyList(),
+                queueTotal = 0,
+                lyrics = null,
+                uiContext = AiUiContext(AiUiContextType.PLAYLIST, resourceId = "LP_REAL"),
+                artifacts = artifacts,
+            )
+
+        assertNull(hidden.uiContext?.resourceId)
+        assertEquals("LP_REAL", visible.uiContext?.resourceId)
+        assertTrue(artifacts.knowsPlaylist("LP_REAL"))
     }
 
     private fun currentMusic() =

@@ -51,6 +51,24 @@ class AiPlaylistSafetyTest {
     }
 
     @Test
+    fun `candidate pool removes metadata duplicates and stays bounded`() {
+        val ranker = AiPlaylistRanker()
+        val candidates =
+            buildList {
+                add(song("first", "Artist A"))
+                add(song("same-metadata", "Artist A"))
+                repeat(80) { index -> add(song("track-$index", "Artist $index")) }
+            }.mapIndexed { index, song ->
+                if (index == 1) song.copy(title = "FIRST") else song
+            }
+
+        val pool = ranker.candidatePool(candidates)
+
+        assertEquals(AiSessionArtifacts.MAX_CANDIDATE_POOL, pool.size)
+        assertFalse(pool.any { it.id == "same-metadata" })
+    }
+
+    @Test
     fun `playlist IDs must be observed before detailed access`() {
         val artifacts = AiSessionArtifacts()
 
