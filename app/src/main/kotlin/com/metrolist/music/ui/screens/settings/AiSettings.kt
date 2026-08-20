@@ -55,6 +55,8 @@ import com.metrolist.music.constants.OpenRouterBaseUrlKey
 import com.metrolist.music.constants.OpenRouterModelKey
 import com.metrolist.music.constants.TranslateLanguageKey
 import com.metrolist.music.constants.TranslateModeKey
+import com.metrolist.music.ai.security.AiSecretAliases
+import com.metrolist.music.ai.security.rememberAiSecret
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
@@ -65,12 +67,12 @@ import com.metrolist.music.utils.rememberPreference
 @Composable
 fun AiSettings(navController: NavController) {
     var aiProvider by rememberPreference(AiProviderKey, "OpenRouter")
-    var openRouterApiKey by rememberPreference(OpenRouterApiKey, "")
+    var openRouterApiKey by rememberAiSecret(AiSecretAliases.lyricsChat(aiProvider), OpenRouterApiKey)
     var openRouterBaseUrl by rememberPreference(OpenRouterBaseUrlKey, "https://openrouter.ai/api/v1/chat/completions")
     var openRouterModel by rememberPreference(OpenRouterModelKey, "google/gemini-2.5-flash-lite")
     var translateLanguage by rememberPreference(TranslateLanguageKey, "en")
     var translateMode by rememberPreference(TranslateModeKey, "Literal")
-    var deeplApiKey by rememberPreference(DeeplApiKey, "")
+    var deeplApiKey by rememberAiSecret(AiSecretAliases.lyrics("DeepL"), DeeplApiKey)
     var deeplFormality by rememberPreference(DeeplFormalityKey, "default")
     var aiSystemPrompt by rememberPreference(AiSystemPromptKey, "")
 
@@ -339,7 +341,7 @@ fun AiSettings(navController: NavController) {
         TextFieldDialog(
             title = { Text(stringResource(R.string.ai_api_key)) },
             icon = { Icon(painterResource(R.drawable.key), null) },
-            initialTextFieldValue = TextFieldValue(text = openRouterApiKey),
+            initialTextFieldValue = TextFieldValue(),
             onDone = {
                 openRouterApiKey = it
                 showApiKeyDialog = false
@@ -352,7 +354,7 @@ fun AiSettings(navController: NavController) {
         TextFieldDialog(
             title = { Text("DeepL ${stringResource(R.string.ai_api_key)}") },
             icon = { Icon(painterResource(R.drawable.key), null) },
-            initialTextFieldValue = TextFieldValue(text = deeplApiKey),
+            initialTextFieldValue = TextFieldValue(),
             onDone = {
                 deeplApiKey = it
                 showDeeplApiKeyDialog = false
@@ -481,6 +483,16 @@ fun AiSettings(navController: NavController) {
                     WindowInsetsSides.Top,
                 ),
             ),
+        )
+
+        AiAssistantSettingsSection()
+
+        Spacer(modifier = Modifier.height(27.dp))
+
+        Text(
+            text = stringResource(R.string.ai_lyrics_translation_section),
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(vertical = 8.dp),
         )
 
         Material3SettingsGroup(
@@ -650,7 +662,7 @@ fun AiSettings(navController: NavController) {
     }
 
     TopAppBar(
-        title = { Text(stringResource(R.string.ai_lyrics_translation)) },
+        title = { Text(stringResource(R.string.ai_settings)) },
         navigationIcon = {
             IconButton(onClick = { navController.navigateUp() }) {
                 Icon(

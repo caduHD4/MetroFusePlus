@@ -137,6 +137,8 @@ import com.metrolist.music.constants.LyricsTextSizeKey
 import com.metrolist.music.constants.OpenRouterApiKey
 import com.metrolist.music.constants.OpenRouterBaseUrlKey
 import com.metrolist.music.constants.OpenRouterModelKey
+import com.metrolist.music.ai.security.AiSecretAliases
+import com.metrolist.music.ai.security.rememberAiSecret
 import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.TranslateLanguageKey
@@ -218,9 +220,9 @@ fun OriginalLyrics(
     val lyricsTextSize by rememberPreference(LyricsTextSizeKey, 24f)
     val lyricsLineSpacing by rememberPreference(LyricsLineSpacingKey, 1.3f)
 
-    val openRouterApiKey by rememberPreference(OpenRouterApiKey, "")
-    val deeplApiKey by rememberPreference(DeeplApiKey, "")
     val aiProvider by rememberPreference(AiProviderKey, "OpenRouter")
+    val openRouterApiKey by rememberAiSecret(AiSecretAliases.lyricsChat(aiProvider), OpenRouterApiKey)
+    val deeplApiKey by rememberAiSecret(AiSecretAliases.lyrics("DeepL"), DeeplApiKey)
     val openRouterBaseUrl by rememberPreference(OpenRouterBaseUrlKey, "https://openrouter.ai/api/v1/chat/completions")
     val openRouterModel by rememberPreference(OpenRouterModelKey, "google/gemini-2.5-flash-lite")
     val translateLanguage by rememberPreference(TranslateLanguageKey, "en")

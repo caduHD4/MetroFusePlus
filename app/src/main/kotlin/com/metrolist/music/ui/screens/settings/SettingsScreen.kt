@@ -125,8 +125,9 @@ fun SettingsScreen(
                     onClick = { navController.navigate("settings/content") }
                 ),
                 Material3SettingsItem(
-                    icon = painterResource(R.drawable.translate),
-                    title = { Text(stringResource(R.string.ai_lyrics_translation)) },
+                    icon = painterResource(R.drawable.ai_sparkle),
+                    title = { Text(stringResource(R.string.ai_settings)) },
+                    description = { Text(stringResource(R.string.ai_assistant_settings_desc)) },
                     onClick = { navController.navigate("settings/ai") }
                 )
             )

@@ -103,6 +103,8 @@ import com.metrolist.music.constants.OpenRouterBaseUrlKey
 import com.metrolist.music.constants.OpenRouterDefaultBaseUrl
 import com.metrolist.music.constants.OpenRouterDefaultModel
 import com.metrolist.music.constants.OpenRouterModelKey
+import com.metrolist.music.ai.security.AiSecretAliases
+import com.metrolist.music.ai.security.rememberAiSecret
 import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.RespectAgentPositioningKey
@@ -178,9 +180,9 @@ fun ExperimentalLyrics(
     val appleMusicLyricsSize by rememberPreference(ExperimentalAppleMusicLyricsSizeKey, 46f)
     
     // AI Translation Preferences
-    val openRouterApiKey by rememberPreference(OpenRouterApiKey, "")
-    val deeplApiKey by rememberPreference(DeeplApiKey, "")
     val aiProvider by rememberPreference(AiProviderKey, "OpenRouter")
+    val openRouterApiKey by rememberAiSecret(AiSecretAliases.lyricsChat(aiProvider), OpenRouterApiKey)
+    val deeplApiKey by rememberAiSecret(AiSecretAliases.lyrics("DeepL"), DeeplApiKey)
     val openRouterBaseUrl by rememberPreference(OpenRouterBaseUrlKey, OpenRouterDefaultBaseUrl)
     val openRouterModel by rememberPreference(OpenRouterModelKey, OpenRouterDefaultModel)
     val translateLanguage by rememberPreference(TranslateLanguageKey, "en")

@@ -14,6 +14,9 @@
         <exclude
             domain="database"
             path="exoplayer_internal.db" />
+        <exclude
+            domain="sharedpref"
+            path="ai_secrets.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude
@@ -25,5 +28,8 @@
         <exclude
             domain="database"
             path="exoplayer_internal.db" />
+        <exclude
+            domain="sharedpref"
+            path="ai_secrets.xml" />
     </device-transfer>
 </data-extraction-rules>
