@@ -99,6 +99,10 @@ output-metadata.json
 # Binary files and core dumps
 core
 core.*
+!app/src/main/kotlin/com/metrolist/music/ai/core/
+!app/src/main/kotlin/com/metrolist/music/ai/core/**
+!app/src/test/kotlin/com/metrolist/music/ai/core/
+!app/src/test/kotlin/com/metrolist/music/ai/core/**
 *.so
 !app/src/main/jniLibs/arm64-v8a/libdiscord_partner_sdk.so
 !app/src/main/jniLibs/armeabi-v7a/libdiscord_partner_sdk.so
