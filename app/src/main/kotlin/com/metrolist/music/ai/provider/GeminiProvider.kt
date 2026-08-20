@@ -282,8 +282,8 @@ class GeminiProvider(
         when (this) {
             is JsonObject ->
                 JsonObject(
-                    entries
-                        .filterKeys { it !in GEMINI_UNSUPPORTED_SCHEMA_KEYS }
+                    this
+                        .filterKeys { key -> key !in GEMINI_UNSUPPORTED_SCHEMA_KEYS }
                         .mapValues { (_, value) -> value.toGeminiSchema() },
                 )
             is JsonArray -> JsonArray(map { it.toGeminiSchema() })
