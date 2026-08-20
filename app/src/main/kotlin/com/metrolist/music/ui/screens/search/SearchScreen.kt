@@ -246,6 +246,13 @@ fun SearchScreen(
                                     )
                                 }
                             }
+                            IconButton(onClick = { navController.navigate("recognition") }) {
+                                Icon(
+                                    painter = painterResource(R.drawable.mic),
+                                    contentDescription = stringResource(R.string.recognize_music),
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
                             IconButton(
                                 onClick = {
                                     searchSource =

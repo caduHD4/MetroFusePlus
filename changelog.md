@@ -1,3 +1,9 @@
+---v7.0.19
+# MetroFuse+ 7.0.19
+
+- Fixed music recognition audio resampling on Media3 1.10.0 by replacing the incompatible SonicAudioProcessor path with the current Metrolist PCM 16-bit linear resampler.
+- Added a microphone button to the search bar for direct access to music recognition.
+
 ---v7.0.18
 # MetroFuse+ 7.0.18
 
