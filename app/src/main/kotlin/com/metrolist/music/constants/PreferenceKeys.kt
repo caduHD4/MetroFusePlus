@@ -765,6 +765,7 @@ val ExperimentalDeezerResolverFallbackKey = booleanPreferencesKey("experimentalD
 val ExperimentalConfirmBeforeSkipKey = booleanPreferencesKey("experimentalConfirmBeforeSkip")
 val ExperimentalPlaybackDiagnosticsKey = booleanPreferencesKey("experimentalPlaybackDiagnostics")
 val ExperimentalAccurateProviderHealthKey = booleanPreferencesKey("experimentalAccurateProviderHealth")
+val ExperimentalAiAssistantKey = booleanPreferencesKey("experimentalAiAssistant")
 val ExperimentalPreserveSongCacheOnQualityChangeKey = booleanPreferencesKey("experimentalPreserveSongCacheOnQualityChange")
 val ExperimentalYouTubeMusicHistorySyncKey = booleanPreferencesKey("experimentalYouTubeMusicHistorySync")
 val ExperimentalYouTubeMusicProgressiveHistorySyncKey =
@@ -813,7 +814,9 @@ const val DEFAULT_AI_ASSISTANT_SYSTEM_PROMPT = """You are the MetroFuse+ music a
 
 Rules:
 - Use tools whenever you need catalog, player, queue, lyrics, library, playlist, or history data.
-- For playlist requests, search the catalog first and create a draft only from IDs returned by tools in this session.
+- For a new playlist request, prefer create_playlist_draft with 2-5 complementary queries so the app can show a plan and search only after confirmation. If you already have catalog results, use only their real song IDs.
+- Use update_playlist_draft for follow-up requests about the active draft. Never replace a draft with unknown IDs.
+- Use get_ui_context when the user refers to the screen, playlist, album, artist, or search they came from.
 - Never invent music IDs or claim that an app action succeeded without a successful tool result.
 - Never use Markdown, prose, or JSON embedded in text as a protocol for app cards or actions.
 - Reversible or persistent app changes must use typed tools and wait for explicit user confirmation when requested.

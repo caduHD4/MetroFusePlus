@@ -9,6 +9,7 @@ import com.metrolist.music.ai.model.AiToolContext
 import com.metrolist.music.ai.core.runCatchingPreservingCancellation
 import com.metrolist.music.ai.repository.AiUserContextRepository
 import com.metrolist.music.ai.tools.AiTool
+import com.metrolist.music.ai.tools.AiToolPresentation
 import com.metrolist.music.ai.tools.AiToolResult
 import com.metrolist.music.ai.tools.AiToolRisk
 import kotlinx.serialization.json.JsonObject
@@ -51,23 +52,25 @@ constructor(
             onSuccess = { playlists ->
                 context.artifacts.rememberPlaylistIds(playlists.map { it.id })
                 AiToolResult.Success(
-                    buildJsonObject {
-                        put("offset", offset)
-                        put(
-                            "items",
-                            buildJsonArray {
-                                playlists.forEach { playlist ->
-                                    add(
-                                        buildJsonObject {
-                                            put("id", playlist.id)
-                                            put("name", playlist.name)
-                                            put("songCount", playlist.songCount)
-                                        },
-                                    )
-                                }
-                            },
-                        )
-                    },
+                    payload =
+                        buildJsonObject {
+                            put("offset", offset)
+                            put(
+                                "items",
+                                buildJsonArray {
+                                    playlists.forEach { playlist ->
+                                        add(
+                                            buildJsonObject {
+                                                put("id", playlist.id)
+                                                put("name", playlist.name)
+                                                put("songCount", playlist.songCount)
+                                            },
+                                        )
+                                    }
+                                },
+                            )
+                        },
+                    presentation = AiToolPresentation.Playlists(playlists),
                 )
             },
             onFailure = {

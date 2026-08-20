@@ -23,6 +23,12 @@ sealed interface AiPendingAction {
         val songs: List<SongItem>,
     ) : AiPendingAction
 
+    data class BuildPlaylistDraft(
+        override val id: String,
+        val intent: AiPlaylistIntent,
+        val queries: List<String>,
+    ) : AiPendingAction
+
     data class PlaySong(
         override val id: String,
         val song: SongItem,
@@ -32,7 +38,45 @@ sealed interface AiPendingAction {
         override val id: String,
         val song: SongItem,
     ) : AiPendingAction
+
+    data class PlayPlaylist(
+        override val id: String,
+        val title: String,
+        val songs: List<SongItem>,
+    ) : AiPendingAction
+
+    data class SavePlaylistDraft(
+        override val id: String,
+        val draftId: String,
+        val title: String,
+    ) : AiPendingAction
+
+    data class AddTracksToPlaylist(
+        override val id: String,
+        val playlistId: String,
+        val playlistName: String,
+        val songs: List<SongItem>,
+    ) : AiPendingAction
+
+    data class RemoveFromQueue(
+        override val id: String,
+        val entries: List<AiQueueRemoval>,
+    ) : AiPendingAction
+
+    data class UpdatePlaylistDraft(
+        override val id: String,
+        val draftId: String,
+        val title: String?,
+        val songs: List<SongItem>,
+        val replace: Boolean,
+    ) : AiPendingAction
 }
+
+data class AiQueueRemoval(
+    val position: Int,
+    val songId: String,
+    val title: String,
+)
 
 enum class AiQueueInsertion {
     NEXT,

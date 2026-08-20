@@ -8,7 +8,9 @@ package com.metrolist.music.ai.repository
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.models.toMediaMetadata
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -69,6 +71,14 @@ constructor(
             .drop(safeOffset(offset))
             .take(safeLimit(limit))
             .map { it.song.toMediaMetadata().toYTItem() }
+
+    suspend fun playlistName(playlistId: String): String? =
+        withContext(Dispatchers.IO) { database.playlistBlocking(playlistId)?.title }
+
+    suspend fun editablePlaylistName(playlistId: String): String? =
+        withContext(Dispatchers.IO) {
+            database.playlistBlocking(playlistId)?.takeIf { it.playlist.isEditable }?.title
+        }
 
     suspend fun recentlyPlayed(
         limit: Int,

@@ -13,6 +13,7 @@ import com.metrolist.music.ai.model.AiPendingToolCall
 import com.metrolist.music.ai.model.AiToolContext
 import com.metrolist.music.ai.model.AiToolDefinition
 import com.metrolist.music.ai.playlist.AiPlaylistDraft
+import com.metrolist.music.ai.repository.AiLibraryPlaylist
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -54,6 +55,10 @@ sealed interface AiToolPresentation {
 
     data class Artists(
         val items: List<ArtistItem>,
+    ) : AiToolPresentation
+
+    data class Playlists(
+        val items: List<AiLibraryPlaylist>,
     ) : AiToolPresentation
 
     data class PlaylistDraft(

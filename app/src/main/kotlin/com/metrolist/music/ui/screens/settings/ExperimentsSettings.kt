@@ -48,6 +48,7 @@ import com.metrolist.music.constants.ExperimentalGalaxyBlurAdaptiveArtworkKey
 import com.metrolist.music.constants.ExperimentalGalaxyBlurMirroredColorsKey
 import com.metrolist.music.constants.ExperimentalSmoothInlineLyricsKey
 import com.metrolist.music.constants.ExperimentalAccurateProviderHealthKey
+import com.metrolist.music.constants.ExperimentalAiAssistantKey
 import com.metrolist.music.constants.ExperimentalConfirmBeforeSkipKey
 import com.metrolist.music.constants.ExperimentalDeezerFirstKey
 import com.metrolist.music.constants.ExperimentalDeezerResolverFallbackKey
@@ -129,6 +130,10 @@ fun ExperimentsSettings(
         key = ExperimentalAccurateProviderHealthKey,
         defaultValue = true,
     )
+    val (aiAssistantEnabled, onAiAssistantEnabledChange) = rememberPreference(
+        key = ExperimentalAiAssistantKey,
+        defaultValue = true,
+    )
     val (preserveSongCacheOnQualityChange, onPreserveSongCacheOnQualityChange) = rememberPreference(
         key = ExperimentalPreserveSongCacheOnQualityChangeKey,
         defaultValue = true,
@@ -176,6 +181,13 @@ fun ExperimentsSettings(
         Material3SettingsGroup(
             title = stringResource(R.string.experiments_player),
             items = listOf(
+                experimentalSwitchItem(
+                    icon = R.drawable.ai_sparkle,
+                    title = stringResource(R.string.experimental_ai_assistant),
+                    description = stringResource(R.string.experimental_ai_assistant_desc),
+                    checked = aiAssistantEnabled,
+                    onCheckedChange = onAiAssistantEnabledChange,
+                ),
                 Material3SettingsItem(
                     icon = painterResource(R.drawable.gradient),
                     title = { Text(stringResource(R.string.experimental_apple_music_cover_fade)) },

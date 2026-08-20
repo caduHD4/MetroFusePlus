@@ -11,12 +11,26 @@ import javax.inject.Inject
 class AiPlaylistRanker
 @Inject
 constructor() {
+    fun candidatePool(candidates: List<SongItem>): List<SongItem> {
+        val seenIds = mutableSetOf<String>()
+        val seenMetadata = mutableSetOf<String>()
+        return candidates
+            .asSequence()
+            .filter { song ->
+                val idIsNew = seenIds.add(song.id)
+                val metadataKey =
+                    "${normalize(song.title)}\u0000${normalize(song.artists.firstOrNull()?.name.orEmpty())}"
+                idIsNew && seenMetadata.add(metadataKey)
+            }.take(AiSessionArtifacts.MAX_CANDIDATE_POOL)
+            .toList()
+    }
+
     fun finalizeSelection(
         selected: List<SongItem>,
         targetCount: Int,
     ): List<SongItem> {
         val target = targetCount.coerceIn(1, AiSessionArtifacts.MAX_CANDIDATE_POOL)
-        val unique = selected.distinctBy(SongItem::id)
+        val unique = candidatePool(selected)
         if (unique.size <= 3) return unique.take(target)
 
         val primaryArtistLimit = MAX_PRIMARY_ARTIST_TRACKS
@@ -38,5 +52,10 @@ constructor() {
 
     companion object {
         private const val MAX_PRIMARY_ARTIST_TRACKS = 3
+
+        private fun normalize(value: String): String =
+            value
+                .lowercase()
+                .filter(Char::isLetterOrDigit)
     }
 }

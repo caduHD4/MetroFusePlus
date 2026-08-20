@@ -28,13 +28,18 @@ import com.metrolist.music.ai.model.AiConversationMessage
 import com.metrolist.music.ai.model.AiPermissions
 import com.metrolist.music.ai.model.AiProviderConfig
 import com.metrolist.music.ai.model.AiQueueItemContext
+import com.metrolist.music.ai.model.AiUiContext
 import com.metrolist.music.ai.model.CurrentLyricsContext
 import com.metrolist.music.ai.model.CurrentMusicContext
 import com.metrolist.music.ai.playlist.AiPlaylistDraft
+import com.metrolist.music.ai.playlist.AiPlaylistCurator
+import com.metrolist.music.ai.playlist.AiPlaylistRanker
 import com.metrolist.music.ai.playlist.AiSessionArtifacts
 import com.metrolist.music.ai.provider.AiProviderRegistry
 import com.metrolist.music.ai.repository.AiModelRepository
+import com.metrolist.music.ai.repository.AiMusicCatalogRepository
 import com.metrolist.music.ai.repository.AiPlaylistRepository
+import com.metrolist.music.ai.repository.AiLibraryPlaylist
 import com.metrolist.music.ai.security.AiSecretAliases
 import com.metrolist.music.ai.security.AiSecretStore
 import com.metrolist.music.ai.tools.AiToolPresentation
@@ -57,12 +62,18 @@ import com.metrolist.music.utils.get
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
 import javax.inject.Inject
 
@@ -76,6 +87,9 @@ constructor(
     private val providerRegistry: AiProviderRegistry,
     private val secretStore: AiSecretStore,
     private val playlistRepository: AiPlaylistRepository,
+    private val musicCatalogRepository: AiMusicCatalogRepository,
+    private val playlistCurator: AiPlaylistCurator,
+    private val playlistRanker: AiPlaylistRanker,
     private val contextBuilder: AiContextBuilder,
     private val dataSanitizer: AiDataSanitizer,
 ) : ViewModel() {
@@ -84,6 +98,7 @@ constructor(
     private val _uiState = MutableStateFlow(AiAssistantUiState())
     val uiState = _uiState.asStateFlow()
     private var activeJob: Job? = null
+    private var sessionProviderConfig: AiProviderConfig? = null
 
     fun sendMessage(
         text: String,
@@ -92,6 +107,7 @@ constructor(
         queue: List<AiQueueItemContext> = emptyList(),
         queueTotal: Int = queue.size,
         lyrics: CurrentLyricsContext? = null,
+        uiContext: AiUiContext? = null,
     ) {
         val message = dataSanitizer.userMessage(text)
         if (message.isBlank() || activeJob?.isActive == true) return
@@ -148,6 +164,7 @@ constructor(
                         context.dataStore.edit { it[AiAssistantModelKey] = selectedModel.id }
                     }
                     val config = provisionalConfig.copy(modelId = selectedModel.id)
+                    sessionProviderConfig = config
                     val customInstructions =
                         dataSanitizer.customInstructions(
                             context.dataStore.get(AiAssistantSystemPromptKey, ""),
@@ -197,6 +214,7 @@ constructor(
                                 queue = queue,
                                 queueTotal = queueTotal,
                                 lyrics = lyrics,
+                                uiContext = uiContext,
                                 artifacts = artifacts,
                             ),
                         toolsEnabled = AiCapability.TOOLS in selectedModel.capabilities,
@@ -230,10 +248,38 @@ constructor(
                                 _uiState.update { it.copy(execution = it.execution.copy(status = event.text)) }
                             is AiAgentEvent.ToolStarted ->
                                 _uiState.update {
-                                    it.copy(execution = it.execution.copy(status = toolStatus(event.name)))
+                                    it.copy(
+                                        items =
+                                            it.items.filterNot { item -> item is AiChatItem.Progress && item.toolCallId == event.id } +
+                                                AiChatItem.Progress(
+                                                    id = "progress_${event.id}",
+                                                    toolCallId = event.id,
+                                                    label = toolStatus(event.name),
+                                                ),
+                                        execution =
+                                            it.execution.copy(
+                                                phase = toolPhase(event.name),
+                                                status = toolStatus(event.name),
+                                            ),
+                                    )
                                 }
                             is AiAgentEvent.ToolFinished -> {
                                 flushText(force = true)
+                                _uiState.update { state ->
+                                    state.copy(
+                                        items =
+                                            state.items.map { item ->
+                                                if (item is AiChatItem.Progress && item.toolCallId == event.execution.call.id) {
+                                                    item.copy(
+                                                        completed = event.execution.result is com.metrolist.music.ai.tools.AiToolResult.Success,
+                                                        failed = event.execution.result is com.metrolist.music.ai.tools.AiToolResult.Failure,
+                                                    )
+                                                } else {
+                                                    item
+                                                }
+                                            },
+                                    )
+                                }
                                 when (val presentation =
                                     (event.execution.result as? com.metrolist.music.ai.tools.AiToolResult.Success)
                                         ?.presentation
@@ -286,15 +332,38 @@ constructor(
                                             )
                                         }
                                     }
-                                    is AiToolPresentation.Confirmation -> {
+                                    is AiToolPresentation.Playlists -> {
                                         _uiState.update {
                                             it.copy(
                                                 items =
                                                     it.items +
-                                                        AiChatItem.Confirmation(
-                                                            id = UUID.randomUUID().toString(),
-                                                            action = presentation.action,
+                                                        AiChatItem.PlaylistResults(
+                                                            UUID.randomUUID().toString(),
+                                                            presentation.items,
                                                         ),
+                                            )
+                                        }
+                                    }
+                                    is AiToolPresentation.Confirmation -> {
+                                        _uiState.update {
+                                            val item =
+                                                if (
+                                                    presentation.action is AiPendingAction.CreatePlaylistDraft ||
+                                                    presentation.action is AiPendingAction.BuildPlaylistDraft ||
+                                                    presentation.action is AiPendingAction.UpdatePlaylistDraft
+                                                ) {
+                                                    AiChatItem.Plan(
+                                                        id = UUID.randomUUID().toString(),
+                                                        action = presentation.action,
+                                                    )
+                                                } else {
+                                                    AiChatItem.Confirmation(
+                                                        id = UUID.randomUUID().toString(),
+                                                        action = presentation.action,
+                                                    )
+                                                }
+                                            it.copy(
+                                                items = it.items + item,
                                             )
                                         }
                                     }
@@ -302,6 +371,20 @@ constructor(
                                 }
                                 startsNewAssistantMessage = true
                             }
+                            is AiAgentEvent.RetryScheduled ->
+                                _uiState.update {
+                                    it.copy(
+                                        execution =
+                                            it.execution.copy(
+                                                status =
+                                                    context.getString(
+                                                        R.string.ai_status_retrying_provider,
+                                                        event.attempt,
+                                                        event.delaySeconds,
+                                                    ),
+                                            ),
+                                    )
+                                }
                             is AiAgentEvent.Error -> {
                                 flushText(force = true)
                                 addError(event.error)
@@ -350,7 +433,11 @@ constructor(
         activeJob = null
         _uiState.update {
             it.copy(
-                items = it.items.filterNot { item -> item is AiChatItem.AssistantText && item.text.isBlank() },
+                items =
+                    it.items.filterNot { item ->
+                        (item is AiChatItem.AssistantText && item.text.isBlank()) ||
+                            (item is AiChatItem.Progress && !item.completed && !item.failed)
+                    },
                 execution = AiAssistantState(AiAssistantPhase.CANCELLED),
             )
         }
@@ -360,6 +447,7 @@ constructor(
         cancel()
         conversation.clear()
         artifacts.clear()
+        sessionProviderConfig = null
         _uiState.value = AiAssistantUiState()
     }
 
@@ -402,8 +490,18 @@ constructor(
 
     fun pendingAction(actionId: String): AiPendingAction? = artifacts.pendingAction(actionId)
 
-    fun confirmPlaylistDraft(actionId: String) {
-        val draft = artifacts.confirmPlaylistDraftAction(actionId)
+    fun confirmDraftAction(actionId: String) {
+        val action = artifacts.pendingAction(actionId)
+        if (action is AiPendingAction.BuildPlaylistDraft) {
+            buildPlaylistDraft(action)
+            return
+        }
+        val draft =
+            when (action) {
+                is AiPendingAction.CreatePlaylistDraft -> artifacts.confirmPlaylistDraftAction(actionId)
+                is AiPendingAction.UpdatePlaylistDraft -> artifacts.confirmUpdateDraftAction(actionId)
+                else -> null
+            }
         if (draft == null) {
             resolveAction(actionId, AiActionStatus.FAILED)
             return
@@ -412,12 +510,22 @@ constructor(
             state.copy(
                 items =
                     state.items.map { item ->
-                        if (item is AiChatItem.Confirmation && item.action.id == actionId) {
-                            item.copy(status = AiActionStatus.COMPLETED)
-                        } else {
-                            item
+                        when {
+                            item is AiChatItem.Confirmation && item.action.id == actionId ->
+                                item.copy(status = AiActionStatus.COMPLETED)
+                            item is AiChatItem.Plan && item.action.id == actionId ->
+                                item.copy(status = AiActionStatus.COMPLETED)
+                            item is AiChatItem.PlaylistDraft && item.draft.id == draft.id ->
+                                item.copy(draft = draft)
+                            else -> item
                         }
-                    } + AiChatItem.PlaylistDraft(UUID.randomUUID().toString(), draft),
+                    }.let { items ->
+                        if (items.any { it is AiChatItem.PlaylistDraft && it.draft.id == draft.id }) {
+                            items
+                        } else {
+                            items + AiChatItem.PlaylistDraft(UUID.randomUUID().toString(), draft)
+                        }
+                    },
                 execution =
                     AiAssistantState(
                         if (artifacts.hasPendingActions()) {
@@ -427,6 +535,178 @@ constructor(
                         },
                     ),
             )
+        }
+    }
+
+    private fun buildPlaylistDraft(action: AiPendingAction.BuildPlaylistDraft) {
+        if (activeJob?.isActive == true) return
+        val progressId = "build_${action.id}"
+        _uiState.update { state ->
+            state.copy(
+                items =
+                    state.items.filterNot { item -> item is AiChatItem.Progress && item.id == progressId } +
+                        AiChatItem.Progress(
+                            id = progressId,
+                            toolCallId = progressId,
+                            label = context.getString(R.string.ai_status_building_playlist),
+                            current = 0,
+                            total = action.queries.size,
+                        ),
+                execution = AiAssistantState(AiAssistantPhase.BUILDING_PLAYLIST, canCancel = true),
+            )
+        }
+        activeJob =
+            viewModelScope.launch {
+                runCatching {
+                    val completed = AtomicInteger(0)
+                    val semaphore = Semaphore(MAX_PARALLEL_PLAYLIST_SEARCHES)
+                    val searchResults =
+                        coroutineScope {
+                            action.queries.map { query ->
+                                async(Dispatchers.IO) {
+                                    val result =
+                                        semaphore.withPermit {
+                                            musicCatalogRepository.searchSongs(query, PLAYLIST_RESULTS_PER_QUERY)
+                                        }
+                                    val found = result.getOrDefault(emptyList())
+                                    artifacts.rememberSongs(found)
+                                    val done = completed.incrementAndGet()
+                                    _uiState.update { state ->
+                                        state.copy(
+                                            items = state.items.map { item ->
+                                                if (item is AiChatItem.Progress && item.id == progressId) {
+                                                    item.copy(
+                                                        current = done,
+                                                        songs =
+                                                            playlistRanker
+                                                                .candidatePool(item.songs + found)
+                                                                .take(action.intent.targetCount),
+                                                    )
+                                                } else {
+                                                    item
+                                                }
+                                            },
+                                        )
+                                    }
+                                    result
+                                }
+                            }.awaitAll()
+                        }
+                    val candidates = playlistRanker.candidatePool(searchResults.flatMap { it.getOrDefault(emptyList()) })
+                    if (candidates.isEmpty()) {
+                        throw searchResults.firstNotNullOfOrNull { it.exceptionOrNull() }
+                            ?: IllegalStateException(context.getString(R.string.ai_playlist_no_candidates))
+                    }
+                    artifacts.rememberSongs(candidates)
+                    _uiState.update { state ->
+                        state.copy(
+                            items = state.items.map { item ->
+                                if (item is AiChatItem.Progress && item.id == progressId) {
+                                    item.copy(label = context.getString(R.string.ai_status_ranking))
+                                } else {
+                                    item
+                                }
+                            },
+                            execution =
+                                AiAssistantState(
+                                    phase = AiAssistantPhase.RANKING,
+                                    status = context.getString(R.string.ai_status_ranking),
+                                    canCancel = true,
+                                ),
+                        )
+                    }
+                    val config = sessionProviderConfig
+                        ?: error(context.getString(R.string.ai_playlist_session_expired))
+                    val curated = playlistCurator.select(config, action.intent, candidates).getOrThrow()
+                    val selected = playlistRanker.finalizeSelection(curated.songs, action.intent.targetCount)
+                    check(selected.isNotEmpty()) { context.getString(R.string.ai_playlist_no_candidates) }
+                    artifacts.createDraft(
+                        action.intent.copy(title = curated.title ?: action.intent.title),
+                        selected,
+                    )
+                }.fold(
+                    onSuccess = { draft ->
+                        artifacts.removePendingAction(action.id)
+                        _uiState.update { state ->
+                            state.copy(
+                                items =
+                                    state.items.map { item ->
+                                        when {
+                                            item is AiChatItem.Plan && item.action.id == action.id ->
+                                                item.copy(status = AiActionStatus.COMPLETED)
+                                            item is AiChatItem.Progress && item.id == progressId ->
+                                                item.copy(completed = true, current = item.total)
+                                            else -> item
+                                        }
+                                    } + AiChatItem.PlaylistDraft(UUID.randomUUID().toString(), draft),
+                                execution = AiAssistantState(AiAssistantPhase.COMPLETED),
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        if (error is kotlinx.coroutines.CancellationException) return@fold
+                        _uiState.update { state ->
+                            state.copy(
+                                items = state.items.map { item ->
+                                    if (item is AiChatItem.Progress && item.id == progressId) {
+                                        item.copy(failed = true)
+                                    } else item
+                                },
+                            )
+                        }
+                        resolveAction(action.id, AiActionStatus.FAILED, error.message)
+                        addError(AiError(AiErrorType.TOOL_EXECUTION_FAILED, error.message ?: context.getString(R.string.ai_assistant_failed)))
+                    },
+                )
+            }
+    }
+
+    fun executePersistentAction(actionId: String) {
+        val action = artifacts.pendingAction(actionId) ?: return
+        if (activeJob?.isActive == true) return
+        _uiState.update {
+            it.copy(
+                execution =
+                    AiAssistantState(
+                        phase = AiAssistantPhase.SAVING,
+                        status = context.getString(R.string.ai_status_saving),
+                        canCancel = true,
+                    ),
+            )
+        }
+        activeJob = viewModelScope.launch {
+            when (action) {
+                is AiPendingAction.SavePlaylistDraft -> {
+                    val draft = artifacts.draft(action.draftId)
+                    if (draft == null) {
+                        resolveAction(actionId, AiActionStatus.FAILED)
+                        return@launch
+                    }
+                    playlistRepository.saveDraft(draft).fold(
+                        onSuccess = { playlistId ->
+                            artifacts.markSaved(draft.id, playlistId)?.let { saved ->
+                                _uiState.update { state ->
+                                    state.copy(
+                                        items = state.items.map { item ->
+                                            if (item is AiChatItem.PlaylistDraft && item.draft.id == saved.id) {
+                                                item.copy(draft = saved)
+                                            } else item
+                                        },
+                                    )
+                                }
+                            }
+                            resolveAction(actionId, AiActionStatus.COMPLETED)
+                        },
+                        onFailure = { resolveAction(actionId, AiActionStatus.FAILED, it.message) },
+                    )
+                }
+                is AiPendingAction.AddTracksToPlaylist ->
+                    playlistRepository.addTracks(action.playlistId, action.songs).fold(
+                        onSuccess = { resolveAction(actionId, AiActionStatus.COMPLETED) },
+                        onFailure = { resolveAction(actionId, AiActionStatus.FAILED, it.message) },
+                    )
+                else -> resolveAction(actionId, AiActionStatus.FAILED)
+            }
         }
     }
 
@@ -440,10 +720,12 @@ constructor(
             state.copy(
                 items =
                     state.items.map { item ->
-                        if (item is AiChatItem.Confirmation && item.action.id == actionId) {
-                            item.copy(status = status, errorMessage = errorMessage)
-                        } else {
-                            item
+                        when {
+                            item is AiChatItem.Confirmation && item.action.id == actionId ->
+                                item.copy(status = status, errorMessage = errorMessage)
+                            item is AiChatItem.Plan && item.action.id == actionId ->
+                                item.copy(status = status, errorMessage = errorMessage)
+                            else -> item
                         }
                     },
                 execution =
@@ -490,7 +772,12 @@ constructor(
     private fun phaseStatus(phase: AiAssistantPhase): String? =
         when (phase) {
             AiAssistantPhase.THINKING -> context.getString(R.string.ai_status_analyzing)
+            AiAssistantPhase.PLANNING -> context.getString(R.string.ai_status_planning)
             AiAssistantPhase.SEARCHING -> context.getString(R.string.ai_status_searching)
+            AiAssistantPhase.RANKING -> context.getString(R.string.ai_status_ranking)
+            AiAssistantPhase.BUILDING_PLAYLIST -> context.getString(R.string.ai_status_building_playlist)
+            AiAssistantPhase.SAVING -> context.getString(R.string.ai_status_saving)
+            AiAssistantPhase.PLAYING -> context.getString(R.string.ai_status_playing)
             AiAssistantPhase.EXECUTING -> context.getString(R.string.ai_status_running_action)
             else -> null
         }
@@ -512,7 +799,21 @@ constructor(
             "play_song" -> context.getString(R.string.ai_status_playback_action)
             "start_radio" -> context.getString(R.string.ai_status_radio_action)
             "create_playlist_draft" -> context.getString(R.string.ai_status_playlist_draft)
+            "update_playlist_draft" -> context.getString(R.string.ai_status_playlist_draft)
+            "save_playlist", "add_tracks_to_playlist" -> context.getString(R.string.ai_status_playlists)
+            "play_playlist" -> context.getString(R.string.ai_status_playback_action)
+            "remove_from_queue" -> context.getString(R.string.ai_status_queue_action)
+            "get_ui_context" -> context.getString(R.string.ai_status_context)
             else -> context.getString(R.string.ai_status_running_tool, name)
+        }
+
+    private fun toolPhase(name: String): AiAssistantPhase =
+        when (name) {
+            "create_playlist_draft", "update_playlist_draft" -> AiAssistantPhase.PLANNING
+            "save_playlist", "add_tracks_to_playlist" -> AiAssistantPhase.SAVING
+            "play_song", "play_playlist", "start_radio" -> AiAssistantPhase.PLAYING
+            "add_to_queue", "remove_from_queue" -> AiAssistantPhase.EXECUTING
+            else -> AiAssistantPhase.SEARCHING
         }
 
     companion object {
@@ -554,6 +855,11 @@ sealed interface AiChatItem {
         val artists: List<ArtistItem>,
     ) : AiChatItem
 
+    data class PlaylistResults(
+        override val id: String,
+        val playlists: List<AiLibraryPlaylist>,
+    ) : AiChatItem
+
     data class PlaylistDraft(
         override val id: String,
         val draft: AiPlaylistDraft,
@@ -566,10 +872,31 @@ sealed interface AiChatItem {
         val errorMessage: String? = null,
     ) : AiChatItem
 
+    data class Plan(
+        override val id: String,
+        val action: AiPendingAction,
+        val status: AiActionStatus = AiActionStatus.PENDING,
+        val errorMessage: String? = null,
+    ) : AiChatItem
+
+    data class Progress(
+        override val id: String,
+        val toolCallId: String,
+        val label: String,
+        val completed: Boolean = false,
+        val failed: Boolean = false,
+        val current: Int? = null,
+        val total: Int? = null,
+        val songs: List<SongItem> = emptyList(),
+    ) : AiChatItem
+
     data class Error(
         override val id: String,
         val error: AiError,
     ) : AiChatItem
 }
+
+private const val MAX_PARALLEL_PLAYLIST_SEARCHES = 3
+private const val PLAYLIST_RESULTS_PER_QUERY = 20
 
 private class MissingAiKeyException : IllegalStateException()

@@ -1509,4 +1509,26 @@
     <string name="ai_max_tool_calls_desc">Limits agent loops to control cost and prevent repeated actions. The hard maximum is 10.</string>
     <string name="ai_model_source">Model catalog source</string>
     <string name="ai_system_prompt_default_rules">Core safety rules plus no additional instructions</string>
+    <string name="ai_plan_title">Playlist plan</string>
+    <string name="ai_assistant_playlist_results">Playlists</string>
+    <string name="ai_plan_playlist">Playlist plan</string>
+    <string name="ai_plan_playlist_update">Playlist update</string>
+    <string name="ai_confirmation_play_playlist">Play %1$s (%2$d tracks)</string>
+    <string name="ai_confirmation_save_playlist">Save playlist %1$s</string>
+    <string name="ai_confirmation_add_tracks">Add %1$d tracks to %2$s</string>
+    <string name="ai_confirmation_remove_queue">Remove %1$d tracks from the queue</string>
+    <string name="ai_confirmation_update_draft">Update playlist draft with %1$d tracks</string>
+    <string name="ai_status_context">Reading screen context…</string>
+    <string name="experimental_ai_assistant">AI Assistant</string>
+    <string name="experimental_ai_assistant_desc">Show the experimental assistant entry point and its native music tools.</string>
+    <string name="ai_status_retrying_provider">Retrying provider (%1$d) in %2$d s…</string>
+    <string name="ai_confirmation_build_playlist">Build %1$s with up to %2$d tracks</string>
+    <string name="ai_playlist_target_count">Target: %1$d tracks</string>
+    <string name="ai_status_building_playlist">Building playlist from catalog searches…</string>
+    <string name="ai_playlist_no_candidates">No real catalog candidates were found for this playlist.</string>
+    <string name="ai_playlist_session_expired">The AI provider session expired. Send the playlist request again.</string>
+    <string name="ai_status_planning">Planning…</string>
+    <string name="ai_status_ranking">Ranking real candidates…</string>
+    <string name="ai_status_saving">Saving…</string>
+    <string name="ai_status_playing">Starting playback…</string>
 </resources>

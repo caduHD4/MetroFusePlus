@@ -30,7 +30,7 @@ constructor(
 ) : AiConfirmableTool {
     override val name = "create_playlist_draft"
     override val description =
-        "Prepares a user-confirmed playlist draft from real song IDs returned by tools in this session. It never saves or plays anything by itself."
+        "Plans a user-confirmed playlist. Prefer 2-5 complementary catalog queries for progressive building, or provide only real song IDs returned by tools."
     override val inputSchema =
         buildJsonObject {
             put("type", "object")
@@ -64,6 +64,23 @@ constructor(
                             put("uniqueItems", true)
                         },
                     )
+                    put(
+                        "queries",
+                        buildJsonObject {
+                            put("type", "array")
+                            put(
+                                "items",
+                                buildJsonObject {
+                                    put("type", "string")
+                                    put("minLength", 1)
+                                    put("maxLength", 180)
+                                },
+                            )
+                            put("minItems", 2)
+                            put("maxItems", 5)
+                            put("uniqueItems", true)
+                        },
+                    )
                 },
             )
             put(
@@ -72,7 +89,6 @@ constructor(
                     listOf(
                         kotlinx.serialization.json.JsonPrimitive("title"),
                         kotlinx.serialization.json.JsonPrimitive("targetCount"),
-                        kotlinx.serialization.json.JsonPrimitive("songIds"),
                     ),
                 ),
             )
@@ -94,21 +110,28 @@ constructor(
                     .take(AiSessionArtifacts.MAX_CANDIDATE_POOL)
                     .mapNotNull { it.jsonPrimitive.contentOrNull }
             }.getOrDefault(emptyList())
-        if (songIds.isEmpty()) return AiToolResult.Failure("invalid_arguments", "songIds must not be empty.")
-
-        val resolution = context.artifacts.resolveSongs(songIds)
-        if (resolution.missingIds.isNotEmpty()) {
-            return AiToolResult.Failure(
-                "unknown_song_ids",
-                "Some song IDs were not returned by catalog tools in this session.",
-            )
+        val queries =
+            runCatching {
+                arguments["queries"]
+                    ?.jsonArray
+                    .orEmpty()
+                    .mapNotNull { it.jsonPrimitive.contentOrNull }
+                    .map { cleanGeneratedText(it, 180) }
+                    .filter(String::isNotBlank)
+                    .distinct()
+                    .take(MAX_QUERIES)
+            }.getOrDefault(emptyList())
+        if ((songIds.isEmpty()) == (queries.isEmpty())) {
+            return AiToolResult.Failure("invalid_arguments", "Provide exactly one of songIds or queries.")
         }
+        if (queries.isNotEmpty() && queries.size < MIN_QUERIES) {
+            return AiToolResult.Failure("invalid_arguments", "Provide at least two complementary catalog queries.")
+        }
+
         val requestedCount =
             arguments["targetCount"]?.jsonPrimitive?.intOrNull
                 ?.coerceIn(1, AiSessionArtifacts.MAX_CANDIDATE_POOL)
-                ?: resolution.songs.size
-        val songs = ranker.finalizeSelection(resolution.songs, requestedCount)
-        if (songs.isEmpty()) return AiToolResult.Failure("empty_draft", "No validated songs remain for the draft.")
+                ?: songIds.size.coerceAtLeast(1)
         val intent =
             AiPlaylistIntent(
                 title = title,
@@ -120,6 +143,36 @@ constructor(
                         ?.takeIf(String::isNotBlank),
                 targetCount = requestedCount,
             )
+        if (queries.isNotEmpty()) {
+            val action =
+                context.artifacts.rememberAction(
+                    com.metrolist.music.ai.action.AiPendingAction.BuildPlaylistDraft(
+                        id = "action_${java.util.UUID.randomUUID()}",
+                        intent = intent,
+                        queries = queries,
+                    ),
+                )
+            return AiToolResult.Success(
+                payload =
+                    buildJsonObject {
+                        put("actionId", action.id)
+                        put("status", "pending_confirmation")
+                        put("queryCount", action.queries.size)
+                        put("targetCount", action.intent.targetCount)
+                    },
+                presentation = AiToolPresentation.Confirmation(action),
+            )
+        }
+
+        val resolution = context.artifacts.resolveSongs(songIds)
+        if (resolution.missingIds.isNotEmpty()) {
+            return AiToolResult.Failure(
+                "unknown_song_ids",
+                "Some song IDs were not returned by catalog tools in this session.",
+            )
+        }
+        val songs = ranker.finalizeSelection(resolution.songs, requestedCount)
+        if (songs.isEmpty()) return AiToolResult.Failure("empty_draft", "No validated songs remain for the draft.")
         val action = context.artifacts.createPlaylistDraftAction(intent, songs)
         return AiToolResult.Success(
             payload =
@@ -146,3 +199,5 @@ private fun cleanGeneratedText(
         .trim()
 
 private const val MAX_ID_CHARS = 512
+private const val MIN_QUERIES = 2
+private const val MAX_QUERIES = 5

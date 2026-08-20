@@ -106,6 +106,22 @@ data class CurrentLyricsContext(
     val translationTruncated: Boolean = false,
 )
 
+enum class AiUiContextType {
+    NONE,
+    PLAYER,
+    PLAYLIST,
+    ALBUM,
+    ARTIST,
+    SEARCH,
+    LIBRARY,
+}
+
+data class AiUiContext(
+    val type: AiUiContextType,
+    val resourceId: String? = null,
+    val query: String? = null,
+)
+
 data class AiPermissions(
     val currentSong: Boolean = true,
     val queue: Boolean = false,
@@ -123,4 +139,5 @@ data class AiToolContext(
     val queue: List<AiQueueItemContext> = emptyList(),
     val queueTotal: Int = queue.size,
     val lyrics: CurrentLyricsContext? = null,
+    val uiContext: AiUiContext? = null,
 )

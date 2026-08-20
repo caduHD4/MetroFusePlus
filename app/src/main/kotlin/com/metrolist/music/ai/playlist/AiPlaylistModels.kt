@@ -35,6 +35,7 @@ class AiSessionArtifacts(
     private val libraryPlaylistIds = linkedSetOf<String>()
     private val drafts = linkedMapOf<String, AiPlaylistDraft>()
     private val pendingActions = linkedMapOf<String, AiPendingAction>()
+    private var activeDraftId: String? = null
 
     fun rememberSongs(songs: List<SongItem>) {
         synchronized(lock) {
@@ -82,12 +83,35 @@ class AiSessionArtifacts(
 
     fun draft(id: String): AiPlaylistDraft? = synchronized(lock) { drafts[id] }
 
+    fun activeDraft(): AiPlaylistDraft? = synchronized(lock) { activeDraftId?.let(drafts::get) }
+
     fun markSaved(
         draftId: String,
         playlistId: String,
     ): AiPlaylistDraft? =
         synchronized(lock) {
             drafts[draftId]?.copy(savedPlaylistId = playlistId)?.also { drafts[draftId] = it }
+        }
+
+    fun updateDraft(
+        draftId: String,
+        title: String?,
+        songs: List<SongItem>,
+        replace: Boolean,
+    ): AiPlaylistDraft? =
+        synchronized(lock) {
+            val current = drafts[draftId] ?: return@synchronized null
+            val updatedSongs =
+                if (replace) songs else (current.songs + songs).distinctBy(SongItem::id)
+            current
+                .copy(
+                    intent = current.intent.copy(title = title?.takeIf(String::isNotBlank) ?: current.intent.title),
+                    songs = updatedSongs.take(maxCandidatePool),
+                    savedPlaylistId = null,
+                ).also {
+                    drafts[draftId] = it
+                    activeDraftId = draftId
+                }
         }
 
     fun createQueueAction(
@@ -134,11 +158,24 @@ class AiSessionArtifacts(
             ).also { pendingActions[it.id] = it }
         }
 
+    fun <T : AiPendingAction> rememberAction(action: T): T =
+        synchronized(lock) {
+            trimPendingActions()
+            action.also { pendingActions[it.id] = it }
+        }
+
     fun confirmPlaylistDraftAction(actionId: String): AiPlaylistDraft? =
         synchronized(lock) {
             val action = pendingActions.remove(actionId) as? AiPendingAction.CreatePlaylistDraft
                 ?: return@synchronized null
             createDraftLocked(action.intent, action.songs)
+        }
+
+    fun confirmUpdateDraftAction(actionId: String): AiPlaylistDraft? =
+        synchronized(lock) {
+            val action = pendingActions.remove(actionId) as? AiPendingAction.UpdatePlaylistDraft
+                ?: return@synchronized null
+            updateDraft(action.draftId, action.title, action.songs, action.replace)
         }
 
     fun pendingAction(id: String): AiPendingAction? = synchronized(lock) { pendingActions[id] }
@@ -153,6 +190,7 @@ class AiSessionArtifacts(
             libraryPlaylistIds.clear()
             drafts.clear()
             pendingActions.clear()
+            activeDraftId = null
         }
     }
 
@@ -173,7 +211,10 @@ class AiSessionArtifacts(
             id = "draft_${UUID.randomUUID()}",
             intent = intent,
             songs = songs,
-        ).also { drafts[it.id] = it }
+        ).also {
+            drafts[it.id] = it
+            activeDraftId = it.id
+        }
     }
 
     companion object {

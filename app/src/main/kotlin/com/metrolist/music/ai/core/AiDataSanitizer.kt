@@ -6,6 +6,7 @@
 package com.metrolist.music.ai.core
 
 import com.metrolist.music.ai.model.AiQueueItemContext
+import com.metrolist.music.ai.model.AiUiContext
 import com.metrolist.music.ai.model.CurrentLyricsContext
 import com.metrolist.music.ai.model.CurrentMusicContext
 import javax.inject.Inject
@@ -47,6 +48,12 @@ constructor() {
             originalTruncated = value.originalTruncated || value.text.length > MAX_LYRICS_CHARS,
             translationTruncated =
                 value.translationTruncated || value.translatedText.orEmpty().length > MAX_LYRICS_CHARS,
+        )
+
+    fun uiContext(value: AiUiContext?): AiUiContext? =
+        value?.copy(
+            resourceId = value.resourceId?.let { clean(it, MAX_ID_CHARS) }?.takeIf(String::isNotBlank),
+            query = value.query?.let { clean(it, MAX_TITLE_CHARS) }?.takeIf(String::isNotBlank),
         )
 
     private fun clean(

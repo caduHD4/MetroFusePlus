@@ -144,6 +144,7 @@ import com.metrolist.music.constants.DisableScreenshotKey
 import com.metrolist.music.constants.DynamicThemeKey
 import com.metrolist.music.constants.EnableHighRefreshRateKey
 import com.metrolist.music.constants.ExperimentalLyricsKey
+import com.metrolist.music.constants.ExperimentalAiAssistantKey
 import com.metrolist.music.constants.HomeFeedSource
 import com.metrolist.music.constants.HomeFeedSourceKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
@@ -987,6 +988,7 @@ class MainActivity : ComponentActivity() {
                 var showAccountDialog by remember { mutableStateOf(false) }
 
                 val pauseListenHistory by rememberPreference(PauseListenHistoryKey, defaultValue = false)
+                val aiAssistantEnabled by rememberPreference(ExperimentalAiAssistantKey, defaultValue = true)
                 val eventCount by database.eventCount().collectAsStateWithLifecycle(initialValue = 0)
                 val showHistoryButton =
                     remember(pauseListenHistory, eventCount) {
@@ -1141,11 +1143,13 @@ class MainActivity : ComponentActivity() {
                                             }
                                         },
                                         actions = {
-                                            IconButton(onClick = { navController.navigate("ai_assistant") }) {
-                                                Icon(
-                                                    painter = painterResource(R.drawable.ai_sparkle),
-                                                    contentDescription = stringResource(R.string.ai_assistant_title),
-                                                )
+                                            if (aiAssistantEnabled) {
+                                                IconButton(onClick = { navController.navigate("ai_assistant") }) {
+                                                    Icon(
+                                                        painter = painterResource(R.drawable.ai_sparkle),
+                                                        contentDescription = stringResource(R.string.ai_assistant_title),
+                                                    )
+                                                }
                                             }
                                             if (showHistoryButton) {
                                                 IconButton(onClick = { navController.navigate("history") }) {

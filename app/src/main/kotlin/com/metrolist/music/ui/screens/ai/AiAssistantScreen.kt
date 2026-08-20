@@ -77,6 +77,8 @@ import com.metrolist.music.ai.action.AiActionStatus
 import com.metrolist.music.ai.action.AiPendingAction
 import com.metrolist.music.ai.action.AiQueueInsertion
 import com.metrolist.music.ai.model.AiQueueItemContext
+import com.metrolist.music.ai.model.AiUiContext
+import com.metrolist.music.ai.model.AiUiContextType
 import com.metrolist.music.ai.model.CurrentLyricsContext
 import com.metrolist.music.ai.model.CurrentMusicContext
 import com.metrolist.music.ai.voice.AndroidSpeechInputController
@@ -88,6 +90,7 @@ import com.metrolist.music.playback.PlayerConnection
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.ai.playlist.AiPlaylistDraft
+import com.metrolist.music.ai.repository.AiLibraryPlaylist
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.ui.component.YouTubeListItem
 
@@ -122,6 +125,10 @@ fun AiAssistantScreen(
     var isListening by remember { mutableStateOf(false) }
     var voiceMessage by remember { mutableStateOf<Int?>(null) }
     val busy = uiState.execution.canCancel
+    val sourceEntry = navController.previousBackStackEntry
+    val sourceRoute = sourceEntry?.destination?.route
+    val sourceArguments = sourceEntry?.arguments
+    val screenContext = remember(sourceRoute, sourceArguments) { aiUiContext(sourceRoute, sourceArguments) }
 
     val transcriptHandler by rememberUpdatedState<(String) -> Unit> { transcript ->
         input = transcript
@@ -228,13 +235,17 @@ fun AiAssistantScreen(
     fun submit(text: String = input) {
         if (text.isBlank() || busy) return
         if (isListening) speechInput.stop()
+        val currentMusicContext = currentContext()
         viewModel.sendMessage(
             text = text,
-            currentMusic = currentContext(),
+            currentMusic = currentMusicContext,
             currentSongItem = mediaMetadata?.toYTItem(),
             queue = queueContext(),
             queueTotal = queueWindows.size,
             lyrics = lyricsContext(),
+            uiContext =
+                screenContext.takeUnless { it.type == AiUiContextType.NONE }
+                    ?: currentMusicContext?.let { AiUiContext(AiUiContextType.PLAYER, resourceId = it.id) },
         )
         input = ""
         focusManager.clearFocus()
@@ -386,6 +397,11 @@ fun AiAssistantScreen(
                                 artists = item.artists,
                                 onOpen = { artist -> navController.navigate("artist/${artist.id}") },
                             )
+                        is AiChatItem.PlaylistResults ->
+                            LibraryPlaylistResultsCard(
+                                playlists = item.playlists,
+                                onOpen = { playlist -> navController.navigate("local_playlist/${playlist.id}") },
+                            )
                         is AiChatItem.PlaylistDraft ->
                             PlaylistDraftCard(
                                 draft = item.draft,
@@ -428,8 +444,13 @@ fun AiAssistantScreen(
                                             }
                                         }
                                         is AiPendingAction.CreatePlaylistDraft -> {
-                                            viewModel.confirmPlaylistDraft(action.id)
+                                            viewModel.confirmDraftAction(action.id)
                                         }
+                                        is AiPendingAction.BuildPlaylistDraft -> viewModel.confirmDraftAction(action.id)
+                                        is AiPendingAction.UpdatePlaylistDraft -> viewModel.confirmDraftAction(action.id)
+                                        is AiPendingAction.SavePlaylistDraft,
+                                        is AiPendingAction.AddTracksToPlaylist,
+                                        -> viewModel.executePersistentAction(action.id)
                                         is AiPendingAction.PlaySong -> {
                                             val activePlayer = playerConnection
                                             if (activePlayer == null || !activePlayer.canAcceptAssistantPlaybackCommand()) {
@@ -471,6 +492,41 @@ fun AiAssistantScreen(
                                                 )
                                             }
                                         }
+                                        is AiPendingAction.PlayPlaylist -> {
+                                            val activePlayer = playerConnection
+                                            if (activePlayer == null || !activePlayer.canAcceptAssistantPlaybackCommand()) {
+                                                viewModel.resolveAction(action.id, AiActionStatus.FAILED)
+                                            } else {
+                                                runCatching {
+                                                    activePlayer.playQueue(
+                                                        ListQueue(action.title, action.songs.map { it.toMediaItem() }),
+                                                    )
+                                                }.fold(
+                                                    onSuccess = { viewModel.resolveAction(action.id, AiActionStatus.COMPLETED) },
+                                                    onFailure = { viewModel.resolveAction(action.id, AiActionStatus.FAILED, it.message) },
+                                                )
+                                            }
+                                        }
+                                        is AiPendingAction.RemoveFromQueue -> {
+                                            val activePlayer = playerConnection
+                                            val snapshotStillMatches =
+                                                activePlayer != null && action.entries.all { entry ->
+                                                    entry.position != currentWindowIndex &&
+                                                        queueWindows.getOrNull(entry.position)?.mediaItem?.mediaId == entry.songId
+                                                }
+                                            if (!snapshotStillMatches || activePlayer == null) {
+                                                viewModel.resolveAction(action.id, AiActionStatus.FAILED)
+                                            } else {
+                                                runCatching {
+                                                    action.entries.sortedByDescending { it.position }.forEach {
+                                                        activePlayer.player.removeMediaItem(it.position)
+                                                    }
+                                                }.fold(
+                                                    onSuccess = { viewModel.resolveAction(action.id, AiActionStatus.COMPLETED) },
+                                                    onFailure = { viewModel.resolveAction(action.id, AiActionStatus.FAILED, it.message) },
+                                                )
+                                            }
+                                        }
                                         null -> Unit
                                     }
                                 },
@@ -478,6 +534,13 @@ fun AiAssistantScreen(
                                     viewModel.resolveAction(item.action.id, AiActionStatus.DISMISSED)
                                 },
                             )
+                        is AiChatItem.Plan ->
+                            AiPlanCard(
+                                item = item,
+                                onConfirm = { viewModel.confirmDraftAction(item.action.id) },
+                                onDismiss = { viewModel.resolveAction(item.action.id, AiActionStatus.DISMISSED) },
+                            )
+                        is AiChatItem.Progress -> AiProgressCard(item)
                         is AiChatItem.Error -> ErrorCard(item.error.message)
                     }
                 }
@@ -692,6 +755,48 @@ private fun ArtistResultsCard(
 }
 
 @Composable
+private fun LibraryPlaylistResultsCard(
+    playlists: List<AiLibraryPlaylist>,
+    onOpen: (AiLibraryPlaylist) -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Text(
+                text = stringResource(R.string.ai_assistant_playlist_results),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            playlists.forEach { playlist ->
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpen(playlist) }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(painterResource(R.drawable.queue_music), contentDescription = null)
+                    Column(Modifier.weight(1f)) {
+                        Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            stringResource(R.string.ai_playlist_track_count, playlist.songCount),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(painterResource(R.drawable.arrow_forward), contentDescription = null)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ErrorCard(message: String) {
     Surface(
         shape = RoundedCornerShape(18.dp),
@@ -760,12 +865,24 @@ private fun AiConfirmationCard(
                         Text("• ${song.title} — ${song.artists.joinToString { it.name }}")
                     }
                 }
+                is AiPendingAction.BuildPlaylistDraft ->
+                    Text(stringResource(R.string.ai_confirmation_build_playlist, action.intent.title, action.intent.targetCount))
                 is AiPendingAction.PlaySong -> {
                     Text(stringResource(R.string.ai_confirmation_play_song, action.song.title))
                 }
                 is AiPendingAction.StartRadio -> {
                     Text(stringResource(R.string.ai_confirmation_start_radio, action.song.title))
                 }
+                is AiPendingAction.PlayPlaylist ->
+                    Text(stringResource(R.string.ai_confirmation_play_playlist, action.title, action.songs.size))
+                is AiPendingAction.SavePlaylistDraft ->
+                    Text(stringResource(R.string.ai_confirmation_save_playlist, action.title))
+                is AiPendingAction.AddTracksToPlaylist ->
+                    Text(stringResource(R.string.ai_confirmation_add_tracks, action.songs.size, action.playlistName))
+                is AiPendingAction.RemoveFromQueue ->
+                    Text(stringResource(R.string.ai_confirmation_remove_queue, action.entries.size))
+                is AiPendingAction.UpdatePlaylistDraft ->
+                    Text(stringResource(R.string.ai_confirmation_update_draft, action.songs.size))
             }
             when (item.status) {
                 AiActionStatus.PENDING ->
@@ -783,6 +900,101 @@ private fun AiConfirmationCard(
                         item.errorMessage ?: stringResource(R.string.ai_action_failed),
                         color = MaterialTheme.colorScheme.error,
                     )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiPlanCard(
+    item: AiChatItem.Plan,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val action = item.action
+    val title =
+        when (action) {
+            is AiPendingAction.CreatePlaylistDraft -> action.intent.title
+            is AiPendingAction.BuildPlaylistDraft -> action.intent.title
+            is AiPendingAction.UpdatePlaylistDraft -> action.title ?: stringResource(R.string.ai_plan_playlist_update)
+            else -> stringResource(R.string.ai_plan_playlist)
+        }
+    val songs =
+        when (action) {
+            is AiPendingAction.CreatePlaylistDraft -> action.songs
+            is AiPendingAction.BuildPlaylistDraft -> emptyList()
+            is AiPendingAction.UpdatePlaylistDraft -> action.songs
+            else -> emptyList()
+        }
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.ai_plan_title), style = MaterialTheme.typography.labelLarge)
+            Text(title, style = MaterialTheme.typography.titleLarge)
+            if (action is AiPendingAction.BuildPlaylistDraft) {
+                Text(stringResource(R.string.ai_playlist_target_count, action.intent.targetCount))
+                action.queries.forEach { query -> Text("• $query") }
+            } else {
+                Text(stringResource(R.string.ai_playlist_track_count, songs.size))
+            }
+            songs.take(CONFIRMATION_PREVIEW_COUNT).forEach { song ->
+                Text("• ${song.title} — ${song.artists.joinToString { it.name }}")
+            }
+            when (item.status) {
+                AiActionStatus.PENDING ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                        TextButton(onClick = onDismiss) { Text(stringResource(R.string.not_now)) }
+                        Button(onClick = onConfirm) { Text(stringResource(R.string.ai_confirm_action)) }
+                    }
+                AiActionStatus.COMPLETED -> Text(stringResource(R.string.ai_action_completed))
+                AiActionStatus.DISMISSED -> Text(stringResource(R.string.ai_action_dismissed))
+                AiActionStatus.FAILED ->
+                    Text(
+                        item.errorMessage ?: stringResource(R.string.ai_action_failed),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiProgressCard(item: AiChatItem.Progress) {
+    val current = item.current
+    val total = item.total
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                when {
+                    item.failed -> Icon(painterResource(R.drawable.error), null, tint = MaterialTheme.colorScheme.error)
+                    item.completed -> Icon(painterResource(R.drawable.check), null, tint = MaterialTheme.colorScheme.primary)
+                    else -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                }
+                Text(item.label)
+                if (current != null && total != null) {
+                    Text("$current/$total", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            if (!item.completed && !item.failed && current != null && total != null && total > 0) {
+                LinearProgressIndicator(
+                    progress = { current.toFloat() / total.toFloat() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item.songs.take(PROGRESS_PREVIEW_COUNT).forEach { song ->
+                Text(
+                    text = "• ${song.title} — ${song.artists.joinToString { it.name }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -860,6 +1072,7 @@ private fun PlaylistDraftCard(
 
 private const val DRAFT_PREVIEW_COUNT = 5
 private const val CONFIRMATION_PREVIEW_COUNT = 3
+private const val PROGRESS_PREVIEW_COUNT = 5
 private const val MAX_QUEUE_CONTEXT_ITEMS = 100
 private const val QUEUE_CONTEXT_BEFORE_CURRENT = 10
 
@@ -871,6 +1084,21 @@ private fun queueContextStart(
     val preferred = (currentIndex - QUEUE_CONTEXT_BEFORE_CURRENT).coerceAtLeast(0)
     return preferred.coerceAtMost(queueSize - MAX_QUEUE_CONTEXT_ITEMS)
 }
+
+private fun aiUiContext(
+    route: String?,
+    arguments: android.os.Bundle?,
+): AiUiContext =
+    when {
+        route == null -> AiUiContext(AiUiContextType.NONE)
+        route.startsWith("local_playlist/") || route.startsWith("online_playlist/") ->
+            AiUiContext(AiUiContextType.PLAYLIST, arguments?.getString("playlistId"))
+        route.startsWith("album/") -> AiUiContext(AiUiContextType.ALBUM, arguments?.getString("albumId"))
+        route.startsWith("artist/") -> AiUiContext(AiUiContextType.ARTIST, arguments?.getString("artistId"))
+        route.startsWith("search/") -> AiUiContext(AiUiContextType.SEARCH, query = arguments?.getString("query"))
+        route.contains("library", ignoreCase = true) -> AiUiContext(AiUiContextType.LIBRARY)
+        else -> AiUiContext(AiUiContextType.NONE)
+    }
 
 private fun PlayerConnection.canAcceptAssistantPlaybackCommand(): Boolean =
     allowInternalSync || shouldBlockPlaybackChanges?.invoke() != true

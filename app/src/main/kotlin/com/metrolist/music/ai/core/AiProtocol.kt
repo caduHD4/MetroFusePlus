@@ -72,7 +72,12 @@ sealed interface AiStreamEvent {
 enum class AiAssistantPhase {
     IDLE,
     THINKING,
+    PLANNING,
     SEARCHING,
+    RANKING,
+    BUILDING_PLAYLIST,
+    SAVING,
+    PLAYING,
     WAITING_CONFIRMATION,
     EXECUTING,
     COMPLETED,

@@ -11,6 +11,7 @@ import com.metrolist.music.ai.core.runCatchingPreservingCancellation
 import com.metrolist.music.ai.tools.context.GetCurrentSongTool
 import com.metrolist.music.ai.tools.context.GetLyricsTool
 import com.metrolist.music.ai.tools.context.GetQueueTool
+import com.metrolist.music.ai.tools.context.GetUiContextTool
 import com.metrolist.music.ai.tools.library.GetLikedSongsTool
 import com.metrolist.music.ai.tools.library.GetPlaylistTool
 import com.metrolist.music.ai.tools.library.GetPlaylistsTool
@@ -21,8 +22,13 @@ import com.metrolist.music.ai.tools.search.SearchArtistTool
 import com.metrolist.music.ai.tools.search.SearchMusicTool
 import com.metrolist.music.ai.tools.search.GetRelatedSongsTool
 import com.metrolist.music.ai.tools.playlist.CreatePlaylistDraftTool
+import com.metrolist.music.ai.tools.playlist.AddTracksToPlaylistTool
+import com.metrolist.music.ai.tools.playlist.PlayPlaylistTool
+import com.metrolist.music.ai.tools.playlist.SavePlaylistTool
+import com.metrolist.music.ai.tools.playlist.UpdatePlaylistDraftTool
 import com.metrolist.music.ai.tools.player.AddToQueueTool
 import com.metrolist.music.ai.tools.player.PlaySongTool
+import com.metrolist.music.ai.tools.player.RemoveFromQueueTool
 import com.metrolist.music.ai.tools.player.StartRadioTool
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,6 +40,7 @@ constructor(
     getCurrentSongTool: GetCurrentSongTool,
     getQueueTool: GetQueueTool,
     getLyricsTool: GetLyricsTool,
+    getUiContextTool: GetUiContextTool,
     searchMusicTool: SearchMusicTool,
     searchArtistTool: SearchArtistTool,
     searchAlbumTool: SearchAlbumTool,
@@ -47,12 +54,18 @@ constructor(
     playSongTool: PlaySongTool,
     startRadioTool: StartRadioTool,
     createPlaylistDraftTool: CreatePlaylistDraftTool,
+    updatePlaylistDraftTool: UpdatePlaylistDraftTool,
+    savePlaylistTool: SavePlaylistTool,
+    addTracksToPlaylistTool: AddTracksToPlaylistTool,
+    playPlaylistTool: PlayPlaylistTool,
+    removeFromQueueTool: RemoveFromQueueTool,
 ) {
     private val tools =
         listOf(
             getCurrentSongTool,
             getQueueTool,
             getLyricsTool,
+            getUiContextTool,
             searchMusicTool,
             searchArtistTool,
             searchAlbumTool,
@@ -66,6 +79,11 @@ constructor(
             playSongTool,
             startRadioTool,
             createPlaylistDraftTool,
+            updatePlaylistDraftTool,
+            savePlaylistTool,
+            addTracksToPlaylistTool,
+            playPlaylistTool,
+            removeFromQueueTool,
         ).associateBy(AiTool::name)
 
     fun definitions(context: AiToolContext) =

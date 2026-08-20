@@ -14,6 +14,7 @@ import com.metrolist.music.ai.tools.AiToolExecution
 import com.metrolist.music.ai.tools.AiToolExecutor
 import com.metrolist.music.ai.tools.AiToolPresentation
 import com.metrolist.music.ai.tools.AiToolRegistry
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
@@ -47,33 +48,53 @@ constructor(
             val responseText = StringBuilder()
             val requestedTools = mutableListOf<com.metrolist.music.ai.model.AiPendingToolCall>()
             var providerError: AiError? = null
+            var providerAttempt = 0
+            var sawProviderOutput: Boolean
+            var retryDelaySeconds: Long?
 
-            provider
-                .streamResponse(
-                    request =
-                        AiRequest(
-                            systemPrompt = systemPrompt,
-                            messages = conversation.toList(),
-                            tools = if (toolsEnabled) toolRegistry.definitions(toolContext) else emptyList(),
-                        ),
-                    config = config,
-                ).collect { event ->
-                    when (event) {
-                        is AiStreamEvent.TextDelta -> {
-                            responseText.append(event.text)
-                            onEvent(AiAgentEvent.TextDelta(event.text))
+            do {
+                providerError = null
+                sawProviderOutput = false
+                provider
+                    .streamResponse(
+                        request =
+                            AiRequest(
+                                systemPrompt = systemPrompt,
+                                messages = conversation.toList(),
+                                tools = if (toolsEnabled) toolRegistry.definitions(toolContext) else emptyList(),
+                            ),
+                        config = config,
+                    ).collect { event ->
+                        when (event) {
+                            is AiStreamEvent.TextDelta -> {
+                                sawProviderOutput = true
+                                responseText.append(event.text)
+                                onEvent(AiAgentEvent.TextDelta(event.text))
+                            }
+                            is AiStreamEvent.ToolCallStarted -> {
+                                sawProviderOutput = true
+                                onEvent(AiAgentEvent.ToolStarted(event.id, event.name))
+                            }
+                            is AiStreamEvent.ToolCallCompleted -> {
+                                sawProviderOutput = true
+                                requestedTools += event.call
+                            }
+                            is AiStreamEvent.Status -> onEvent(AiAgentEvent.Status(event.message))
+                            is AiStreamEvent.Error -> providerError = event.error
+                            is AiStreamEvent.Completed,
+                            is AiStreamEvent.ToolCallArgumentsDelta,
+                            is AiStreamEvent.Usage,
+                            -> Unit
                         }
-                        is AiStreamEvent.ToolCallStarted ->
-                            onEvent(AiAgentEvent.ToolStarted(event.id, event.name))
-                        is AiStreamEvent.ToolCallCompleted -> requestedTools += event.call
-                        is AiStreamEvent.Status -> onEvent(AiAgentEvent.Status(event.message))
-                        is AiStreamEvent.Error -> providerError = event.error
-                        is AiStreamEvent.Completed,
-                        is AiStreamEvent.ToolCallArgumentsDelta,
-                        is AiStreamEvent.Usage,
-                        -> Unit
                     }
+
+                retryDelaySeconds = providerError?.retryDelaySeconds(providerAttempt, sawProviderOutput)
+                retryDelaySeconds?.let { delaySeconds ->
+                    providerAttempt++
+                    onEvent(AiAgentEvent.RetryScheduled(providerAttempt, delaySeconds))
+                    delay(delaySeconds * 1000L)
                 }
+            } while (retryDelaySeconds != null)
 
             providerError?.let {
                 onEvent(AiAgentEvent.Error(it))
@@ -139,6 +160,21 @@ constructor(
     }
 }
 
+internal fun AiError.retryDelaySeconds(
+    attempt: Int,
+    sawOutput: Boolean,
+): Long? {
+    if (sawOutput || attempt >= MAX_PROVIDER_RETRIES) return null
+    return when (type) {
+        AiErrorType.NETWORK, AiErrorType.PROVIDER_SERVER -> (1L shl attempt).coerceAtMost(4L)
+        AiErrorType.RATE_LIMITED -> retryAfterSeconds?.takeIf { it in 1..MAX_RETRY_AFTER_SECONDS }
+        else -> null
+    }
+}
+
+private const val MAX_PROVIDER_RETRIES = 2
+private const val MAX_RETRY_AFTER_SECONDS = 30L
+
 sealed interface AiAgentEvent {
     data class TextDelta(
         val text: String,
@@ -159,6 +195,11 @@ sealed interface AiAgentEvent {
 
     data class ToolFinished(
         val execution: AiToolExecution,
+    ) : AiAgentEvent
+
+    data class RetryScheduled(
+        val attempt: Int,
+        val delaySeconds: Long,
     ) : AiAgentEvent
 
     data class Error(
