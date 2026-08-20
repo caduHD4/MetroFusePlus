@@ -1141,6 +1141,12 @@ class MainActivity : ComponentActivity() {
                                             }
                                         },
                                         actions = {
+                                            IconButton(onClick = { navController.navigate("ai_assistant") }) {
+                                                Icon(
+                                                    painter = painterResource(R.drawable.ai_sparkle),
+                                                    contentDescription = stringResource(R.string.ai_assistant_title),
+                                                )
+                                            }
                                             if (showHistoryButton) {
                                                 IconButton(onClick = { navController.navigate("history") }) {
                                                     Icon(
