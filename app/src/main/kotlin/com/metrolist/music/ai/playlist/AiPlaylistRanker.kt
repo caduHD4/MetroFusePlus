@@ -91,9 +91,13 @@ constructor() {
             if (duration != null && duration !in MIN_TRACK_SECONDS..MAX_TRACK_SECONDS) return false
             val normalizedTitle = song.title.lowercase()
             if (compilationMarkers.any(normalizedTitle::contains)) return false
-            if (intent?.type in setOf(AiPlaylistIntentType.GENRE, AiPlaylistIntentType.MOOD, AiPlaylistIntentType.CONCEPT)) {
+            val conceptIntent =
+                intent?.takeIf {
+                    it.type in setOf(AiPlaylistIntentType.GENRE, AiPlaylistIntentType.MOOD, AiPlaylistIntentType.CONCEPT)
+                }
+            if (conceptIntent != null) {
                 val conceptTokens =
-                    (intent.title + " " + intent.description.orEmpty())
+                    (conceptIntent.title + " " + conceptIntent.description.orEmpty())
                         .lowercase()
                         .split(Regex("[^\\p{L}\\p{N}]+"))
                         .filter { it.length >= 4 }
