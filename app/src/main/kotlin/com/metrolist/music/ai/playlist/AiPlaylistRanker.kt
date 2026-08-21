@@ -122,8 +122,9 @@ constructor() {
             score += song.artists.count { !it.id.isNullOrBlank() }.coerceAtMost(2)
 
             val normalizedArtist = song.artists.joinToString(" ") { it.name }.lowercase()
-            if (intent?.type == AiPlaylistIntentType.ARTIST && intent.artistName != null) {
-                if (normalize(normalizedArtist).contains(normalize(intent.artistName))) score += 100
+            val requestedArtist = intent?.artistName
+            if (intent?.type == AiPlaylistIntentType.ARTIST && requestedArtist != null) {
+                if (normalize(normalizedArtist).contains(normalize(requestedArtist))) score += 100
             }
             if (intent?.type in setOf(AiPlaylistIntentType.GENRE, AiPlaylistIntentType.MOOD, AiPlaylistIntentType.CONCEPT)) {
                 val tokens =
