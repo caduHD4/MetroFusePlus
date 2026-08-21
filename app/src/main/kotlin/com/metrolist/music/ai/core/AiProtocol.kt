@@ -62,12 +62,26 @@ sealed interface AiStreamEvent {
         val outputTokens: Long?,
     ) : AiStreamEvent
 
+    data class Grounding(
+        val metadata: AiGroundingMetadata,
+    ) : AiStreamEvent
+
     data object Completed : AiStreamEvent
 
     data class Error(
         val error: AiError,
     ) : AiStreamEvent
 }
+
+data class AiGroundingMetadata(
+    val queries: List<String>,
+    val sources: List<AiGroundingSource>,
+)
+
+data class AiGroundingSource(
+    val title: String,
+    val url: String,
+)
 
 enum class AiAssistantPhase {
     IDLE,

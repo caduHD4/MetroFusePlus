@@ -8,6 +8,7 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AiPlaylistCuratorTest {
@@ -28,6 +29,25 @@ class AiPlaylistCuratorTest {
         assertEquals(listOf("real-2", "real-0"), selection.songs.map { it.id })
         assertEquals("Curated", selection.title)
         assertFalse(selection.songs.any { it.id == "99" })
+    }
+
+    @Test
+    fun `curator can request broader searches without inventing songs`() {
+        val selection =
+            resolveSelection(
+                arguments =
+                    buildJsonObject {
+                        put("selectedIndexes", buildJsonArray { })
+                        put("additionalQueries", buildJsonArray { add("2000s ethereal trip hop"); add("surreal nostalgic downtempo") })
+                        put("complete", false)
+                    },
+                candidates = listOf(song("real-0")),
+                targetCount = 6,
+            )
+
+        assertTrue(selection.songs.isEmpty())
+        assertEquals(2, selection.additionalQueries.size)
+        assertFalse(selection.complete)
     }
 
     private fun song(id: String) =

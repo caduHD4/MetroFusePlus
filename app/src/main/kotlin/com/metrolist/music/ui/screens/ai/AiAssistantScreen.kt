@@ -57,6 +57,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -123,6 +125,9 @@ fun AiAssistantScreen(
     val currentLyrics by lyricsState
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val uriHandler = LocalUriHandler.current
     var input by remember { mutableStateOf("") }
     var isListening by remember { mutableStateOf(false) }
     var voiceMessage by remember { mutableStateOf<Int?>(null) }
@@ -253,7 +258,7 @@ fun AiAssistantScreen(
         focusManager.clearFocus()
     }
 
-    LaunchedEffect(uiState.items.size, uiState.execution.phase) {
+    LaunchedEffect(uiState.items.size, uiState.execution.phase, imeBottom) {
         if (uiState.items.isNotEmpty()) listState.animateScrollToItem(uiState.items.lastIndex)
     }
 
@@ -403,6 +408,11 @@ fun AiAssistantScreen(
                             LibraryPlaylistResultsCard(
                                 playlists = item.playlists,
                                 onOpen = { playlist -> navController.navigate("local_playlist/${playlist.id}") },
+                            )
+                        is AiChatItem.GroundingSources ->
+                            GroundingSourcesCard(
+                                sources = item.sources,
+                                onOpen = uriHandler::openUri,
                             )
                         is AiChatItem.PlaylistDraft ->
                             PlaylistDraftCard(
@@ -560,6 +570,34 @@ fun AiAssistantScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroundingSourcesCard(
+    sources: List<com.metrolist.music.ai.core.AiGroundingSource>,
+    onOpen: (String) -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(stringResource(R.string.ai_grounding_sources), style = MaterialTheme.typography.labelLarge)
+            sources.take(MAX_GROUNDING_SOURCES).forEach { source ->
+                Text(
+                    text = source.title,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable { onOpen(source.url) },
+                )
             }
         }
     }
@@ -1075,6 +1113,7 @@ private fun PlaylistDraftCard(
 private const val DRAFT_PREVIEW_COUNT = 5
 private const val CONFIRMATION_PREVIEW_COUNT = 3
 private const val PROGRESS_PREVIEW_COUNT = 5
+private const val MAX_GROUNDING_SOURCES = 5
 private const val MAX_QUEUE_CONTEXT_ITEMS = 100
 private const val QUEUE_CONTEXT_BEFORE_CURRENT = 10
 

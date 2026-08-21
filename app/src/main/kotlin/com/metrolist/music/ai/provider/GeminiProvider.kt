@@ -6,6 +6,8 @@
 package com.metrolist.music.ai.provider
 
 import com.metrolist.music.ai.core.AiStreamEvent
+import com.metrolist.music.ai.core.AiGroundingMetadata
+import com.metrolist.music.ai.core.AiGroundingSource
 import com.metrolist.music.ai.core.runCatchingPreservingCancellation
 import com.metrolist.music.ai.model.AiCapability
 import com.metrolist.music.ai.model.AiConversationMessage
@@ -103,11 +105,18 @@ class GeminiProvider(
             val call =
                 client.newCall(
                     requestBuilder(config, path)
-                        .post(buildBody(request).toString().toRequestBody(jsonMediaType))
+                        .post(
+                            buildBody(
+                                request,
+                                googleSearchSupported = supportsCombinedGoogleSearch(config.modelId),
+                            ).toString().toRequestBody(jsonMediaType),
+                        )
                         .build(),
                 )
             val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
             try {
+                val seenGroundingQueries = linkedSetOf<String>()
+                val seenGroundingSources = linkedMapOf<String, AiGroundingSource>()
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
                         throw parseProviderError(response.code, response.body?.string(), response.header("Retry-After"))
@@ -123,6 +132,17 @@ class GeminiProvider(
                         root["error"]?.let { throw parseProviderError(400, root.toString()) }
                         root["candidates"]?.jsonArray?.forEach { candidateElement ->
                             val candidate = candidateElement.jsonObject
+                            candidate["groundingMetadata"]?.jsonObject?.let { grounding ->
+                                grounding["webSearchQueries"]?.jsonArray.orEmpty().forEach { query ->
+                                    query.jsonPrimitive.contentOrNull?.let(seenGroundingQueries::add)
+                                }
+                                grounding["groundingChunks"]?.jsonArray.orEmpty().forEach chunkLoop@{ chunk ->
+                                    val web = chunk.jsonObject["web"] as? JsonObject ?: return@chunkLoop
+                                    val url = web["uri"]?.jsonPrimitive?.contentOrNull ?: return@chunkLoop
+                                    val title = web["title"]?.jsonPrimitive?.contentOrNull ?: url
+                                    seenGroundingSources[url] = AiGroundingSource(title, url)
+                                }
+                            }
                             candidate["content"]?.jsonObject?.get("parts")?.jsonArray?.forEach { partElement ->
                                 val part = partElement.jsonObject
                                 part["text"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotEmpty)?.let {
@@ -147,6 +167,16 @@ class GeminiProvider(
                             )
                         }
                     }
+                    if (seenGroundingQueries.isNotEmpty() || seenGroundingSources.isNotEmpty()) {
+                        emit(
+                            AiStreamEvent.Grounding(
+                                AiGroundingMetadata(
+                                    queries = seenGroundingQueries.toList(),
+                                    sources = seenGroundingSources.values.toList(),
+                                ),
+                            ),
+                        )
+                    }
                     emit(AiStreamEvent.Completed)
                 }
             } catch (cancelled: CancellationException) {
@@ -158,7 +188,10 @@ class GeminiProvider(
             }
         }.flowOn(Dispatchers.IO)
 
-    internal fun buildBody(request: AiRequest): JsonObject =
+    internal fun buildBody(
+        request: AiRequest,
+        googleSearchSupported: Boolean = true,
+    ): JsonObject =
         buildJsonObject {
             put(
                 "systemInstruction",
@@ -180,39 +213,46 @@ class GeminiProvider(
                     put("maxOutputTokens", request.maxOutputTokens)
                 },
             )
-            if (request.tools.isNotEmpty()) {
+            if (request.tools.isNotEmpty() || (request.enableGoogleSearch && googleSearchSupported)) {
                 put(
                     "tools",
                     buildJsonArray {
-                        add(
-                            buildJsonObject {
-                                put(
-                                    "functionDeclarations",
-                                    buildJsonArray {
-                                        request.tools.forEach { tool ->
-                                            add(
-                                                buildJsonObject {
-                                                    put("name", tool.name)
-                                                    put("description", tool.description)
-                                                    put("parameters", tool.inputSchema.toGeminiSchema())
-                                                },
-                                            )
-                                        }
-                                    },
-                                )
-                            },
-                        )
+                        if (request.tools.isNotEmpty()) {
+                            add(
+                                buildJsonObject {
+                                    put(
+                                        "functionDeclarations",
+                                        buildJsonArray {
+                                            request.tools.forEach { tool ->
+                                                add(
+                                                    buildJsonObject {
+                                                        put("name", tool.name)
+                                                        put("description", tool.description)
+                                                        put("parameters", tool.inputSchema.toGeminiSchema())
+                                                    },
+                                                )
+                                            }
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                        if (request.enableGoogleSearch && googleSearchSupported) {
+                            add(buildJsonObject { put("googleSearch", buildJsonObject {}) })
+                        }
                     },
                 )
-                put(
-                    "toolConfig",
-                    buildJsonObject {
-                        put(
-                            "functionCallingConfig",
-                            buildJsonObject { put("mode", "AUTO") },
-                        )
-                    },
-                )
+                if (request.tools.isNotEmpty()) {
+                    put(
+                        "toolConfig",
+                        buildJsonObject {
+                            put(
+                                "functionCallingConfig",
+                                buildJsonObject { put("mode", "AUTO") },
+                            )
+                        },
+                    )
+                }
             }
         }
 
@@ -334,6 +374,9 @@ class GeminiProvider(
         private val GEMINI_UNSUPPORTED_SCHEMA_KEYS = setOf("\$schema", "additionalProperties", "uniqueItems")
     }
 }
+
+private fun supportsCombinedGoogleSearch(modelId: String): Boolean =
+    modelId.removePrefix("models/").lowercase().startsWith("gemini-3")
 
 internal fun geminiPendingToolCall(part: JsonObject): AiPendingToolCall? {
     val function = part["functionCall"] as? JsonObject ?: return null

@@ -41,7 +41,7 @@ class AiPlaylistActionToolsTest {
     }
 
     @Test
-    fun `query playlist plan requires multiple complementary searches`() = runBlocking {
+    fun `query playlist plan accepts one seed for adaptive expansion`() = runBlocking {
         val result =
             CreatePlaylistDraftTool(AiPlaylistRanker()).execute(
                 buildJsonObject {
@@ -52,7 +52,26 @@ class AiPlaylistActionToolsTest {
                 context(),
             )
 
-        assertEquals("invalid_arguments", (result as AiToolResult.Failure).code)
+        val action = ((result as AiToolResult.Success).presentation as AiToolPresentation.Confirmation).action
+        assertEquals(listOf("night drive"), (action as AiPendingAction.BuildPlaylistDraft).queries)
+    }
+
+    @Test
+    fun `exact artist request is represented without lexical catalog queries`() = runBlocking {
+        val result =
+            CreatePlaylistDraftTool(AiPlaylistRanker()).execute(
+                buildJsonObject {
+                    put("title", "Ado essentials")
+                    put("intentType", "artist")
+                    put("artistName", "Ado")
+                    put("targetCount", 6)
+                },
+                context(),
+            ) as AiToolResult.Success
+
+        val action = (result.presentation as AiToolPresentation.Confirmation).action as AiPendingAction.BuildPlaylistDraft
+        assertEquals("Ado", action.intent.artistName)
+        assertTrue(action.queries.isEmpty())
     }
 
     @Test

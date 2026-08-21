@@ -57,7 +57,7 @@ class AiPlaylistSafetyTest {
             buildList {
                 add(song("first", "Artist A"))
                 add(song("same-metadata", "Artist A"))
-                repeat(80) { index -> add(song("track-$index", "Artist $index")) }
+                repeat(160) { index -> add(song("track-$index", "Artist $index")) }
             }.mapIndexed { index, song ->
                 if (index == 1) song.copy(title = "FIRST") else song
             }
@@ -66,6 +66,45 @@ class AiPlaylistSafetyTest {
 
         assertEquals(AiSessionArtifacts.MAX_CANDIDATE_POOL, pool.size)
         assertFalse(pool.any { it.id == "same-metadata" })
+    }
+
+    @Test
+    fun `exact artist playlists do not apply cross artist diversity`() {
+        val ranker = AiPlaylistRanker()
+        val intent =
+            AiPlaylistIntent(
+                title = "Ado essentials",
+                description = null,
+                targetCount = 5,
+                type = AiPlaylistIntentType.ARTIST,
+                artistName = "Ado",
+            )
+
+        val ranked = ranker.finalizeSelection((1..6).map { song("ado-$it", "Ado") }, 5, intent)
+
+        assertEquals(5, ranked.size)
+        assertTrue(ranked.all { it.artists.single().name == "Ado" })
+    }
+
+    @Test
+    fun `concept playlists reject lexical compilations`() {
+        val ranker = AiPlaylistRanker()
+        val intent =
+            AiPlaylistIntent(
+                title = "Dreamcore 2000",
+                description = "nostalgic surreal internet aesthetic",
+                targetCount = 2,
+                type = AiPlaylistIntentType.CONCEPT,
+            )
+        val candidates =
+            listOf(
+                song("compilation", "Uploader").copy(title = "Dreamcore Music Compilation"),
+                song("track", "Broadcast").copy(title = "Come On Let's Go"),
+            )
+
+        val pool = ranker.candidatePool(candidates, intent)
+
+        assertEquals(listOf("track"), pool.map { it.id })
     }
 
     @Test

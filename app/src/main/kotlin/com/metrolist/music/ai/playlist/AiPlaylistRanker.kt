@@ -11,26 +11,38 @@ import javax.inject.Inject
 class AiPlaylistRanker
 @Inject
 constructor() {
-    fun candidatePool(candidates: List<SongItem>): List<SongItem> {
+    fun candidatePool(
+        candidates: List<SongItem>,
+        intent: AiPlaylistIntent? = null,
+    ): List<SongItem> {
         val seenIds = mutableSetOf<String>()
         val seenMetadata = mutableSetOf<String>()
-        return candidates
-            .asSequence()
-            .filter { song ->
-                val idIsNew = seenIds.add(song.id)
-                val metadataKey =
-                    "${normalize(song.title)}\u0000${normalize(song.artists.firstOrNull()?.name.orEmpty())}"
-                idIsNew && seenMetadata.add(metadataKey)
-            }.take(AiSessionArtifacts.MAX_CANDIDATE_POOL)
-            .toList()
+        val unique =
+            candidates
+                .asSequence()
+                .filterNot(SongItem::isEpisode)
+                .filter { song -> isPlausibleTrack(song, intent) }
+                .filter { song ->
+                    val idIsNew = seenIds.add(song.id)
+                    val metadataKey =
+                        "${normalize(song.title)}\u0000${normalize(song.artists.firstOrNull()?.name.orEmpty())}"
+                    idIsNew && seenMetadata.add(metadataKey)
+                }.take(AiSessionArtifacts.MAX_CANDIDATE_POOL)
+                .toList()
+        return unique
+            .mapIndexed { index, song -> RankedSong(song, scoreCandidate(song, intent, index)) }
+            .sortedByDescending(RankedSong::score)
+            .map(RankedSong::song)
     }
 
     fun finalizeSelection(
         selected: List<SongItem>,
         targetCount: Int,
+        intent: AiPlaylistIntent? = null,
     ): List<SongItem> {
         val target = targetCount.coerceIn(1, AiSessionArtifacts.MAX_CANDIDATE_POOL)
-        val unique = candidatePool(selected)
+        val unique = candidatePool(selected, intent)
+        if (intent?.type == AiPlaylistIntentType.ARTIST) return unique.take(target)
         if (unique.size <= 3) return unique.take(target)
 
         val primaryArtistLimit = MAX_PRIMARY_ARTIST_TRACKS
@@ -52,6 +64,79 @@ constructor() {
 
     companion object {
         private const val MAX_PRIMARY_ARTIST_TRACKS = 3
+        private const val MIN_TRACK_SECONDS = 35
+        private const val MAX_TRACK_SECONDS = 12 * 60
+        private val compilationMarkers =
+            listOf(
+                "compilation",
+                "playlist",
+                "full album",
+                "one hour",
+                "1 hour",
+                "60 minutes",
+                "music collection",
+                "songs collection",
+                "continuous mix",
+                "hour mix",
+                "musicas para",
+                "músicas para",
+            )
+
+        internal fun isPlausibleTrack(
+            song: SongItem,
+            intent: AiPlaylistIntent? = null,
+        ): Boolean {
+            if (song.artists.none { it.name.isNotBlank() }) return false
+            val duration = song.duration
+            if (duration != null && duration !in MIN_TRACK_SECONDS..MAX_TRACK_SECONDS) return false
+            val normalizedTitle = song.title.lowercase()
+            if (compilationMarkers.any(normalizedTitle::contains)) return false
+            if (intent?.type in setOf(AiPlaylistIntentType.GENRE, AiPlaylistIntentType.MOOD, AiPlaylistIntentType.CONCEPT)) {
+                val conceptTokens =
+                    (intent.title + " " + intent.description.orEmpty())
+                        .lowercase()
+                        .split(Regex("[^\\p{L}\\p{N}]+"))
+                        .filter { it.length >= 4 }
+                        .toSet()
+                val genericMusicTitle =
+                    (normalizedTitle.contains(" music") || normalizedTitle.contains(" songs")) &&
+                        conceptTokens.any(normalizedTitle::contains) &&
+                        song.album == null
+                if (genericMusicTitle) return false
+            }
+            val excluded = intent?.exclusions.orEmpty().map(String::lowercase)
+            return excluded.none { it.isNotBlank() && normalizedTitle.contains(it) }
+        }
+
+        internal fun scoreCandidate(
+            song: SongItem,
+            intent: AiPlaylistIntent?,
+            originalIndex: Int,
+        ): Int {
+            var score =
+                (AiSessionArtifacts.MAX_CANDIDATE_POOL -
+                    originalIndex.coerceAtMost(AiSessionArtifacts.MAX_CANDIDATE_POOL)) * 10
+            if (song.album != null) score += 5
+            if (song.duration != null) score += 4
+            if (song.endpoint != null) score += 2
+            score += song.artists.count { !it.id.isNullOrBlank() }.coerceAtMost(2)
+
+            val normalizedArtist = song.artists.joinToString(" ") { it.name }.lowercase()
+            if (intent?.type == AiPlaylistIntentType.ARTIST && intent.artistName != null) {
+                if (normalize(normalizedArtist).contains(normalize(intent.artistName))) score += 100
+            }
+            if (intent?.type in setOf(AiPlaylistIntentType.GENRE, AiPlaylistIntentType.MOOD, AiPlaylistIntentType.CONCEPT)) {
+                val tokens =
+                    (intent?.title.orEmpty() + " " + intent?.description.orEmpty() + " " + intent?.era.orEmpty())
+                        .lowercase()
+                        .split(Regex("[^\\p{L}\\p{N}]+"))
+                        .filter { it.length >= 4 }
+                        .distinct()
+                val albumAndArtist = normalizedArtist + " " + song.album?.name.orEmpty().lowercase()
+                score += tokens.count(albumAndArtist::contains) * 3
+            }
+            return score
+        }
 
         private fun normalize(value: String): String =
             value
@@ -59,3 +144,8 @@ constructor() {
                 .filter(Char::isLetterOrDigit)
     }
 }
+
+private data class RankedSong(
+    val song: SongItem,
+    val score: Int,
+)

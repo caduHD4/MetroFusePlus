@@ -5,10 +5,10 @@
 
 package com.metrolist.music.ai.model
 
+import com.metrolist.music.ai.playlist.AiSessionArtifacts
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import com.metrolist.music.ai.playlist.AiSessionArtifacts
 
 @Serializable
 enum class AiCapability {
@@ -75,6 +75,7 @@ data class AiRequest(
     val tools: List<AiToolDefinition> = emptyList(),
     val maxOutputTokens: Int = 2048,
     val temperature: Double = 0.45,
+    val enableGoogleSearch: Boolean = false,
 )
 
 data class CurrentMusicContext(

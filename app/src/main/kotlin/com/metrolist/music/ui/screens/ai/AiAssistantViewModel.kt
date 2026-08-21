@@ -23,6 +23,8 @@ import com.metrolist.music.ai.core.AiAssistantPhase
 import com.metrolist.music.ai.core.AiAssistantState
 import com.metrolist.music.ai.core.AiError
 import com.metrolist.music.ai.core.AiErrorType
+import com.metrolist.music.ai.core.AiGroundingSource
+import com.metrolist.music.ai.core.AiWebGroundingPolicy
 import com.metrolist.music.ai.model.AiCapability
 import com.metrolist.music.ai.model.AiConversationMessage
 import com.metrolist.music.ai.model.AiPermissions
@@ -33,6 +35,7 @@ import com.metrolist.music.ai.model.CurrentLyricsContext
 import com.metrolist.music.ai.model.CurrentMusicContext
 import com.metrolist.music.ai.playlist.AiPlaylistDraft
 import com.metrolist.music.ai.playlist.AiPlaylistCurator
+import com.metrolist.music.ai.playlist.AiPlaylistIntentType
 import com.metrolist.music.ai.playlist.AiPlaylistRanker
 import com.metrolist.music.ai.playlist.AiSessionArtifacts
 import com.metrolist.music.ai.provider.AiProviderRegistry
@@ -73,7 +76,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
 import javax.inject.Inject
 
@@ -218,6 +220,12 @@ constructor(
                                 artifacts = artifacts,
                             ),
                         toolsEnabled = AiCapability.TOOLS in selectedModel.capabilities,
+                        webGroundingEnabled =
+                            AiWebGroundingPolicy.shouldEnable(
+                                providerId = descriptor.id,
+                                modelId = selectedModel.id,
+                                prompt = message,
+                            ),
                         maxToolCalls = maxToolCalls,
                     ) { event ->
                         when (event) {
@@ -385,6 +393,21 @@ constructor(
                                             ),
                                     )
                                 }
+                            is AiAgentEvent.Grounding -> {
+                                flushText(force = true)
+                                if (event.metadata.sources.isNotEmpty()) {
+                                    _uiState.update {
+                                        it.copy(
+                                            items =
+                                                it.items +
+                                                    AiChatItem.GroundingSources(
+                                                        UUID.randomUUID().toString(),
+                                                        event.metadata.sources,
+                                                    ),
+                                        )
+                                    }
+                                }
+                            }
                             is AiAgentEvent.Error -> {
                                 flushText(force = true)
                                 addError(event.error)
@@ -550,7 +573,7 @@ constructor(
                             toolCallId = progressId,
                             label = context.getString(R.string.ai_status_building_playlist),
                             current = 0,
-                            total = action.queries.size,
+                            total = action.queries.size.coerceAtLeast(1),
                         ),
                 execution = AiAssistantState(AiAssistantPhase.BUILDING_PLAYLIST, canCancel = true),
             )
@@ -558,72 +581,7 @@ constructor(
         activeJob =
             viewModelScope.launch {
                 runCatching {
-                    val completed = AtomicInteger(0)
-                    val semaphore = Semaphore(MAX_PARALLEL_PLAYLIST_SEARCHES)
-                    val searchResults =
-                        coroutineScope {
-                            action.queries.map { query ->
-                                async(Dispatchers.IO) {
-                                    val result =
-                                        semaphore.withPermit {
-                                            musicCatalogRepository.searchSongs(query, PLAYLIST_RESULTS_PER_QUERY)
-                                        }
-                                    val found = result.getOrDefault(emptyList())
-                                    artifacts.rememberSongs(found)
-                                    val done = completed.incrementAndGet()
-                                    _uiState.update { state ->
-                                        state.copy(
-                                            items = state.items.map { item ->
-                                                if (item is AiChatItem.Progress && item.id == progressId) {
-                                                    item.copy(
-                                                        current = done,
-                                                        songs =
-                                                            playlistRanker
-                                                                .candidatePool(item.songs + found)
-                                                                .take(action.intent.targetCount),
-                                                    )
-                                                } else {
-                                                    item
-                                                }
-                                            },
-                                        )
-                                    }
-                                    result
-                                }
-                            }.awaitAll()
-                        }
-                    val candidates = playlistRanker.candidatePool(searchResults.flatMap { it.getOrDefault(emptyList()) })
-                    if (candidates.isEmpty()) {
-                        throw searchResults.firstNotNullOfOrNull { it.exceptionOrNull() }
-                            ?: IllegalStateException(context.getString(R.string.ai_playlist_no_candidates))
-                    }
-                    artifacts.rememberSongs(candidates)
-                    _uiState.update { state ->
-                        state.copy(
-                            items = state.items.map { item ->
-                                if (item is AiChatItem.Progress && item.id == progressId) {
-                                    item.copy(label = context.getString(R.string.ai_status_ranking))
-                                } else {
-                                    item
-                                }
-                            },
-                            execution =
-                                AiAssistantState(
-                                    phase = AiAssistantPhase.RANKING,
-                                    status = context.getString(R.string.ai_status_ranking),
-                                    canCancel = true,
-                                ),
-                        )
-                    }
-                    val config = sessionProviderConfig
-                        ?: error(context.getString(R.string.ai_playlist_session_expired))
-                    val curated = playlistCurator.select(config, action.intent, candidates).getOrThrow()
-                    val selected = playlistRanker.finalizeSelection(curated.songs, action.intent.targetCount)
-                    check(selected.isNotEmpty()) { context.getString(R.string.ai_playlist_no_candidates) }
-                    artifacts.createDraft(
-                        action.intent.copy(title = curated.title ?: action.intent.title),
-                        selected,
-                    )
+                    generatePlaylistDraft(action, progressId)
                 }.fold(
                     onSuccess = { draft ->
                         artifacts.removePendingAction(action.id)
@@ -660,6 +618,187 @@ constructor(
                 )
             }
     }
+
+    private suspend fun generatePlaylistDraft(
+        action: AiPendingAction.BuildPlaylistDraft,
+        progressId: String,
+    ): AiPlaylistDraft {
+        val config = sessionProviderConfig ?: error(context.getString(R.string.ai_playlist_session_expired))
+        if (action.intent.type == AiPlaylistIntentType.ARTIST) {
+            val artistName = action.intent.artistName ?: error("An exact artist name is required.")
+            val resolved =
+                withContext(Dispatchers.IO) {
+                    musicCatalogRepository.songsByArtist(artistName, action.intent.targetCount * 3).getOrThrow()
+                }
+            val verified = playlistRanker.candidatePool(resolved.songs, action.intent)
+            val selected =
+                playlistRanker.finalizeSelection(
+                    verified,
+                    action.intent.targetCount,
+                    action.intent,
+                )
+            check(selected.isNotEmpty()) { context.getString(R.string.ai_playlist_no_candidates) }
+            artifacts.rememberSongs(selected)
+            updatePlaylistProgress(progressId, 1, 1, selected, ranking = false)
+            return artifacts.createDraft(
+                action.intent.copy(artistName = resolved.artist.title),
+                selected,
+            )
+        }
+
+        val pendingQueries = ArrayDeque(action.queries)
+        val searchedQueries = linkedSetOf<String>()
+        val startedAt = System.nanoTime()
+        var candidates = emptyList<SongItem>()
+        var latestSelection: com.metrolist.music.ai.playlist.AiPlaylistSelection? = null
+        var relatedExpanded = false
+        var round = 0
+        var firstFailure: Throwable? = null
+
+        while (
+            round < MAX_ADAPTIVE_PLAYLIST_ROUNDS &&
+            elapsedMilliseconds(startedAt) < PLAYLIST_SEARCH_TIMEOUT_MS
+        ) {
+            val batch = mutableListOf<String>()
+            while (pendingQueries.isNotEmpty() && batch.size < MAX_QUERIES_PER_ROUND) {
+                val query = pendingQueries.removeFirst().trim()
+                if (query.isNotBlank() && searchedQueries.add(query.lowercase())) batch += query
+            }
+
+            if (batch.isNotEmpty()) {
+                val semaphore = Semaphore(MAX_PARALLEL_PLAYLIST_SEARCHES)
+                val desiredPerQuery =
+                    (action.intent.targetCount * CANDIDATE_MULTIPLIER)
+                        .coerceIn(MIN_RESULTS_PER_QUERY, MAX_RESULTS_PER_QUERY)
+                val results =
+                    coroutineScope {
+                        batch.map { query ->
+                            async(Dispatchers.IO) {
+                                semaphore.withPermit {
+                                    musicCatalogRepository.searchSongsPaged(
+                                        query = query,
+                                        desiredCount = desiredPerQuery,
+                                        maxPages = PLAYLIST_SEARCH_PAGES,
+                                    )
+                                }
+                            }
+                        }.awaitAll()
+                    }
+                firstFailure = firstFailure ?: results.firstNotNullOfOrNull { it.exceptionOrNull() }
+                val found = results.flatMap { it.getOrDefault(emptyList()) }
+                candidates = playlistRanker.candidatePool(candidates + found, action.intent)
+                artifacts.rememberSongs(candidates)
+                updatePlaylistProgress(
+                    progressId = progressId,
+                    current = searchedQueries.size,
+                    total = searchedQueries.size + pendingQueries.size,
+                    songs = candidates,
+                    ranking = false,
+                )
+            } else if (!relatedExpanded && candidates.isNotEmpty()) {
+                val seeds = latestSelection?.songs.orEmpty().ifEmpty { candidates }.take(RELATED_SEED_COUNT)
+                val related =
+                    coroutineScope {
+                        seeds.map { seed ->
+                            async(Dispatchers.IO) {
+                                musicCatalogRepository.relatedSongs(seed.id, RELATED_RESULTS_PER_SEED)
+                            }
+                        }.awaitAll().flatMap { it.getOrDefault(emptyList()) }
+                    }
+                candidates = playlistRanker.candidatePool(candidates + related, action.intent)
+                artifacts.rememberSongs(candidates)
+                relatedExpanded = true
+            } else {
+                break
+            }
+
+            if (candidates.isEmpty()) {
+                round++
+                continue
+            }
+            updatePlaylistProgress(
+                progressId = progressId,
+                current = searchedQueries.size,
+                total = (searchedQueries.size + pendingQueries.size).coerceAtLeast(1),
+                songs = candidates,
+                ranking = true,
+            )
+            val curated = playlistCurator.select(config, action.intent, candidates).getOrThrow()
+            latestSelection = curated
+            val selected =
+                playlistRanker.finalizeSelection(
+                    curated.songs,
+                    action.intent.targetCount,
+                    action.intent,
+                )
+            if (curated.complete && selected.size >= action.intent.targetCount.coerceAtMost(candidates.size)) {
+                break
+            }
+            curated.additionalQueries
+                .asSequence()
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .filterNot { it.lowercase() in searchedQueries }
+                .forEach(pendingQueries::addLast)
+            round++
+        }
+
+        if (candidates.isEmpty()) {
+            throw firstFailure ?: IllegalStateException(context.getString(R.string.ai_playlist_no_candidates))
+        }
+        val curatedSongs = latestSelection?.songs.orEmpty().ifEmpty { candidates }
+        val selected =
+            playlistRanker.finalizeSelection(
+                curatedSongs,
+                action.intent.targetCount,
+                action.intent,
+            )
+        check(selected.isNotEmpty()) { context.getString(R.string.ai_playlist_no_candidates) }
+        return artifacts.createDraft(
+            action.intent.copy(title = latestSelection?.title ?: action.intent.title),
+            selected,
+        )
+    }
+
+    private fun updatePlaylistProgress(
+        progressId: String,
+        current: Int,
+        total: Int,
+        songs: List<SongItem>,
+        ranking: Boolean,
+    ) {
+        val label =
+            context.getString(
+                if (ranking) R.string.ai_status_ranking else R.string.ai_status_building_playlist,
+            )
+        _uiState.update { state ->
+            state.copy(
+                items = state.items.map { item ->
+                    if (item is AiChatItem.Progress && item.id == progressId) {
+                        item.copy(
+                            label = label,
+                            current = current,
+                            total = total.coerceAtLeast(current).coerceAtLeast(1),
+                            songs = songs.take(actionPreviewCount(songs.size)),
+                        )
+                    } else {
+                        item
+                    }
+                },
+                execution =
+                    AiAssistantState(
+                        phase = if (ranking) AiAssistantPhase.RANKING else AiAssistantPhase.BUILDING_PLAYLIST,
+                        status = label,
+                        canCancel = true,
+                    ),
+            )
+        }
+    }
+
+    private fun actionPreviewCount(candidateCount: Int): Int = candidateCount.coerceAtMost(MAX_PROGRESS_SONGS)
+
+    private fun elapsedMilliseconds(startedAtNanos: Long): Long =
+        (System.nanoTime() - startedAtNanos) / 1_000_000L
 
     fun executePersistentAction(actionId: String) {
         val action = artifacts.pendingAction(actionId) ?: return
@@ -860,6 +999,11 @@ sealed interface AiChatItem {
         val playlists: List<AiLibraryPlaylist>,
     ) : AiChatItem
 
+    data class GroundingSources(
+        override val id: String,
+        val sources: List<AiGroundingSource>,
+    ) : AiChatItem
+
     data class PlaylistDraft(
         override val id: String,
         val draft: AiPlaylistDraft,
@@ -897,6 +1041,15 @@ sealed interface AiChatItem {
 }
 
 private const val MAX_PARALLEL_PLAYLIST_SEARCHES = 3
-private const val PLAYLIST_RESULTS_PER_QUERY = 20
+private const val CANDIDATE_MULTIPLIER = 4
+private const val MIN_RESULTS_PER_QUERY = 24
+private const val MAX_RESULTS_PER_QUERY = 60
+private const val PLAYLIST_SEARCH_PAGES = 4
+private const val MAX_QUERIES_PER_ROUND = 8
+private const val MAX_ADAPTIVE_PLAYLIST_ROUNDS = 6
+private const val PLAYLIST_SEARCH_TIMEOUT_MS = 45_000L
+private const val RELATED_SEED_COUNT = 3
+private const val RELATED_RESULTS_PER_SEED = 20
+private const val MAX_PROGRESS_SONGS = 24
 
 private class MissingAiKeyException : IllegalStateException()

@@ -14,7 +14,21 @@ data class AiPlaylistIntent(
     val title: String,
     val description: String?,
     val targetCount: Int,
+    val type: AiPlaylistIntentType = AiPlaylistIntentType.CONCEPT,
+    val artistName: String? = null,
+    val era: String? = null,
+    val exclusions: List<String> = emptyList(),
 )
+
+enum class AiPlaylistIntentType {
+    ARTIST,
+    TRACK,
+    GENRE,
+    MOOD,
+    CONCEPT,
+    SIMILAR,
+    HISTORY,
+}
 
 data class AiPlaylistDraft(
     val id: String,
@@ -218,7 +232,7 @@ class AiSessionArtifacts(
     }
 
     companion object {
-        const val MAX_CANDIDATE_POOL = 60
+        const val MAX_CANDIDATE_POOL = 120
         const val MAX_LIBRARY_PLAYLISTS = 100
         const val MAX_PENDING_ACTIONS = 30
         const val MAX_DRAFTS = 30

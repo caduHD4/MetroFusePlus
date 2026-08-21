@@ -64,6 +64,7 @@ constructor(
                         is AiStreamEvent.Status,
                         is AiStreamEvent.ToolCallArgumentsDelta,
                         is AiStreamEvent.Usage,
+                        is AiStreamEvent.Grounding,
                         -> Unit
                     }
                 }
@@ -90,6 +91,8 @@ constructor(
 data class AiPlaylistSelection(
     val songs: List<SongItem>,
     val title: String?,
+    val additionalQueries: List<String> = emptyList(),
+    val complete: Boolean = true,
 )
 
 internal fun resolveSelection(
@@ -107,7 +110,19 @@ internal fun resolveSelection(
         }.getOrDefault(emptyList())
     val maximum = targetCount.coerceIn(1, AiSessionArtifacts.MAX_CANDIDATE_POOL)
     val songs = indexes.mapNotNull(candidates::getOrNull).distinctBy(SongItem::id).take(maximum)
-    require(songs.isNotEmpty()) { "The model did not select any valid candidate indexes." }
+    val additionalQueries =
+        runCatching {
+            arguments["additionalQueries"]
+                ?.jsonArray
+                .orEmpty()
+                .mapNotNull { it.jsonPrimitive.contentOrNull?.trim() }
+                .filter(String::isNotBlank)
+                .distinct()
+                .take(MAX_ADDITIONAL_QUERIES)
+        }.getOrDefault(emptyList())
+    require(songs.isNotEmpty() || additionalQueries.isNotEmpty()) {
+        "The model did not select candidates or request a broader catalog search."
+    }
     val title =
         arguments["playlistName"]
             ?.jsonPrimitive
@@ -118,7 +133,10 @@ internal fun resolveSelection(
             ?.joinToString("")
             ?.trim()
             ?.takeIf(String::isNotBlank)
-    return AiPlaylistSelection(songs, title)
+    val complete =
+        arguments["complete"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+            ?: (songs.size >= maximum && additionalQueries.isEmpty())
+    return AiPlaylistSelection(songs, title, additionalQueries, complete)
 }
 
 private fun selectionRequest(
@@ -145,7 +163,11 @@ private fun selectionRequest(
             """You curate a MetroFuse+ playlist from a closed candidate pool.
 You must call $SELECTION_TOOL_NAME exactly once.
 Select only zero-based candidateIndex values present in the supplied candidates.
-Choose at most $maximum tracks, prioritize the requested concept, and keep artist and album diversity.
+Choose at most $maximum tracks and prioritize musical identity, sound, scene, mood, and era over literal title matches.
+For an exact artist, select only tracks credited to that artist and do not enforce artist diversity.
+For a genre, mood, or aesthetic, reject compilations, long mixes, generic background tracks, and titles that merely repeat the requested label without fitting the music.
+Use additionalQueries when the pool is weak, repetitive, or too literal. Those queries should explore artists, adjacent genres, production traits, scenes, and representative tracks instead of repeating the same label.
+Set complete=true only when the pool contains enough strongly relevant tracks.
 Never emit song IDs and never introduce tracks outside the candidate pool.""",
         messages =
             listOf(
@@ -157,6 +179,20 @@ Never emit song IDs and never introduce tracks outside the candidate pool.""",
                             append("\nConcept: ")
                             append(it)
                         }
+                        append("\nIntent type: ")
+                        append(intent.type.name.lowercase())
+                        intent.artistName?.let {
+                            append("\nExact artist: ")
+                            append(it)
+                        }
+                        intent.era?.let {
+                            append("\nEra: ")
+                            append(it)
+                        }
+                        if (intent.exclusions.isNotEmpty()) {
+                            append("\nExclude: ")
+                            append(intent.exclusions.joinToString())
+                        }
                         append("\nTarget count: ")
                         append(maximum)
                         append("\nCandidates: ")
@@ -166,7 +202,8 @@ Never emit song IDs and never introduce tracks outside the candidate pool.""",
             ),
         tools = listOf(selectionTool(candidates.lastIndex, maximum)),
         maxOutputTokens = 768,
-        temperature = 0.25,
+        temperature = 0.2,
+        enableGoogleSearch = intent.requiresConceptResearch,
     )
 }
 
@@ -195,7 +232,6 @@ private fun selectionTool(
                                         put("maximum", maximumIndex)
                                     },
                                 )
-                                put("minItems", 1)
                                 put("maxItems", maximumItems)
                                 put("uniqueItems", true)
                             },
@@ -207,6 +243,22 @@ private fun selectionTool(
                                 put("maxLength", MAX_TITLE_CHARS)
                             },
                         )
+                        put(
+                            "additionalQueries",
+                            buildJsonObject {
+                                put("type", "array")
+                                put("items", buildJsonObject { put("type", "string"); put("maxLength", 180) })
+                                put("maxItems", MAX_ADDITIONAL_QUERIES)
+                                put("uniqueItems", true)
+                            },
+                        )
+                        put(
+                            "complete",
+                            buildJsonObject {
+                                put("type", "boolean")
+                                put("description", "True only when the selected candidates strongly satisfy the concept and target count.")
+                            },
+                        )
                     },
                 )
                 put("required", JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive("selectedIndexes"))))
@@ -216,3 +268,7 @@ private fun selectionTool(
 
 private const val SELECTION_TOOL_NAME = "select_playlist_candidates"
 private const val MAX_TITLE_CHARS = 100
+private const val MAX_ADDITIONAL_QUERIES = 8
+
+private val AiPlaylistIntent.requiresConceptResearch: Boolean
+    get() = type in setOf(AiPlaylistIntentType.GENRE, AiPlaylistIntentType.MOOD, AiPlaylistIntentType.CONCEPT)

@@ -4,6 +4,7 @@ import com.metrolist.music.ai.model.AiConversationMessage
 import com.metrolist.music.ai.model.AiPendingToolCall
 import com.metrolist.music.ai.model.AiProviderConfig
 import com.metrolist.music.ai.model.AiRequest
+import com.metrolist.music.ai.model.AiToolDefinition
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -21,10 +22,11 @@ class AiToolTransportTest {
         val provider = GeminiProvider(descriptor("gemini"), OkHttpClient())
         val body = provider.buildBody(request(geminiMetadata()))
         val contents = body["contents"]!!.jsonArray
-        val assistantPart = contents[0].jsonObject["parts"]!!.jsonArray.single().jsonObject
+        val assistantParts = contents[0].jsonObject["parts"]!!.jsonArray
         val responseParts = contents[1].jsonObject["parts"]!!.jsonArray
 
-        assertEquals("signature-123", assistantPart["thoughtSignature"]!!.jsonPrimitive.content)
+        assertEquals("signature-123", assistantParts[0].jsonObject["thoughtSignature"]!!.jsonPrimitive.content)
+        assertEquals(2, assistantParts.size)
         assertEquals(2, responseParts.size)
         assertNotNull(responseParts[0].jsonObject["functionResponse"])
         assertNotNull(responseParts[1].jsonObject["functionResponse"])
@@ -51,6 +53,17 @@ class AiToolTransportTest {
     }
 
     @Test
+    fun `Gemini combines Google Search only when explicitly enabled and supported`() {
+        val provider = GeminiProvider(descriptor("gemini"), OkHttpClient())
+        val grounded = provider.buildBody(request(geminiMetadata()).copy(enableGoogleSearch = true), true)
+        val unsupported = provider.buildBody(request(geminiMetadata()).copy(enableGoogleSearch = true), false)
+
+        assertEquals(2, grounded["tools"]!!.jsonArray.size)
+        assertNotNull(grounded["tools"]!!.jsonArray[1].jsonObject["googleSearch"])
+        assertEquals(1, unsupported["tools"]!!.jsonArray.size)
+    }
+
+    @Test
     fun `OpenAI compatible transport preserves Gemini extra content`() {
         val provider = OpenAiCompatibleProvider(descriptor("openrouter"), OkHttpClient())
         val body =
@@ -73,6 +86,14 @@ class AiToolTransportTest {
     private fun request(metadata: JsonObject): AiRequest =
         AiRequest(
             systemPrompt = "test",
+            tools =
+                listOf(
+                    AiToolDefinition(
+                        name = "search_music",
+                        description = "test",
+                        inputSchema = buildJsonObject { put("type", "object") },
+                    ),
+                ),
             messages =
                 listOf(
                     AiConversationMessage.Assistant(
@@ -84,6 +105,11 @@ class AiToolTransportTest {
                                     name = "search_music",
                                     arguments = buildJsonObject { put("query", "Ado") },
                                     transportMetadata = metadata,
+                                ),
+                                AiPendingToolCall(
+                                    id = "call-2",
+                                    name = "get_related_songs",
+                                    arguments = buildJsonObject { put("seedSongId", "song-1") },
                                 ),
                             ),
                     ),

@@ -7,6 +7,7 @@ package com.metrolist.music.ai.tools.playlist
 
 import com.metrolist.music.ai.model.AiToolContext
 import com.metrolist.music.ai.playlist.AiPlaylistIntent
+import com.metrolist.music.ai.playlist.AiPlaylistIntentType
 import com.metrolist.music.ai.playlist.AiPlaylistRanker
 import com.metrolist.music.ai.playlist.AiSessionArtifacts
 import com.metrolist.music.ai.tools.AiConfirmableTool
@@ -30,7 +31,7 @@ constructor(
 ) : AiConfirmableTool {
     override val name = "create_playlist_draft"
     override val description =
-        "Plans a user-confirmed playlist. Prefer 2-5 complementary catalog queries for progressive building, or provide only real song IDs returned by tools."
+        "Plans a user-confirmed playlist with a typed musical intent. For an exact artist provide artistName; for concepts provide focused seed queries. Song IDs must come from catalog tools."
     override val inputSchema =
         buildJsonObject {
             put("type", "object")
@@ -39,6 +40,27 @@ constructor(
                 buildJsonObject {
                     put("title", buildJsonObject { put("type", "string"); put("minLength", 1); put("maxLength", 100) })
                     put("description", buildJsonObject { put("type", "string"); put("maxLength", 300) })
+                    put(
+                        "intentType",
+                        buildJsonObject {
+                            put("type", "string")
+                            put(
+                                "enum",
+                                JsonArray(AiPlaylistIntentType.entries.map { kotlinx.serialization.json.JsonPrimitive(it.name.lowercase()) }),
+                            )
+                        },
+                    )
+                    put("artistName", buildJsonObject { put("type", "string"); put("maxLength", 120) })
+                    put("era", buildJsonObject { put("type", "string"); put("maxLength", 80) })
+                    put(
+                        "exclusions",
+                        buildJsonObject {
+                            put("type", "array")
+                            put("items", buildJsonObject { put("type", "string"); put("maxLength", 80) })
+                            put("maxItems", MAX_EXCLUSIONS)
+                            put("uniqueItems", true)
+                        },
+                    )
                     put(
                         "targetCount",
                         buildJsonObject {
@@ -76,8 +98,8 @@ constructor(
                                     put("maxLength", 180)
                                 },
                             )
-                            put("minItems", 2)
-                            put("maxItems", 5)
+                            put("minItems", 1)
+                            put("maxItems", MAX_INITIAL_QUERIES)
                             put("uniqueItems", true)
                         },
                     )
@@ -119,13 +141,17 @@ constructor(
                     .map { cleanGeneratedText(it, 180) }
                     .filter(String::isNotBlank)
                     .distinct()
-                    .take(MAX_QUERIES)
+                    .take(MAX_INITIAL_QUERIES)
             }.getOrDefault(emptyList())
-        if ((songIds.isEmpty()) == (queries.isEmpty())) {
-            return AiToolResult.Failure("invalid_arguments", "Provide exactly one of songIds or queries.")
+        val artistName =
+            arguments["artistName"]?.jsonPrimitive?.contentOrNull
+                ?.let { cleanGeneratedText(it, 120) }
+                ?.takeIf(String::isNotBlank)
+        if (songIds.isNotEmpty() && (queries.isNotEmpty() || artistName != null)) {
+            return AiToolResult.Failure("invalid_arguments", "Use either real song IDs or a catalog search strategy.")
         }
-        if (queries.isNotEmpty() && queries.size < MIN_QUERIES) {
-            return AiToolResult.Failure("invalid_arguments", "Provide at least two complementary catalog queries.")
+        if (songIds.isEmpty() && queries.isEmpty() && artistName == null) {
+            return AiToolResult.Failure("invalid_arguments", "Provide songIds, artistName, or at least one seed query.")
         }
 
         val requestedCount =
@@ -142,8 +168,25 @@ constructor(
                         ?.let { cleanGeneratedText(it, 300) }
                         ?.takeIf(String::isNotBlank),
                 targetCount = requestedCount,
+                type = parseIntentType(arguments["intentType"]?.jsonPrimitive?.contentOrNull, artistName),
+                artistName = artistName,
+                era =
+                    arguments["era"]?.jsonPrimitive?.contentOrNull
+                        ?.let { cleanGeneratedText(it, 80) }
+                        ?.takeIf(String::isNotBlank),
+                exclusions =
+                    runCatching {
+                        arguments["exclusions"]
+                            ?.jsonArray
+                            .orEmpty()
+                            .mapNotNull { it.jsonPrimitive.contentOrNull }
+                            .map { cleanGeneratedText(it, 80) }
+                            .filter(String::isNotBlank)
+                            .distinct()
+                            .take(MAX_EXCLUSIONS)
+                    }.getOrDefault(emptyList()),
             )
-        if (queries.isNotEmpty()) {
+        if (songIds.isEmpty()) {
             val action =
                 context.artifacts.rememberAction(
                     com.metrolist.music.ai.action.AiPendingAction.BuildPlaylistDraft(
@@ -171,7 +214,7 @@ constructor(
                 "Some song IDs were not returned by catalog tools in this session.",
             )
         }
-        val songs = ranker.finalizeSelection(resolution.songs, requestedCount)
+        val songs = ranker.finalizeSelection(resolution.songs, requestedCount, intent)
         if (songs.isEmpty()) return AiToolResult.Failure("empty_draft", "No validated songs remain for the draft.")
         val action = context.artifacts.createPlaylistDraftAction(intent, songs)
         return AiToolResult.Success(
@@ -198,6 +241,15 @@ private fun cleanGeneratedText(
         .joinToString("")
         .trim()
 
+private fun parseIntentType(
+    value: String?,
+    artistName: String?,
+): AiPlaylistIntentType {
+    if (artistName != null) return AiPlaylistIntentType.ARTIST
+    return AiPlaylistIntentType.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
+        ?: AiPlaylistIntentType.CONCEPT
+}
+
 private const val MAX_ID_CHARS = 512
-private const val MIN_QUERIES = 2
-private const val MAX_QUERIES = 5
+private const val MAX_INITIAL_QUERIES = 12
+private const val MAX_EXCLUSIONS = 12

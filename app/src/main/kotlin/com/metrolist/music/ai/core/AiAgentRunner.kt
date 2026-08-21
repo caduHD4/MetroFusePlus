@@ -37,6 +37,7 @@ constructor(
         conversation: MutableList<AiConversationMessage>,
         toolContext: AiToolContext,
         toolsEnabled: Boolean,
+        webGroundingEnabled: Boolean = false,
         maxToolCalls: Int = DEFAULT_MAX_TOOL_CALLS,
         onEvent: suspend (AiAgentEvent) -> Unit,
     ) {
@@ -62,6 +63,7 @@ constructor(
                                 systemPrompt = systemPrompt,
                                 messages = conversation.toList(),
                                 tools = if (toolsEnabled) toolRegistry.definitions(toolContext) else emptyList(),
+                                enableGoogleSearch = webGroundingEnabled,
                             ),
                         config = config,
                     ).collect { event ->
@@ -85,6 +87,7 @@ constructor(
                             is AiStreamEvent.ToolCallArgumentsDelta,
                             is AiStreamEvent.Usage,
                             -> Unit
+                            is AiStreamEvent.Grounding -> onEvent(AiAgentEvent.Grounding(event.metadata))
                         }
                     }
 
@@ -202,6 +205,10 @@ sealed interface AiAgentEvent {
     data class RetryScheduled(
         val attempt: Int,
         val delaySeconds: Long,
+    ) : AiAgentEvent
+
+    data class Grounding(
+        val metadata: AiGroundingMetadata,
     ) : AiAgentEvent
 
     data class Error(

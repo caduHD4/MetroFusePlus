@@ -1511,6 +1511,7 @@
     <string name="ai_system_prompt_default_rules">Core safety rules plus no additional instructions</string>
     <string name="ai_plan_title">Playlist plan</string>
     <string name="ai_assistant_playlist_results">Playlists</string>
+    <string name="ai_grounding_sources">Sources</string>
     <string name="ai_plan_playlist">Playlist plan</string>
     <string name="ai_plan_playlist_update">Playlist update</string>
     <string name="ai_confirmation_play_playlist">Play %1$s (%2$d tracks)</string>
