@@ -55,8 +55,8 @@ class AiToolTransportTest {
     @Test
     fun `Gemini combines Google Search only when explicitly enabled and supported`() {
         val provider = GeminiProvider(descriptor("gemini"), OkHttpClient())
-        val grounded = provider.buildBody(request(geminiMetadata()).copy(enableGoogleSearch = true), true)
-        val unsupported = provider.buildBody(request(geminiMetadata()).copy(enableGoogleSearch = true), false)
+        val grounded = provider.buildBody(request(geminiMetadata()).copy(enableWebSearch = true), true)
+        val unsupported = provider.buildBody(request(geminiMetadata()).copy(enableWebSearch = true), false)
 
         assertEquals(2, grounded["tools"]!!.jsonArray.size)
         assertNotNull(grounded["tools"]!!.jsonArray[1].jsonObject["googleSearch"])
@@ -80,6 +80,30 @@ class AiToolTransportTest {
                 .jsonObject["google"]!!
                 .jsonObject["thought_signature"]!!
                 .jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `OpenRouter web search is opt in and coexists with app tools`() {
+        val provider = OpenAiCompatibleProvider(descriptor("openrouter"), OkHttpClient())
+        val config = AiProviderConfig("openrouter", "key", "https://example.com", "openrouter/free")
+
+        val disabled = provider.buildChatBody(request(openAiMetadata()), config)
+        val enabled =
+            provider.buildChatBody(
+                request(openAiMetadata()).copy(enableWebSearch = true),
+                config,
+            )
+
+        assertEquals(1, disabled["tools"]!!.jsonArray.size)
+        assertEquals(2, enabled["tools"]!!.jsonArray.size)
+        assertEquals(
+            "openrouter:web_search",
+            enabled["tools"]!!.jsonArray.first().jsonObject["type"]!!.jsonPrimitive.content,
+        )
+        assertEquals(
+            "function",
+            enabled["tools"]!!.jsonArray.last().jsonObject["type"]!!.jsonPrimitive.content,
         )
     }
 

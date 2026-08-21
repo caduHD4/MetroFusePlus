@@ -63,7 +63,7 @@ constructor(
                                 systemPrompt = systemPrompt,
                                 messages = conversation.toList(),
                                 tools = if (toolsEnabled) toolRegistry.definitions(toolContext) else emptyList(),
-                                enableGoogleSearch = webGroundingEnabled,
+                                enableWebSearch = webGroundingEnabled,
                             ),
                         config = config,
                     ).collect { event ->

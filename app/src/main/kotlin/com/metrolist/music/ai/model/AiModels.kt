@@ -75,7 +75,7 @@ data class AiRequest(
     val tools: List<AiToolDefinition> = emptyList(),
     val maxOutputTokens: Int = 2048,
     val temperature: Double = 0.45,
-    val enableGoogleSearch: Boolean = false,
+    val enableWebSearch: Boolean = false,
 )
 
 data class CurrentMusicContext(

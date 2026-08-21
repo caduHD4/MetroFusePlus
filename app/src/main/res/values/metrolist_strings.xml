@@ -1074,6 +1074,8 @@
     <string name="ai_base_url">Base URL</string>
     <string name="ai_api_key">API key</string>
     <string name="ai_model">Model</string>
+    <string name="ai_web_search">Web search</string>
+    <string name="ai_web_search_desc">Allow the selected provider to search the web when supported. OpenRouter search works with every compatible model and may use separate search credits.</string>
     <string name="ai_translation_mode">Translation mode</string>
     <string name="ai_target_language">Target language</string>
     <string name="ai_setup_guide">API credentials</string>

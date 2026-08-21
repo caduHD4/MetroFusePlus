@@ -24,7 +24,6 @@ import com.metrolist.music.ai.core.AiAssistantState
 import com.metrolist.music.ai.core.AiError
 import com.metrolist.music.ai.core.AiErrorType
 import com.metrolist.music.ai.core.AiGroundingSource
-import com.metrolist.music.ai.core.AiWebGroundingPolicy
 import com.metrolist.music.ai.model.AiCapability
 import com.metrolist.music.ai.model.AiConversationMessage
 import com.metrolist.music.ai.model.AiPermissions
@@ -59,6 +58,7 @@ import com.metrolist.music.constants.AiAssistantPlaylistsPermissionKey
 import com.metrolist.music.constants.AiAssistantProviderKey
 import com.metrolist.music.constants.AiAssistantQueuePermissionKey
 import com.metrolist.music.constants.AiAssistantSystemPromptKey
+import com.metrolist.music.constants.AiAssistantWebSearchKey
 import com.metrolist.music.constants.DEFAULT_AI_ASSISTANT_SYSTEM_PROMPT
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
@@ -158,7 +158,13 @@ constructor(
                                     metadata = mapOf("source" to "manual_selection"),
                                 )
                         } else {
-                            catalog.models.firstOrNull { AiCapability.TOOLS in it.capabilities }
+                            descriptor.fallbackModelIds
+                                .firstNotNullOfOrNull { preferredId ->
+                                    catalog.models.firstOrNull { model ->
+                                        model.id == preferredId && AiCapability.TOOLS in model.capabilities
+                                    }
+                                }
+                                ?: catalog.models.firstOrNull { AiCapability.TOOLS in it.capabilities }
                                 ?: catalog.models.firstOrNull()
                                 ?: error(context.getString(R.string.ai_no_compatible_model, descriptor.displayName))
                         }
@@ -220,12 +226,7 @@ constructor(
                                 artifacts = artifacts,
                             ),
                         toolsEnabled = AiCapability.TOOLS in selectedModel.capabilities,
-                        webGroundingEnabled =
-                            AiWebGroundingPolicy.shouldEnable(
-                                providerId = descriptor.id,
-                                modelId = selectedModel.id,
-                                prompt = message,
-                            ),
+                        webGroundingEnabled = context.dataStore.get(AiAssistantWebSearchKey, false),
                         maxToolCalls = maxToolCalls,
                     ) { event ->
                         when (event) {
@@ -723,7 +724,13 @@ constructor(
                 songs = candidates,
                 ranking = true,
             )
-            val curated = playlistCurator.select(config, action.intent, candidates).getOrThrow()
+            val curated =
+                playlistCurator.select(
+                    config = config,
+                    intent = action.intent,
+                    candidates = candidates,
+                    webSearchEnabled = context.dataStore.get(AiAssistantWebSearchKey, false),
+                ).getOrThrow()
             latestSelection = curated
             val selected =
                 playlistRanker.finalizeSelection(

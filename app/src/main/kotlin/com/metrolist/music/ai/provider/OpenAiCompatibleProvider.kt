@@ -7,6 +7,8 @@ package com.metrolist.music.ai.provider
 
 import com.metrolist.music.ai.core.AiError
 import com.metrolist.music.ai.core.AiErrorType
+import com.metrolist.music.ai.core.AiGroundingMetadata
+import com.metrolist.music.ai.core.AiGroundingSource
 import com.metrolist.music.ai.core.AiStreamEvent
 import com.metrolist.music.ai.core.runCatchingPreservingCancellation
 import com.metrolist.music.ai.model.AiConversationMessage
@@ -116,7 +118,12 @@ class OpenAiCompatibleProvider(
                     )
                 }.distinctBy(AiModel::id)
                     .sortedWith(
-                        compareByDescending<AiModel> { com.metrolist.music.ai.model.AiCapability.TOOLS in it.capabilities }
+                        compareBy<AiModel> { model ->
+                            descriptor.fallbackModelIds
+                                .indexOf(model.id)
+                                .takeIf { it >= 0 }
+                                ?: Int.MAX_VALUE
+                        }.thenByDescending { com.metrolist.music.ai.model.AiCapability.TOOLS in it.capabilities }
                             .thenBy { it.displayName.lowercase() },
                     )
             }
@@ -131,6 +138,8 @@ class OpenAiCompatibleProvider(
             val call = client.newCall(buildRequest(config, "chat/completions", body))
             val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
             try {
+                val seenGroundingSources = linkedMapOf<String, AiGroundingSource>()
+                var groundingEmitted = false
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
                         throw parseProviderError(response.code, response.body?.string(), response.header("Retry-After"))
@@ -146,6 +155,17 @@ class OpenAiCompatibleProvider(
                         if (data.isBlank()) continue
                         if (data == "[DONE]") {
                             emitCompletedToolCalls(toolBuilders)
+                            if (seenGroundingSources.isNotEmpty()) {
+                                emit(
+                                    AiStreamEvent.Grounding(
+                                        AiGroundingMetadata(
+                                            queries = emptyList(),
+                                            sources = seenGroundingSources.values.toList(),
+                                        ),
+                                    ),
+                                )
+                                groundingEmitted = true
+                            }
                             emit(AiStreamEvent.Completed)
                             completed = true
                             break
@@ -157,6 +177,11 @@ class OpenAiCompatibleProvider(
                         val delta = choice["delta"]?.jsonObject ?: continue
                         delta["content"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotEmpty)?.let {
                             emit(AiStreamEvent.TextDelta(it))
+                        }
+                        delta["annotations"]?.jsonArray.orEmpty().forEach { annotation ->
+                            annotation.openRouterGroundingSource()?.let { source ->
+                                seenGroundingSources[source.url] = source
+                            }
                         }
                         delta["tool_calls"]?.jsonArray?.forEachIndexed { fallbackIndex, toolElement ->
                             val tool = toolElement.jsonObject
@@ -201,6 +226,16 @@ class OpenAiCompatibleProvider(
                     }
                     if (!completed) {
                         emitCompletedToolCalls(toolBuilders)
+                        if (!groundingEmitted && seenGroundingSources.isNotEmpty()) {
+                            emit(
+                                AiStreamEvent.Grounding(
+                                    AiGroundingMetadata(
+                                        queries = emptyList(),
+                                        sources = seenGroundingSources.values.toList(),
+                                    ),
+                                ),
+                            )
+                        }
                         emit(AiStreamEvent.Completed)
                     }
                 }
@@ -251,6 +286,7 @@ class OpenAiCompatibleProvider(
         config: AiProviderConfig,
     ): JsonObject =
         buildJsonObject {
+            val openRouterWebSearch = descriptor.id == "openrouter" && request.enableWebSearch
             put("model", config.modelId)
             put("stream", true)
             if (!usesRestrictedReasoningParameters(config)) {
@@ -272,10 +308,27 @@ class OpenAiCompatibleProvider(
                     request.messages.forEach { message -> add(message.toOpenAiJson()) }
                 },
             )
-            if (request.tools.isNotEmpty()) {
+            if (request.tools.isNotEmpty() || openRouterWebSearch) {
                 put(
                     "tools",
                     buildJsonArray {
+                        if (openRouterWebSearch) {
+                            add(
+                                buildJsonObject {
+                                    put("type", "openrouter:web_search")
+                                    put(
+                                        "parameters",
+                                        buildJsonObject {
+                                            put("engine", "parallel")
+                                            put("mode", "turbo")
+                                            put("max_results", OPENROUTER_WEB_MAX_RESULTS)
+                                            put("max_total_results", OPENROUTER_WEB_MAX_RESULTS)
+                                            put("max_uses", 1)
+                                        },
+                                    )
+                                },
+                            )
+                        }
                         request.tools.forEach { tool ->
                             add(
                                 buildJsonObject {
@@ -304,6 +357,15 @@ class OpenAiCompatibleProvider(
             model.startsWith("o3") ||
             model.startsWith("o4") ||
             model.startsWith("gpt-5")
+    }
+
+    private fun JsonElement.openRouterGroundingSource(): AiGroundingSource? {
+        val annotation = this as? JsonObject ?: return null
+        if (annotation["type"]?.jsonPrimitive?.contentOrNull != "url_citation") return null
+        val citation = annotation["url_citation"] as? JsonObject ?: annotation
+        val url = citation["url"]?.jsonPrimitive?.contentOrNull ?: return null
+        val title = citation["title"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank) ?: url
+        return AiGroundingSource(title = title, url = url)
     }
 
     private fun AiConversationMessage.toOpenAiJson(): JsonObject =
@@ -390,5 +452,9 @@ class OpenAiCompatibleProvider(
         val arguments = StringBuilder()
         var transportMetadata: JsonObject = JsonObject(emptyMap())
         var started = false
+    }
+
+    private companion object {
+        const val OPENROUTER_WEB_MAX_RESULTS = 3
     }
 }

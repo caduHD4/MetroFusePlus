@@ -51,6 +51,7 @@ import com.metrolist.music.constants.AiAssistantPlaylistsPermissionKey
 import com.metrolist.music.constants.AiAssistantProviderKey
 import com.metrolist.music.constants.AiAssistantQueuePermissionKey
 import com.metrolist.music.constants.AiAssistantSystemPromptKey
+import com.metrolist.music.constants.AiAssistantWebSearchKey
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
@@ -66,6 +67,7 @@ fun AiAssistantSettingsSection(
     var baseUrl by rememberPreference(AiAssistantBaseUrlKey, "")
     var modelId by rememberPreference(AiAssistantModelKey, "")
     var systemPrompt by rememberPreference(AiAssistantSystemPromptKey, "")
+    var webSearchEnabled by rememberPreference(AiAssistantWebSearchKey, false)
     var allowCurrentSong by rememberPreference(AiAssistantCurrentSongPermissionKey, true)
     var allowQueue by rememberPreference(AiAssistantQueuePermissionKey, false)
     var allowLibrary by rememberPreference(AiAssistantLibraryPermissionKey, false)
@@ -279,6 +281,20 @@ fun AiAssistantSettingsSection(
                             } else {
                                 null
                             },
+                    ),
+                )
+                add(
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.language),
+                        title = { Text(stringResource(R.string.ai_web_search)) },
+                        description = { Text(stringResource(R.string.ai_web_search_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = webSearchEnabled,
+                                onCheckedChange = { webSearchEnabled = it },
+                            )
+                        },
+                        onClick = { webSearchEnabled = !webSearchEnabled },
                     ),
                 )
                 add(

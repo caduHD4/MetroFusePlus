@@ -44,6 +44,17 @@ class AiModelClassifierTest {
     }
 
     @Test
+    fun `OpenRouter free router advertises tools because routing filters by request capability`() {
+        val capabilities =
+            AiModelClassifier.capabilities(
+                descriptor(id = "openrouter", supportsTools = true),
+                "openrouter/free",
+            )
+
+        assertTrue(AiCapability.TOOLS in capabilities)
+    }
+
+    @Test
     fun `respects explicit provider function calling capability`() {
         val descriptor = descriptor(id = "mistral", supportsTools = true)
         val capabilities =

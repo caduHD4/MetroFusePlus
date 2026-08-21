@@ -38,11 +38,12 @@ constructor(
         config: AiProviderConfig,
         intent: AiPlaylistIntent,
         candidates: List<SongItem>,
+        webSearchEnabled: Boolean = false,
     ): Result<AiPlaylistSelection> =
         runCatchingPreservingCancellation {
             require(candidates.isNotEmpty()) { "The candidate pool is empty." }
             val provider = providerRegistry.requireProvider(config.providerId)
-            val request = selectionRequest(intent, candidates)
+            val request = selectionRequest(intent, candidates, webSearchEnabled)
             var attempt = 0
             while (true) {
                 var providerError: AiError? = null
@@ -142,6 +143,7 @@ internal fun resolveSelection(
 private fun selectionRequest(
     intent: AiPlaylistIntent,
     candidates: List<SongItem>,
+    webSearchEnabled: Boolean,
 ): AiRequest {
     val maximum = intent.targetCount.coerceIn(1, candidates.size)
     val candidatePayload =
@@ -203,7 +205,7 @@ Never emit song IDs and never introduce tracks outside the candidate pool.""",
         tools = listOf(selectionTool(candidates.lastIndex, maximum)),
         maxOutputTokens = 768,
         temperature = 0.2,
-        enableGoogleSearch = intent.requiresConceptResearch,
+        enableWebSearch = webSearchEnabled && intent.requiresConceptResearch,
     )
 }
 

@@ -24,7 +24,7 @@ constructor() {
                 supportsTools = true,
                 supportsStreaming = true,
                 requiresApiKey = true,
-                fallbackModelIds = listOf("google/gemini-2.5-flash-lite", "openai/gpt-4o-mini"),
+                fallbackModelIds = listOf("openrouter/free"),
             ),
             AiProviderDescriptor(
                 id = "openai",

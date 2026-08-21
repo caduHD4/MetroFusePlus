@@ -213,7 +213,7 @@ class GeminiProvider(
                     put("maxOutputTokens", request.maxOutputTokens)
                 },
             )
-            if (request.tools.isNotEmpty() || (request.enableGoogleSearch && googleSearchSupported)) {
+            if (request.tools.isNotEmpty() || (request.enableWebSearch && googleSearchSupported)) {
                 put(
                     "tools",
                     buildJsonArray {
@@ -237,7 +237,7 @@ class GeminiProvider(
                                 },
                             )
                         }
-                        if (request.enableGoogleSearch && googleSearchSupported) {
+                        if (request.enableWebSearch && googleSearchSupported) {
                             add(buildJsonObject { put("googleSearch", buildJsonObject {}) })
                         }
                     },

@@ -158,6 +158,7 @@ internal object AiModelClassifier {
                 declaredCapabilities.contains("tool")
         if (
             toolsDeclared ||
+            (descriptor.id == "openrouter" && modelId == "openrouter/free") ||
             (descriptor.supportsTools && descriptor.id != "openrouter" && functionCalling != false)
         ) {
             capabilities += AiCapability.TOOLS
