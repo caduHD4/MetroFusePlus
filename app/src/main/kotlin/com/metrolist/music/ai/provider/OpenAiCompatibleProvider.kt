@@ -162,12 +162,14 @@ class OpenAiCompatibleProvider(
                             val tool = toolElement.jsonObject
                             val index = tool["index"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: fallbackIndex
                             val function = tool["function"]?.jsonObject
+                            val extraContent = tool["extra_content"] as? JsonObject
                             val id = tool["id"]?.jsonPrimitive?.contentOrNull
                             val name = function?.get("name")?.jsonPrimitive?.contentOrNull
                             val argumentsDelta = function?.get("arguments")?.jsonPrimitive?.contentOrNull.orEmpty()
                             val builder = toolBuilders.getOrPut(index) { ToolCallBuilder() }
                             if (!id.isNullOrBlank()) builder.id = id
                             if (!name.isNullOrBlank()) builder.name.append(name)
+                            if (extraContent != null) builder.transportMetadata = extraContent
                             if (argumentsDelta.isNotEmpty()) builder.arguments.append(argumentsDelta)
                             if (!builder.started && builder.name.isNotEmpty()) {
                                 builder.started = true
@@ -236,11 +238,15 @@ class OpenAiCompatibleProvider(
                             return@forEach
                         }
                 }
-            emit(AiStreamEvent.ToolCallCompleted(AiPendingToolCall(id, name, arguments)))
+            emit(
+                AiStreamEvent.ToolCallCompleted(
+                    AiPendingToolCall(id, name, arguments, builder.transportMetadata),
+                ),
+            )
         }
     }
 
-    private fun buildChatBody(
+    internal fun buildChatBody(
         request: AiRequest,
         config: AiProviderConfig,
     ): JsonObject =
@@ -321,6 +327,9 @@ class OpenAiCompatibleProvider(
                                         buildJsonObject {
                                             put("id", call.id)
                                             put("type", "function")
+                                            if (call.transportMetadata.isNotEmpty()) {
+                                                put("extra_content", call.transportMetadata)
+                                            }
                                             put(
                                                 "function",
                                                 buildJsonObject {
@@ -379,6 +388,7 @@ class OpenAiCompatibleProvider(
         var id: String? = null
         val name = StringBuilder()
         val arguments = StringBuilder()
+        var transportMetadata: JsonObject = JsonObject(emptyMap())
         var started = false
     }
 }

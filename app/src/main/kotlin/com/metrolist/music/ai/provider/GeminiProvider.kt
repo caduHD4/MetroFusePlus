@@ -128,13 +128,12 @@ class GeminiProvider(
                                 part["text"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotEmpty)?.let {
                                     emit(AiStreamEvent.TextDelta(it))
                                 }
-                                part["functionCall"]?.jsonObject?.let { function ->
-                                    val id = function["id"]?.jsonPrimitive?.contentOrNull ?: "tool_${UUID.randomUUID()}"
-                                    val name = function["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                                    val arguments = function["args"]?.jsonObject ?: JsonObject(emptyMap())
-                                    if (name.isNotBlank()) {
-                                        emit(AiStreamEvent.ToolCallStarted(id, name))
-                                        emit(AiStreamEvent.ToolCallCompleted(AiPendingToolCall(id, name, arguments)))
+                                geminiPendingToolCall(part)?.let { call ->
+                                    if (call.name.isNotBlank()) {
+                                        emit(AiStreamEvent.ToolCallStarted(call.id, call.name))
+                                        emit(
+                                            AiStreamEvent.ToolCallCompleted(call),
+                                        )
                                     }
                                 }
                             }
@@ -159,7 +158,7 @@ class GeminiProvider(
             }
         }.flowOn(Dispatchers.IO)
 
-    private fun buildBody(request: AiRequest): JsonObject =
+    internal fun buildBody(request: AiRequest): JsonObject =
         buildJsonObject {
             put(
                 "systemInstruction",
@@ -172,9 +171,7 @@ class GeminiProvider(
             )
             put(
                 "contents",
-                buildJsonArray {
-                    request.messages.forEach { message -> add(message.toGeminiJson()) }
-                },
+                JsonArray(request.messages.toGeminiContents()),
             )
             put(
                 "generationConfig",
@@ -219,6 +216,30 @@ class GeminiProvider(
             }
         }
 
+    private fun List<AiConversationMessage>.toGeminiContents(): List<JsonObject> {
+        val contents = mutableListOf<JsonObject>()
+        var index = 0
+        while (index < size) {
+            val message = this[index]
+            if (message is AiConversationMessage.ToolResult) {
+                val results = mutableListOf<AiConversationMessage.ToolResult>()
+                while (index < size && this[index] is AiConversationMessage.ToolResult) {
+                    results += this[index] as AiConversationMessage.ToolResult
+                    index++
+                }
+                contents +=
+                    content(
+                        role = "user",
+                        parts = results.map { it.toGeminiFunctionResponse() },
+                    )
+                continue
+            }
+            contents += message.toGeminiJson()
+            index++
+        }
+        return contents
+    }
+
     private fun AiConversationMessage.toGeminiJson(): JsonObject =
         when (this) {
             is AiConversationMessage.User ->
@@ -233,6 +254,9 @@ class GeminiProvider(
                             toolCalls.forEach { call ->
                                 add(
                                     buildJsonObject {
+                                        call.transportMetadata["thoughtSignature"]?.let {
+                                            put("thoughtSignature", it)
+                                        }
                                         put(
                                             "functionCall",
                                             buildJsonObject {
@@ -250,20 +274,20 @@ class GeminiProvider(
             is AiConversationMessage.ToolResult ->
                 content(
                     role = "user",
-                    parts =
-                        listOf(
-                            buildJsonObject {
-                                put(
-                                    "functionResponse",
-                                    buildJsonObject {
-                                        put("id", toolCallId)
-                                        put("name", toolName)
-                                        put("response", payload.asResponseObject())
-                                    },
-                                )
-                            },
-                        ),
+                    parts = listOf(toGeminiFunctionResponse()),
                 )
+        }
+
+    private fun AiConversationMessage.ToolResult.toGeminiFunctionResponse(): JsonObject =
+        buildJsonObject {
+            put(
+                "functionResponse",
+                buildJsonObject {
+                    put("id", toolCallId)
+                    put("name", toolName)
+                    put("response", payload.asResponseObject())
+                },
+            )
         }
 
     private fun content(
@@ -309,4 +333,17 @@ class GeminiProvider(
     companion object {
         private val GEMINI_UNSUPPORTED_SCHEMA_KEYS = setOf("\$schema", "additionalProperties", "uniqueItems")
     }
+}
+
+internal fun geminiPendingToolCall(part: JsonObject): AiPendingToolCall? {
+    val function = part["functionCall"] as? JsonObject ?: return null
+    val name = function["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+    if (name.isBlank()) return null
+    val id = function["id"]?.jsonPrimitive?.contentOrNull ?: "tool_${UUID.randomUUID()}"
+    val arguments = function["args"] as? JsonObject ?: JsonObject(emptyMap())
+    val transportMetadata =
+        buildJsonObject {
+            part["thoughtSignature"]?.let { put("thoughtSignature", it) }
+        }
+    return AiPendingToolCall(id, name, arguments, transportMetadata)
 }

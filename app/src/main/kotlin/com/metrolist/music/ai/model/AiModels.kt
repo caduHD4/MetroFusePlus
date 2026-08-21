@@ -49,6 +49,7 @@ data class AiPendingToolCall(
     val id: String,
     val name: String,
     val arguments: JsonObject,
+    val transportMetadata: JsonObject = JsonObject(emptyMap()),
 )
 
 sealed interface AiConversationMessage {

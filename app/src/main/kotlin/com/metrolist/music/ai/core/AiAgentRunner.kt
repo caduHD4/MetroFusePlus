@@ -15,9 +15,9 @@ import com.metrolist.music.ai.tools.AiToolExecutor
 import com.metrolist.music.ai.tools.AiToolPresentation
 import com.metrolist.music.ai.tools.AiToolRegistry
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
@@ -129,7 +129,7 @@ constructor(
 
             toolCallCount += requestedTools.size
             onEvent(AiAgentEvent.State(AiAssistantPhase.SEARCHING))
-            executeTools(requestedTools, toolContext).collect { execution ->
+            executeTools(requestedTools, toolContext).forEach { execution ->
                 conversation +=
                     AiConversationMessage.ToolResult(
                         toolCallId = execution.call.id,
@@ -144,14 +144,16 @@ constructor(
     private suspend fun executeTools(
         calls: List<com.metrolist.music.ai.model.AiPendingToolCall>,
         context: AiToolContext,
-    ): Flow<AiToolExecution> =
-        channelFlow {
+    ): List<AiToolExecution> =
+        coroutineScope {
             val semaphore = Semaphore(MAX_PARALLEL_TOOLS)
-            calls.forEach { call ->
-                launch {
-                    send(semaphore.withPermit { toolExecutor.execute(call, context) })
+            calls
+                .map { call ->
+                    async {
+                        semaphore.withPermit { toolExecutor.execute(call, context) }
+                    }
                 }
-            }
+                .awaitAll()
         }
 
     companion object {
