@@ -5479,7 +5479,12 @@ class MusicService :
                 }
 
                 val queuedMetadataForDatabase = queuedMetadataForPlaybackDatabase(mediaId, song)
-                val resolved = resolvePlaybackStreamBlocking(mediaId, song)
+                val resolved =
+                    resolvePlaybackStreamBlocking(
+                        mediaId = mediaId,
+                        song = song,
+                        queuedMetadata = queuedMetadataForDatabase,
+                    )
 
                 database.query {
                     queuedMetadataForDatabase?.let { insert(it) }
