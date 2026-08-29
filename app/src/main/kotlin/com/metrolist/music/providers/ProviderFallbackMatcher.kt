@@ -28,7 +28,7 @@ object ProviderFallbackMatcher {
         metadata: MediaMetadata,
         candidates: List<ProviderMatchCandidate>,
         providerOrder: List<AudioProviderOrderItem>,
-        maximumCandidates: Int = 4,
+        maximumCandidates: Int = providerOrder.size.coerceAtLeast(1),
     ): List<ProviderMatchCandidate> {
         if (maximumCandidates <= 0) return emptyList()
 
@@ -40,9 +40,8 @@ object ProviderFallbackMatcher {
                 confidence(metadata, candidate)?.let { score -> candidate to score }
             }
             .sortedWith(
-                compareBy<Pair<ProviderMatchCandidate, Int>> {
-                    providerRank[it.first.provider] ?: Int.MAX_VALUE
-                }.thenByDescending { it.second },
+                compareByDescending<Pair<ProviderMatchCandidate, Int>> { it.second }
+                    .thenBy { providerRank[it.first.provider] ?: Int.MAX_VALUE },
             )
             .distinctBy { it.first.provider }
             .take(maximumCandidates)
@@ -66,16 +65,25 @@ object ProviderFallbackMatcher {
         val titleContained = wantedTitle.contains(candidateTitle) || candidateTitle.contains(wantedTitle)
         val exactTitle = wantedTitle == candidateTitle
 
-        val wantedContext = normalize(
-            metadata.artists.joinToString(" ") { it.name } + " " + metadata.title,
-        )
+        val wantedArtistTokens = normalize(
+            metadata.artists.joinToString(" ") { it.name },
+        ).tokens()
         val candidateArtistTokens = normalize(candidate.artist).tokens()
         val artistCoverage = if (candidateArtistTokens.isEmpty()) {
             0.0
         } else {
-            candidateArtistTokens.count(wantedContext.tokens()::contains).toDouble() / candidateArtistTokens.size
+            candidateArtistTokens.count(wantedArtistTokens::contains).toDouble() / candidateArtistTokens.size
         }
-        val artistMatches = artistCoverage >= MIN_TITLE_COVERAGE
+        val reverseArtistCoverage = if (wantedArtistTokens.isEmpty()) {
+            0.0
+        } else {
+            wantedArtistTokens.count(candidateArtistTokens::contains).toDouble() / wantedArtistTokens.size
+        }
+        val artistMatches =
+            artistCoverage >= MIN_TITLE_COVERAGE ||
+                reverseArtistCoverage >= MIN_TITLE_COVERAGE
+        val hasComparableArtists = wantedArtistTokens.isNotEmpty() && candidateArtistTokens.isNotEmpty()
+        if (hasComparableArtists && !artistMatches) return null
 
         val baseTitleMatches = exactTitle ||
             (titleCoverage >= MIN_TITLE_COVERAGE && (titleContained || artistMatches))

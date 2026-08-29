@@ -6167,6 +6167,7 @@ class MusicService :
             } else {
                 when (provider) {
                     AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
+                    AudioProviderOrderItem.YOUTUBE_MUSIC -> mediaId.isYouTubeVideoId()
                     else -> true
                 }
             }
@@ -6178,7 +6179,7 @@ class MusicService :
             if (candidateTrackId == null && provider in attemptedProviders) return null
             if (!provider.isPlaybackProvider()) return null
             if (directTidalUsesDeezerStreams && provider != AudioProviderOrderItem.DEEZER) return null
-            if (!canAttemptOrderedProvider(provider) && !isForcedProvider(provider)) return null
+            if (candidateTrackId == null && !canAttemptOrderedProvider(provider) && !isForcedProvider(provider)) return null
             val attemptMediaId = candidateTrackId?.let { trackId ->
                 ProviderMatchOverride(
                     provider = provider,
@@ -6431,7 +6432,10 @@ class MusicService :
             soundCloudAttempt.getOrNull()?.let { return it }
         }
 
-        if (!attemptedProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC)) {
+        if (
+            !attemptedProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC) &&
+            mediaId.isYouTubeVideoId()
+        ) {
             youtubeAttempt = runCatching {
                 resolveYouTubeFallback(mediaId)
             }
@@ -9456,6 +9460,11 @@ class MusicService :
         private const val AMAZON_FALLBACK_ITAG = 100_045
         private const val AMAZON_FLAC_ITAG = 100_046
         private const val AMAZON_ATMOS_ITAG = 100_047
+        private val YouTubeVideoIdRegex = Regex("^[A-Za-z0-9_-]{11}$")
+
+        private fun String.isYouTubeVideoId(): Boolean =
+            YouTubeVideoIdRegex.matches(this)
+
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         const val APPLE_MUSIC_FALLBACK_ITAG = 100_050
         private const val DIRECT_HTTP_AUDIO_ITAG = 100_051

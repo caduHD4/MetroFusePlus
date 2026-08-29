@@ -280,18 +280,6 @@ private fun String.audioSourceLabelFromUrl(): String? {
 }
 
 
-private fun String.audioSourceLabelFromMediaId(): String? {
-    val value = lowercase()
-    return when {
-        value.startsWith("deezer:") -> "Deezer"
-        value.startsWith("tidal:") -> "TIDAL"
-        value.startsWith("spotify:") -> "Spotify"
-        value.startsWith("soundcloud:") -> "SoundCloud"
-        else -> audioSourceLabelFromUrl()
-    }
-}
-
-
 private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
     val hasBitrate = bitrate > 0
     val hasSampleRate = sampleRate?.let { it > 0 } == true
@@ -673,12 +661,7 @@ fun BottomSheetPlayer(
         }
     val playerSourceLabel =
         remember(displayFormat) {
-            displayFormat?.takeIf { it.hasUsefulPlaybackDetails() }?.audioSourceLabel()
-        }
-    val fallbackPlayerSourceLabel =
-        remember(mediaMetadata?.id, displayFormat) {
-            mediaMetadata?.id?.audioSourceLabelFromMediaId()
-                ?: displayFormat?.audioSourceLabel()
+            displayFormat?.audioSourceLabel()
         }
     var playerQualityLoadingGraceActive by remember { mutableStateOf(false) }
     val hasPlayerQualityDetails =
@@ -716,8 +699,7 @@ fun BottomSheetPlayer(
                 isAwaitingPlayerQuality
     val displayedPlayerQualityLabel =
         if (isPlayerQualityLoading) "Loading" else playerQualityLabel
-    val displayedPlayerSourceLabel =
-        if (isPlayerQualityLoading) fallbackPlayerSourceLabel else playerSourceLabel ?: fallbackPlayerSourceLabel
+    val displayedPlayerSourceLabel = playerSourceLabel
 
     val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
     val squigglySlider by rememberPreference(SquigglySliderKey, defaultValue = false)

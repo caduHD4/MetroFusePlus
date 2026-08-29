@@ -1,3 +1,10 @@
+---v7.0.25
+# MetroFuse+ 7.0.25
+
+- Fixed external-library playback by replacing the fake YouTube Music candidate with a real catalog search and a valid YouTube video ID.
+- Prioritized the strongest title-and-artist matches, rejected same-title results from unrelated artists and tried every safe provider candidate.
+- Stopped identifying Spotify, Deezer, SoundCloud and other library origins as the active audio source; the player now shows only the provider that supplied the resolved stream.
+
 ---v7.0.24
 # MetroFuse+ 7.0.24
 

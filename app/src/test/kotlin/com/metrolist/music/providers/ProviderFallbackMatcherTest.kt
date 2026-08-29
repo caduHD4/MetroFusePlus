@@ -55,6 +55,57 @@ class ProviderFallbackMatcherTest {
     }
 
     @Test
+    fun `rejects an exact title from the wrong artist`() {
+        val selected = ProviderFallbackMatcher.selectSafeCandidates(
+            metadata = metadata("All I Want Is You", "Rebzyyx, hoshie star", 151),
+            candidates = listOf(
+                candidate(
+                    provider = AudioProviderOrderItem.AMAZON_MUSIC,
+                    trackId = "wrong-artist",
+                    title = "All I Want Is You",
+                    artist = "Andy Grammer",
+                    durationMs = 151_000L,
+                ),
+            ),
+            providerOrder = listOf(AudioProviderOrderItem.AMAZON_MUSIC),
+        )
+
+        assertTrue(selected.isEmpty())
+    }
+
+    @Test
+    fun `ranks exact artist matches before provider preference`() {
+        val selected = ProviderFallbackMatcher.selectSafeCandidates(
+            metadata = metadata("All I Want Is You", "Rebzyyx, hoshie star", 151),
+            candidates = listOf(
+                candidate(
+                    provider = AudioProviderOrderItem.AMAZON_MUSIC,
+                    trackId = "title-only",
+                    title = "All I Want Is You",
+                    artist = "",
+                    durationMs = 151_000L,
+                ),
+                candidate(
+                    provider = AudioProviderOrderItem.YOUTUBE_MUSIC,
+                    trackId = "real-video-id",
+                    title = "All I Want Is You",
+                    artist = "Rebzyyx, hoshie star",
+                    durationMs = 151_000L,
+                ),
+            ),
+            providerOrder = listOf(
+                AudioProviderOrderItem.AMAZON_MUSIC,
+                AudioProviderOrderItem.YOUTUBE_MUSIC,
+            ),
+        )
+
+        assertEquals(
+            listOf("real-video-id", "title-only"),
+            selected.map { it.providerTrackId },
+        )
+    }
+
+    @Test
     fun `rejects large duration mismatch for a regular track`() {
         val selected = ProviderFallbackMatcher.selectSafeCandidates(
             metadata = metadata("Shinunoga E-Wa", "Fujii Kaze", 180),
