@@ -1,3 +1,10 @@
+---v7.0.24
+# MetroFuse+ 7.0.24
+
+- Fixed playback for tracks opened from Spotify, Deezer, SoundCloud and other external libraries.
+- The stream resolver now keeps the queued title, artist and album metadata while preserving the original provider media ID for cache, history and source matching.
+- Prevented YouTube Music and fallback providers from searching for a literal external ID such as `spotify:track:…`.
+
 ---v7.0.18
 # MetroFuse+ 7.0.18
 
