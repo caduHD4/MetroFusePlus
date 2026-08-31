@@ -675,8 +675,7 @@ fun BottomSheetPlayer(
         mediaMetadata != null &&
                 playerQualityLoadingGraceActive &&
                 isAwaitingPlayerQuality
-    val displayedPlayerQualityLabel =
-        if (isPlayerQualityLoading) "Loading" else playerQualityLabel
+    val displayedPlayerQualityLabel = playerQualityLabel
     val displayedPlayerSourceLabel = playerSourceLabel
 
     val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
@@ -1833,12 +1832,27 @@ fun BottomSheetPlayer(
                 Column(
                     modifier = Modifier.weight(1f),
                 ) {
-                    if (!useLegacyQualityLabel) displayedPlayerQualityLabel?.let { label ->
-                        QualityBadge(
-                            label = label,
-                            containerColor = qualityBadgeContainerColor,
-                            contentColor = qualityBadgeContentColor,
-                        )
+                    if (!useLegacyQualityLabel && (isPlayerQualityLoading || displayedPlayerQualityLabel != null)) {
+                        if (isPlayerQualityLoading) {
+                            Text(
+                                text = "Loading",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = qualityBadgeContentColor,
+                                modifier =
+                                    Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(qualityBadgeContainerColor)
+                                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        } else {
+                            displayedPlayerQualityLabel?.let { label ->
+                                QualityBadge(
+                                    label = label,
+                                    containerColor = qualityBadgeContainerColor,
+                                    contentColor = qualityBadgeContentColor,
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                     }
 
@@ -2721,7 +2735,7 @@ fun BottomSheetPlayer(
                         }
                     }
 
-                    if ((useLegacyQualityLabel && (displayedPlayerQualityLabel != null || (livePlaybackBitrateEnabled && currentLivePlaybackBitrate != null))) || displayedPlayerSourceLabel != null) {
+                    if ((useLegacyQualityLabel && (isPlayerQualityLoading || displayedPlayerQualityLabel != null || (livePlaybackBitrateEnabled && currentLivePlaybackBitrate != null))) || displayedPlayerSourceLabel != null) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -2732,7 +2746,15 @@ fun BottomSheetPlayer(
                                     .padding(horizontal = PlayerHorizontalPadding),
                         ) {
                             if (useLegacyQualityLabel) {
-                                if (displayedPlayerQualityLabel != null) {
+                                if (isPlayerQualityLoading) {
+                                    Text(
+                                        text = "Loading",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextBackgroundColor,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                } else if (displayedPlayerQualityLabel != null) {
                                     PlayerQualityLabelText(
                                         label = displayedPlayerQualityLabel,
                                         format = displayFormat,
