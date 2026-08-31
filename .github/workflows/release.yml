@@ -128,12 +128,12 @@ jobs:
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
 
-      - name: Move and rename universal APK
+      - name: Move and rename release APK
         run: |
           OUTPUT_DIR="app/build/outputs/apk/${{ matrix.variant }}/release"
           mkdir -p "$OUTPUT_DIR/out"
 
-          SIGNED_APK=$(find "$OUTPUT_DIR" -name "*universal*release.apk" | head -1)
+          SIGNED_APK=$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name "*release.apk" | head -1)
 
           if [ -z "$SIGNED_APK" ]; then
             echo "No signed APK found for ${{ matrix.variant }}"
