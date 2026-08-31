@@ -152,6 +152,7 @@ import com.metrolist.music.constants.CrossfadeGaplessKey
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerCookieKey
+import com.metrolist.music.constants.DeezerUseAccountKey
 import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
@@ -207,6 +208,7 @@ import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
+import com.metrolist.music.constants.PlayerLegacyQualityLabelKey
 import com.metrolist.music.constants.LivePlaybackBitrateKey
 import com.metrolist.music.constants.TidalAnimatedCoversEnabledKey
 import com.metrolist.music.constants.TidalAudioQuality
@@ -5187,7 +5189,7 @@ class MusicService :
 
     private fun currentStreamSelectionKey(): String {
         val tidalQuality = dataStore.get(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
-        val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "")
+        val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "https://igameten10-ez-hifi-api.hf.space/")
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val configuredDeezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
@@ -5221,6 +5223,8 @@ class MusicService :
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
             "deezerProxy=${DeezerAudioProvider.normalizeProxyUrl(deezerProxyUrl).hashCode()}",
+            "deezerUseAccount=${dataStore.get(DeezerUseAccountKey, true)}",
+            "deezerCookie=${dataStore.get(DeezerCookieKey, "").hashCode()}",
             "stopOnProviderError=$stopOnProviderError",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "providerOverrides=${providerMatchOverrides.hashCode()}",
@@ -5535,7 +5539,8 @@ class MusicService :
     }
 
     private fun isLivePlaybackBitrateCollectionEnabled(): Boolean =
-        dataStore.get(LivePlaybackBitrateKey, false)
+        dataStore.get(LivePlaybackBitrateKey, false) &&
+                dataStore.get(PlayerLegacyQualityLabelKey, false)
 
     private fun isLivePlaybackBitrateActive(): Boolean =
         isScreenInteractiveForLiveBitrate &&
@@ -6027,7 +6032,7 @@ class MusicService :
             )
         }
         val tidalQuality = dataStore.get<String>(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
-        val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "")
+        val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "https://igameten10-ez-hifi-api.hf.space/")
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get<String>(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val deezerFastMode = dataStore.get(DeezerFastModeKey, false)
@@ -6349,6 +6354,8 @@ class MusicService :
                         resolveYouTubeFallback(
                             mediaId = attemptMediaId,
                             cacheMediaId = mediaId,
+                            song = song,
+                            queuedMetadata = queuedMetadata,
                         )
                     }
                     youtubeAttempt.getOrNull()?.let { resolved ->
@@ -6437,7 +6444,7 @@ class MusicService :
             mediaId.isYouTubeVideoId()
         ) {
             youtubeAttempt = runCatching {
-                resolveYouTubeFallback(mediaId)
+                resolveYouTubeFallback(mediaId, song = song, queuedMetadata = queuedMetadata)
             }
         }
         youtubeAttempt.getOrNull()?.let { return it }
@@ -6552,8 +6559,17 @@ class MusicService :
     private suspend fun resolveYouTubeFallback(
         mediaId: String,
         cacheMediaId: String = mediaId,
+        song: Song? = null,
+        queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
     ): PlaybackStreamResolution {
-        val resolved = YouTubeAudioProvider.resolve(mediaId)
+        val title = song?.song?.title ?: queuedMetadata?.title
+        val artist = song?.orderedArtists?.firstOrNull()?.name ?: queuedMetadata?.artists?.firstOrNull()?.name
+        val fallbackQuery = if (!title.isNullOrBlank()) {
+            YouTubeAudioProvider.TrackQuery(title = title, artist = artist.orEmpty())
+        } else {
+            null
+        }
+        val resolved = YouTubeAudioProvider.resolve(mediaId, this@MusicService, fallbackQuery)
         Timber.tag("MusicService").i(
             "Using YouTube AAC fallback for $mediaId: itag=${resolved.itag}, bitrate=${resolved.bitrate}",
         )
@@ -6668,6 +6684,8 @@ class MusicService :
         proxyUrl: String = DeezerAudioProvider.DEFAULT_PROXY_URL,
         isrcOverride: String? = null,
     ): DeezerAudioProvider.Query {
+        val deezerCookie = dataStore.get(DeezerCookieKey, "")
+        val deezerUseAccount = dataStore.get(DeezerUseAccountKey, true)
         val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
         val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
         val artists = song?.orderedArtists?.map { it.name }
@@ -6694,6 +6712,8 @@ class MusicService :
             fastMode = fastMode,
             proxyUrl = proxyUrl,
             experimentalResolverFallback = dataStore.get(ExperimentalDeezerResolverFallbackKey, true),
+            cookie = deezerCookie,
+            useAccount = deezerUseAccount,
         )
     }
 
@@ -7818,7 +7838,11 @@ class MusicService :
 
     private fun observeLivePlaybackBitrateSetting() {
         dataStore.data
-            .map { it[LivePlaybackBitrateKey] ?: false }
+            .map {
+                val liveBitrateEnabled = it[LivePlaybackBitrateKey] ?: false
+                val legacyLabelEnabled = it[PlayerLegacyQualityLabelKey] ?: false
+                liveBitrateEnabled && legacyLabelEnabled
+            }
             .distinctUntilChanged()
             .collectLatest(scope) { enabled ->
                 if (enabled && isScreenInteractiveForLiveBitrate) {

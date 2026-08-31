@@ -8,6 +8,7 @@ package com.metrolist.music.youtube
 import com.metrolist.innertube.NewPipeExtractor
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.NewPipeUtils
+import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.YouTubeClient
 import com.metrolist.innertube.models.response.PlayerResponse
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -40,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import android.net.Uri
+import com.chaquo.python.Python
 
 object YouTubeAudioProvider {
     const val STREAM_MARKER_QUERY = "_metrolist_youtube"
@@ -122,56 +124,262 @@ object YouTubeAudioProvider {
 
     class YouTubeAudioResolutionException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-    suspend fun resolve(videoId: String): Resolved {
+    /**
+     * Track metadata used to resolve a real YouTube video ID via search when
+     * the caller's mediaId isn't one (e.g. a Spotify URI falling back to
+     * YouTube for playback). Mirrors what the user would get manually by
+     * hitting "share" on a track and searching
+     * `music.youtube.com/search?q=<title>+<artist>`.
+     */
+    data class TrackQuery(val title: String, val artist: String)
+
+    /** A real YouTube video ID is always exactly 11 chars of this charset. */
+    private val YOUTUBE_VIDEO_ID_REGEX = Regex("^[A-Za-z0-9_-]{11}$")
+
+    private fun isValidYouTubeVideoId(id: String): Boolean = YOUTUBE_VIDEO_ID_REGEX.matches(id)
+
+    suspend fun resolve(mediaId: String, context: android.content.Context, fallbackQuery: TrackQuery? = null): Resolved {
         val now = System.currentTimeMillis()
-        streamCache[videoId]
+        // Cache is keyed by the ORIGINAL id (e.g. the Spotify URI), not the
+        // resolved YouTube id, so repeat playback of the same non-YouTube
+        // track doesn't re-search every time.
+        streamCache[mediaId]
             ?.takeIf { it.expiresAtMs > now + 30_000L }
             ?.let { return it }
 
-        // Fire both innertube and extractor concurrently — first valid result
-        // wins, the loser is cancelled. This eliminates the sequential fallback
-        // latency when the primary path is slow or fails.
-        var innertubeFailure: Throwable? = null
-        var extractorFailure: Throwable? = null
-
-        val result = coroutineScope {
-            val channel = Channel<Resolved>(2)
-
-            val innertubeJob = launch {
-                try {
-                    resolveWithInnertubeFallback(videoId, now).let { channel.send(it) }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    innertubeFailure = e
-                }
-            }
-            val extractorJob = launch {
-                try {
-                    resolveWithExtractor(videoId, now).let { channel.send(it) }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    extractorFailure = e
-                }
-            }
-            launch {
-                innertubeJob.join()
-                extractorJob.join()
-                channel.close()
-            }
-
-            val first = channel.receiveCatching().getOrNull()
-            innertubeJob.cancel()
-            extractorJob.cancel()
-            first
+        val videoId = if (isValidYouTubeVideoId(mediaId)) {
+            mediaId
+        } else {
+            val query = fallbackQuery
+                ?: throw YouTubeAudioResolutionException(
+                    "Cannot resolve non-YouTube id '$mediaId': no track metadata provided for search fallback",
+                )
+            resolveViaSearch(query)
         }
 
-        result?.let { return cache(videoId, it) }
+        return resolveVideoId(videoId, now, cacheKey = mediaId, context = context)
+    }
+
+    /**
+     * Searches YouTube Music for [query] and returns the top song result's
+     * real video ID — the same mechanism as manually sharing a track and
+     * pasting `https://music.youtube.com/search?q=<title>+<artist>`.
+     */
+    private suspend fun resolveViaSearch(query: TrackQuery): String {
+        val searchQuery = listOf(query.title, query.artist)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+        if (searchQuery.isBlank()) {
+            throw YouTubeAudioResolutionException("Cannot search YouTube: empty title/artist")
+        }
+
+        val result = YouTube.search(searchQuery, YouTube.SearchFilter.FILTER_SONG).getOrElse { error ->
+            throw YouTubeAudioResolutionException(
+                "YouTube search failed for \"$searchQuery\": ${error.readableMessage()}",
+                error,
+            )
+        }
+
+        val topSong = result.items.filterIsInstance<SongItem>().firstOrNull()
+            ?: throw YouTubeAudioResolutionException("No YouTube Music results for \"$searchQuery\"")
+
+        Timber.tag(TAG).i("Resolved \"$searchQuery\" -> YouTube video ${topSong.id} (${topSong.title})")
+        return topSong.id
+    }
+
+    private suspend fun resolveVideoId(videoId: String, now: Long, cacheKey: String, context: android.content.Context): Resolved {
+
+        // yt-dlp (on-device via Chaquopy) is now the sole primary path. It
+        // uses the device's own IP, handles SABR internally, and its
+        // extractor is kept current independent of app releases via
+        // YtDlpUpdater. The innertube-client race and BravePipe/NewPipe
+        // extractor that used to live here have been fully retired — that
+        // was the whole point of this refactor: one resolution path instead
+        // of three that all needed independent maintenance against YouTube's
+        // churn.
+        var ytDlpFailure: Throwable? = null
+        runCatching { resolveWithYtDlpOnDevice(videoId, now) }
+            .onSuccess { return cache(cacheKey, it) }
+            .onFailure {
+                ytDlpFailure = it
+                Timber.tag(TAG).w(it, "yt-dlp resolution failed for $videoId, forcing an update and retrying once")
+            }
+
+        // Stage a newer extractor for the next process start. Python modules
+        // already imported by Chaquopy cannot be safely replaced in-place.
+        runCatching {
+            YtDlpUpdater.updateIfNeeded(context, force = true)
+        }.onFailure { Timber.tag(TAG).w(it, "Unable to stage a yt-dlp update") }
+
+        // Last resort: some responses (SABR-only, no direct progressive/
+        // adaptive URL at all) can't be handled by URL-extraction no matter
+        // how many clients we try — yt-dlp's SABR handling only exists in
+        // its actual download path, not extract_info(download=False). Have
+        // yt-dlp fully download the audio (SABR handled transparently on
+        // its end) to a local cache file and hand ExoPlayer that instead of
+        // a remote URL. Slower and uses local storage, so this only runs
+        // once URL-based resolution has already failed twice above.
+        runCatching { resolveWithYtDlpDownload(videoId, now, context) }
+            .onSuccess { return cache(cacheKey, it) }
+            .onFailure {
+                ytDlpFailure = it
+                Timber.tag(TAG).w(it, "yt-dlp download fallback also failed for $videoId")
+            }
+
+        var extractorFailure: Throwable? = null
+        runCatching { resolveWithExtractor(videoId, now) }
+            .onSuccess { return cache(cacheKey, it) }
+            .onFailure {
+                extractorFailure = it
+                Timber.tag(TAG).w(it, "Extractor fallback failed for $videoId")
+            }
+
+        var innertubeFailure: Throwable? = null
+        runCatching { resolveWithInnertubeFallback(videoId, now) }
+            .onSuccess { return cache(cacheKey, it) }
+            .onFailure {
+                innertubeFailure = it
+                Timber.tag(TAG).w(it, "Innertube fallback failed for $videoId")
+            }
 
         throw YouTubeAudioResolutionException(
             "YouTube Music playback failed for $videoId: " +
-                    "innertube=${innertubeFailure?.readableMessage() ?: "no candidate produced a stream"}; " +
-                    "extractor=${extractorFailure?.readableMessage() ?: "no candidate produced a stream"}",
+                "yt-dlp=${ytDlpFailure?.readableMessage() ?: "no stream"}; " +
+                "extractor=${extractorFailure?.readableMessage() ?: "no stream"}; " +
+                "innertube=${innertubeFailure?.readableMessage() ?: "no stream"}",
         )
+    }
+
+    /**
+     * Resolves a stream using yt-dlp running on-device via Chaquopy.
+     */
+    private suspend fun resolveWithYtDlpOnDevice(
+        videoId: String,
+        now: Long,
+    ): Resolved = withContext(Dispatchers.IO) {
+        val py = Python.getInstance()
+        val ytmResolver = py.getModule("ytm_resolver")
+        val resultJsonString = ytmResolver.callAttr("resolve", videoId).toString()
+
+        val json = org.json.JSONObject(resultJsonString)
+        if (json.has("error")) {
+            throw YouTubeAudioResolutionException("yt-dlp failed: ${json.getString("error")}")
+        }
+
+        val streamUrl = json.getString("url")
+        val workingClient = json.optString("working_client", "unknown")
+
+        Resolved(
+            mediaUri = addStreamMarker(streamUrl, "ytdlp"),
+            videoId = videoId,
+            clientKey = "ytdlp:$workingClient",
+            itag = json.optInt("itag", 251),
+            mimeType = json.optString("mime", "audio/webm"),
+            codecs = json.optString("acodec", "opus"),
+            bitrate = (json.optDouble("bitrate", 0.0) * 1000).toInt(),
+            sampleRate = null,
+            contentLength = null,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            // yt-dlp URLs usually last a while
+            expiresAtMs = now + 60 * 60 * 1000L,
+        )
+    }
+
+    /**
+     * One-in-flight-at-a-time download cache dir. Only ever expect one
+     * download-fallback file to matter at a time in practice (this is a
+     * last-resort path, not the common case), so cleanup is opportunistic:
+     * deleting the previous file whenever a new one lands covers normal
+     * skip/next-track flow, and sweeping the whole subdirectory on each
+     * call catches anything orphaned by a crash or force-stop.
+     */
+    private const val YTDLP_DOWNLOAD_SUBDIR = "ytdlp_downloads"
+
+    @Volatile
+    private var lastDownloadedFile: java.io.File? = null
+
+    /**
+     * Resolves a stream by having yt-dlp fully download the audio to a
+     * local cache file, rather than extracting a direct URL. This is the
+     * only way to get SABR-only responses playable at all without
+     * reimplementing YouTube's SABR wire protocol in Kotlin/ExoPlayer:
+     * yt-dlp's SABR handling lives entirely inside its download path
+     * (download=True), not its URL-extraction path (download=False) — a
+     * SABR-only client simply has no plain URL to hand back from the
+     * latter.
+     */
+    private suspend fun resolveWithYtDlpDownload(
+        videoId: String,
+        now: Long,
+        context: android.content.Context,
+    ): Resolved = withContext(Dispatchers.IO) {
+        val downloadDir = java.io.File(context.cacheDir, YTDLP_DOWNLOAD_SUBDIR).apply { mkdirs() }
+
+        // Sweep stray files before starting a new download — catches
+        // anything left behind by a crash, force-stop, or a previous
+        // failed attempt, not just the last successful one.
+        downloadDir.listFiles()?.forEach { it.delete() }
+
+        val py = Python.getInstance()
+        val ytmResolver = py.getModule("ytm_resolver")
+        val resultJsonString = ytmResolver.callAttr("download", videoId, downloadDir.absolutePath).toString()
+
+        val json = org.json.JSONObject(resultJsonString)
+        if (json.has("error")) {
+            throw YouTubeAudioResolutionException("yt-dlp download failed: ${json.getString("error")}")
+        }
+
+        val filePath = json.getString("filepath")
+        val file = java.io.File(filePath)
+        if (!file.isFile) {
+            throw YouTubeAudioResolutionException("yt-dlp reported a downloaded file that doesn't exist: $filePath")
+        }
+
+        lastDownloadedFile = file
+        val workingClient = json.optString("working_client", "unknown")
+
+        Resolved(
+            mediaUri = Uri.fromFile(file).toString(),
+            videoId = videoId,
+            clientKey = "ytdlp-download:$workingClient",
+            itag = json.optInt("itag", -1),
+            mimeType = when (json.optString("mime", "")) {
+                "webm" -> "audio/webm"
+                "m4a" -> "audio/mp4"
+                else -> "audio/mp4"
+            },
+            codecs = json.optString("acodec", "opus"),
+            bitrate = (json.optDouble("bitrate", 0.0) * 1000).toInt(),
+            sampleRate = null,
+            contentLength = json.optLong("filesize", -1L).takeIf { it > 0 },
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            // The file is already fully downloaded and local — there's
+            // nothing to re-fetch or expire the way a remote URL would.
+            // Give it a long window; it gets cleaned up on the NEXT
+            // download call (or via releaseDownloadedFile) regardless.
+            expiresAtMs = now + 24 * 60 * 60 * 1000L,
+        )
+    }
+
+    /**
+     * Deletes a downloaded fallback file after playback is done with it.
+     * Call this from wherever playback lifecycle is tracked (track
+     * finished, skipped, or player released) once that hook is wired up.
+     * Safe to call even if [mediaUri] wasn't a download-fallback file (or
+     * the file's already gone) — this is best-effort cleanup, not a
+     * correctness requirement, since the NEXT download call also sweeps
+     * the whole subdirectory regardless.
+     */
+    fun releaseDownloadedFile(mediaUri: String) {
+        val uri = runCatching { Uri.parse(mediaUri) }.getOrNull() ?: return
+        if (uri.scheme != "file") return
+        val path = uri.path ?: return
+        runCatching { java.io.File(path).delete() }
+        if (lastDownloadedFile?.absolutePath == path) {
+            lastDownloadedFile = null
+        }
     }
 
     private suspend fun resolveWithExtractor(

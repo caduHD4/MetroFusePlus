@@ -24,6 +24,10 @@ val MiniPlayerOutlineKey = booleanPreferencesKey("miniPlayerOutline")
 val AppBackgroundStyleKey = stringPreferencesKey("appBackgroundStyle")
 val MiniPlayerBackgroundStyleKey = stringPreferencesKey("miniPlayerBackgroundStyle")
 
+val EnableMusixmatchKey = booleanPreferencesKey("enableMusixmatch")
+val MusixmatchForceLineSyncedKey = booleanPreferencesKey("musixmatchForceLineSynced")
+val MusixmatchUserTokenKey = stringPreferencesKey("musixmatchUserToken")
+
 enum class AppBackgroundStyle {
     DEFAULT,
     GALAXY,
@@ -85,6 +89,7 @@ enum class SliderStyle {
     DEFAULT,
     WAVY,
     SLIM,
+    WAVEFORM,
 }
 
 const val SYSTEM_DEFAULT = "SYSTEM_DEFAULT"
@@ -94,7 +99,9 @@ val ContentCountryKey = stringPreferencesKey("contentCountry")
 val EnableKugouKey = booleanPreferencesKey("enableKugou")
 val EnableLrcLibKey = booleanPreferencesKey("enableLrclib")
 val EnableBetterLyricsKey = booleanPreferencesKey("enableBetterLyrics")
-val EnablePaxsenixKey = booleanPreferencesKey("enablePaxsenix")
+val EnablePaxsenixAppleMusicKey = booleanPreferencesKey("enablePaxsenixAppleMusic")
+val EnablePaxsenixMusixmatchKey = booleanPreferencesKey("enablePaxsenixMusixmatch")
+val EnablePaxsenixQQMusicKey = booleanPreferencesKey("enablePaxsenixQQMusic")
 val EnableLyricsPlus = booleanPreferencesKey("enableLyricsPlus")
 val EnableSpotifyLyricsKey = booleanPreferencesKey("enableSpotifyLyrics")
 val HideExplicitKey = booleanPreferencesKey("hideExplicit")
@@ -117,6 +124,9 @@ val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
 val AppleAudioQualityKey = stringPreferencesKey("appleAudioQuality")
 val StopOnProviderErrorKey = booleanPreferencesKey("stopOnProviderError")
+val YtDlpLastManualUpdateAtKey = longPreferencesKey("ytDlpLastManualUpdateAt")
+val YtDlpManualUpdateTimestampsKey = stringPreferencesKey("ytDlpManualUpdateTimestamps")
+val YtDlpUseNightlyChannelKey = booleanPreferencesKey("ytDlpUseNightlyChannel")
 val AudioProviderOrderKey = stringPreferencesKey("audioProviderOrder")
 val AudioProviderMatchOverridesKey = stringPreferencesKey("audioProviderMatchOverrides")
 
@@ -489,6 +499,7 @@ val SpotifySyncLikesKey = booleanPreferencesKey("spotifySyncLikes")
 val TidalCookieKey = stringPreferencesKey("tidalCookie")
 val TidalArtworkFallbackEnabledKey = booleanPreferencesKey("tidalArtworkFallbackEnabled")
 val DeezerCookieKey = stringPreferencesKey("deezerCookie")
+val DeezerUseAccountKey = booleanPreferencesKey("deezerUseAccount")
 val SoundCloudAuthTokenKey = stringPreferencesKey("soundCloudAuthToken")
 val SoundCloudSessionClientIdKey = stringPreferencesKey("soundCloudSessionClientId")
 val InstagramCookieKey = stringPreferencesKey("instagramCookie")
@@ -551,6 +562,9 @@ val QueueEditLockKey = booleanPreferencesKey("queueEditLock")
 val ShowWrappedCardKey = booleanPreferencesKey("show_wrapped_card")
 val WrappedSeenKey = booleanPreferencesKey("wrapped_seen")
 val LastSeenVersionKey = stringPreferencesKey("lastSeenVersion")
+// Dismissed state for the one-time Deezer login notice. Deliberately its own boolean rather
+// than being keyed off LastSeenVersionKey, so a later version bump cannot resurrect it.
+val DeezerLoginNoticeDismissedKey = booleanPreferencesKey("deezerLoginNoticeDismissed")
 val HomeFeedSourceKey = stringPreferencesKey("homeFeedSource")
 
 enum class HomeFeedSource {

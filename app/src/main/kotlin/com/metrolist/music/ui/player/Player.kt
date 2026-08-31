@@ -189,6 +189,7 @@ import com.metrolist.music.ui.component.PlayerSliderTrack
 import com.metrolist.music.ui.component.ResizableIconButton
 import com.metrolist.music.ui.component.SquigglySlider
 import com.metrolist.music.ui.component.WavySlider
+import com.metrolist.music.ui.component.WaveformSlider
 import com.metrolist.music.ui.component.rememberBottomSheetState
 import com.metrolist.music.ui.menu.PlayerMenu
 import com.metrolist.music.ui.menu.ShareSongLinkDialog
@@ -204,6 +205,7 @@ import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.utils.spotify.SpotifyCanvasMedia
 import com.metrolist.music.utils.spotify.SpotifyCanvasVideoBackground
 import com.metrolist.music.utils.spotify.rememberSpotifyCanvasMedia
+import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -215,7 +217,6 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import com.metrolist.music.ui.component.Icon as MIcon
 import com.metrolist.music.constants.SleepTimerDefaultKey
-import com.metrolist.music.utils.dataStore
 import androidx.datastore.preferences.core.edit
 import com.metrolist.music.constants.SleepTimerFadeOutKey
 import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
@@ -286,52 +287,31 @@ private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
     return hasBitrate || hasSampleRate
 }
 
-private fun FormatEntity.playerQualityLabel(liveBitrate: Int? = null): String? {
-    val codec = when {
-        itag == APPLE_MUSIC_WRAPPER_ITAG || itag == APPLE_MUSIC_FALLBACK_ITAG -> {
-            when {
-                codecs.contains("atmos", ignoreCase = true) -> "Dolby Atmos"
-                codecs.contains("ac3", ignoreCase = true) -> "Dolby Audio"
-                codecs.contains("he", ignoreCase = true) -> "AAC HE"
-                else -> "AAC"
-            }
-        }
+private enum class PlayerQualityLabel {
+    ATMOS,
+    LOSSLESS,
+    HI_RES_LOSSLESS,
+}
+
+private fun FormatEntity.playerQualityLabel(): PlayerQualityLabel? {
+    if (isAtmosQuality()) return PlayerQualityLabel.ATMOS
+
+    val isLossless =
         mimeType.contains("flac", ignoreCase = true) ||
-                codecs.contains("flac", ignoreCase = true) -> "FLAC"
-        codecs.contains("alac", ignoreCase = true) -> "ALAC"
-        codecs.contains("ec-3", ignoreCase = true) ||
-                codecs.contains("eac3", ignoreCase = true) ||
-                codecs.contains("atmos", ignoreCase = true) -> "Dolby Atmos"
-        codecs.contains("mp3", ignoreCase = true) ||
-                mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
-        codecs.contains("mp4a", ignoreCase = true) -> "AAC"
-        else -> null
-    }
-    val isAlac = codec == "ALAC"
-    val displayBitrate = liveBitrate
-        ?.takeIf { it > 0 && (!isAlac || it.isPlausibleAlacBitrate(sampleRate)) }
-        ?: bitrate.takeIf { it > 0 && (!isAlac || it.isPlausibleAlacBitrate(sampleRate)) }
-    val bitrate = displayBitrate
-        ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
-    val sampleRate = sampleRate
-        ?.takeIf { it > 0 }
-        ?.formatSampleRateLabel()
+            codecs.contains("flac", ignoreCase = true)
+    if (!isLossless) return null
 
-    if (codec == null && bitrate == null && sampleRate == null) return null
-    if (codec == "ALAC" && bitrate == null && sampleRate == null) return null
-    return listOfNotNull(codec, bitrate, sampleRate).joinToString(" \u2022 ").takeIf { it.isNotBlank() }
+    return if (sampleRate?.let { it > 48_000 } == true) {
+        PlayerQualityLabel.HI_RES_LOSSLESS
+    } else {
+        PlayerQualityLabel.LOSSLESS
+    }
 }
 
-private fun Int.isPlausibleAlacBitrate(sampleRate: Int?): Boolean {
-    if (this == 4_000_000) return false
-    val max = when {
-        sampleRate == null -> 6_500_000
-        sampleRate <= 48_000 -> 2_400_000
-        sampleRate <= 96_000 -> 5_500_000
-        else -> 10_000_000
-    }
-    return this in 128_000..max
-}
+private fun FormatEntity.isAtmosQuality(): Boolean =
+    codecs.contains("ec-3", ignoreCase = true) ||
+        codecs.contains("eac3", ignoreCase = true) ||
+        codecs.contains("atmos", ignoreCase = true)
 
 private fun Int.formatSampleRateLabel(): String {
     val tenthsOfKhz = (this + 50) / 100
@@ -494,7 +474,8 @@ fun BottomSheetPlayer(
             defaultValue = true,
         )
     val useLegacyQualityLabel by rememberPreference(PlayerLegacyQualityLabelKey, defaultValue = false)
-    val useLivePlaybackBitrate by rememberPreference(LivePlaybackBitrateKey, defaultValue = false)
+    val livePlaybackBitrateEnabled by rememberPreference(LivePlaybackBitrateKey, defaultValue = false)
+    val currentLivePlaybackBitrate by playerConnection.currentLivePlaybackBitrate.collectAsStateWithLifecycle()
     val (hidePlayerThumbnail, onHidePlayerThumbnailChange) = rememberPreference(HidePlayerThumbnailKey, false)
     val (hideStatusBarOnFullscreen) = rememberPreference(HideStatusBarOnFullscreenKey, false)
     val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
@@ -655,10 +636,7 @@ fun BottomSheetPlayer(
         remember(displayArtworkUrl, mediaMetadata?.thumbnailUrl) {
             displayArtworkUrl ?: mediaMetadata?.thumbnailUrl
         }
-    val playerQualityLabel =
-        remember(displayFormat) {
-            displayFormat?.playerQualityLabel()
-        }
+    val playerQualityLabel = displayFormat?.playerQualityLabel()
     val playerSourceLabel =
         remember(displayFormat) {
             displayFormat?.audioSourceLabel()
@@ -703,6 +681,33 @@ fun BottomSheetPlayer(
 
     val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
     val squigglySlider by rememberPreference(SquigglySliderKey, defaultValue = false)
+
+    var waveformSamples by remember { mutableStateOf<List<Float>?>(null) }
+
+    LaunchedEffect(mediaMetadata?.id, sliderStyle) {
+        if (sliderStyle != SliderStyle.WAVEFORM) {
+            waveformSamples = null
+            return@LaunchedEffect
+        }
+
+        val metadata = mediaMetadata
+        if (metadata == null) {
+            waveformSamples = null
+            return@LaunchedEffect
+        }
+
+        // Reset samples on song change to avoid showing previous track's waveform
+        waveformSamples = null
+
+        val query = SoundCloudAudioProvider.Query(
+            mediaId = metadata.id,
+            title = metadata.title,
+            artists = metadata.artists.map { it.name },
+            album = metadata.album?.title,
+            durationMs = metadata.duration.toLong() * 1000L
+        )
+        waveformSamples = SoundCloudAudioProvider.getWaveform(query)?.samples
+    }
 
     // Listen Together state (reactive)
     val listenTogetherManager = LocalListenTogetherManager.current
@@ -1176,9 +1181,9 @@ fun BottomSheetPlayer(
         targetValue =
             when (effectivePlayerBackground) {
                 PlayerBackgroundStyle.DEFAULT -> MaterialTheme.colorScheme.onBackground
-                PlayerBackgroundStyle.BLUR -> Color.White
-                PlayerBackgroundStyle.GALAXY_BLUR -> Color.White
-                PlayerBackgroundStyle.GRADIENT -> Color.White
+                PlayerBackgroundStyle.BLUR,
+                PlayerBackgroundStyle.GALAXY_BLUR,
+                PlayerBackgroundStyle.GRADIENT,
                 PlayerBackgroundStyle.MOVING_BLUR -> Color.White
             },
         label = "TextBackgroundColor",
@@ -1701,7 +1706,7 @@ fun BottomSheetPlayer(
                     }
 
                     else -> {
-                        PlayerBackgroundStyle.DEFAULT
+                        Box(Modifier.fillMaxSize())
                     }
                 }
 
@@ -1831,8 +1836,6 @@ fun BottomSheetPlayer(
                     if (!useLegacyQualityLabel) displayedPlayerQualityLabel?.let { label ->
                         QualityBadge(
                             label = label,
-                            format = displayFormat,
-                            useLivePlaybackBitrate = useLivePlaybackBitrate,
                             containerColor = qualityBadgeContainerColor,
                             contentColor = qualityBadgeContentColor,
                         )
@@ -2314,6 +2317,32 @@ fun BottomSheetPlayer(
                         modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
                     )
                 }
+
+                SliderStyle.WAVEFORM -> {
+                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
+                    WaveformSlider(
+                        value = displayedSliderPosition.toFloat(),
+                        onValueChange = {
+                            if (canSeekPlayer) {
+                                sliderPosition = it.toLong()
+                            }
+                        },
+                        onValueChangeFinished = {
+                            if (canSeekPlayer) {
+                                sliderPosition?.let {
+                                    seekToPlayerPosition(it)
+                                }
+                                sliderPosition = null
+                            }
+                        },
+                        samples = waveformSamples,
+                        valueRange = sliderValueRange,
+                        enabled = canSeekPlayer,
+                        colors = colors,
+                        bufferedValue = displayedBufferedPosition.toFloat(),
+                        modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
+                    )
+                }
             }
 
             Spacer(Modifier.height(4.dp))
@@ -2692,7 +2721,7 @@ fun BottomSheetPlayer(
                         }
                     }
 
-                    if ((useLegacyQualityLabel && displayedPlayerQualityLabel != null) || displayedPlayerSourceLabel != null) {
+                    if ((useLegacyQualityLabel && (displayedPlayerQualityLabel != null || (livePlaybackBitrateEnabled && currentLivePlaybackBitrate != null))) || displayedPlayerSourceLabel != null) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -2703,13 +2732,36 @@ fun BottomSheetPlayer(
                                     .padding(horizontal = PlayerHorizontalPadding),
                         ) {
                             if (useLegacyQualityLabel) {
-                                displayedPlayerQualityLabel?.let { label ->
+                                if (displayedPlayerQualityLabel != null) {
                                     PlayerQualityLabelText(
-                                        label = label,
+                                        label = displayedPlayerQualityLabel,
                                         format = displayFormat,
-                                        useLivePlaybackBitrate = useLivePlaybackBitrate,
+                                        liveBitrate = if (livePlaybackBitrateEnabled) currentLivePlaybackBitrate else null,
                                         color = TextBackgroundColor,
                                     )
+                                } else if (livePlaybackBitrateEnabled) {
+                                    currentLivePlaybackBitrate?.let { bitrate ->
+                                        val bitrateText = buildAnnotatedString {
+                                            append("${bitrate / 1000} kbps")
+                                            displayFormat?.sampleRate?.let { sampleRate ->
+                                                append(" • ")
+                                                append(sampleRate.formatSampleRateLabel())
+                                            }
+                                        }
+                                        Text(
+                                            text = bitrateText,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = TextBackgroundColor,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .basicMarquee(iterations = 1, initialDelayMillis = 2200, velocity = 18.dp),
+                                        )
+                                    }
                                 }
                             }
                             displayedPlayerSourceLabel?.let { source ->
@@ -2899,112 +2951,105 @@ fun BottomSheetPlayer(
 
 @Composable
 private fun QualityBadge(
-    label: String,
-    format: FormatEntity?,
-    useLivePlaybackBitrate: Boolean,
+    label: PlayerQualityLabel,
     containerColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    val displayLabel = livePlayerQualityLabel(
-        fallbackLabel = label,
-        format = format,
-        useLivePlaybackBitrate = useLivePlaybackBitrate,
-    )
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier =
-            modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(containerColor)
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.graphic_eq),
-            contentDescription = null,
-            tint = contentColor,
-            modifier = Modifier.size(14.dp),
+    if (label == PlayerQualityLabel.ATMOS) {
+        Image(
+            painter = painterResource(R.drawable.dolby_atmos_logo),
+            contentDescription = stringResource(R.string.player_quality_atmos),
+            colorFilter = ColorFilter.tint(contentColor),
+            modifier = modifier.height(13.dp),
         )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = displayLabel,
-            color = contentColor,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Clip,
-            modifier = Modifier.basicMarquee(iterations = 1, initialDelayMillis = 1800, velocity = 24.dp),
-        )
+    } else {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier =
+                modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(containerColor)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+        ) {
+            Image(
+                painter = painterResource(R.drawable.apple_lossless_logo),
+                contentDescription = stringResource(R.string.player_quality_lossless),
+                colorFilter = ColorFilter.tint(contentColor),
+                modifier = Modifier.height(14.dp),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = when (label) {
+                    PlayerQualityLabel.LOSSLESS -> stringResource(R.string.player_quality_lossless)
+                    PlayerQualityLabel.HI_RES_LOSSLESS -> stringResource(R.string.player_quality_hires_lossless)
+                    PlayerQualityLabel.ATMOS -> stringResource(R.string.player_quality_atmos)
+                },
+                color = contentColor,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier.basicMarquee(iterations = 1, initialDelayMillis = 1800, velocity = 24.dp),
+            )
+        }
     }
 }
 
 
 @Composable
 private fun PlayerQualityLabelText(
-    label: String,
+    label: PlayerQualityLabel,
     format: FormatEntity?,
-    useLivePlaybackBitrate: Boolean,
+    liveBitrate: Int?,
     color: Color,
 ) {
-    val displayLabel = livePlayerQualityLabel(
-        fallbackLabel = label,
-        format = format,
-        useLivePlaybackBitrate = useLivePlaybackBitrate,
-    )
+    if (label == PlayerQualityLabel.ATMOS) {
+        Image(
+            painter = painterResource(R.drawable.dolby_atmos_logo),
+            contentDescription = stringResource(R.string.player_quality_atmos),
+            colorFilter = ColorFilter.tint(color),
+            modifier =
+                Modifier
+                    .height(16.dp),
+        )
+    } else {
+        val bitrate = liveBitrate ?: format?.bitrate
+        val qualityText = buildAnnotatedString {
+            append(
+                when (label) {
+                    PlayerQualityLabel.LOSSLESS -> stringResource(R.string.player_quality_lossless)
+                    PlayerQualityLabel.HI_RES_LOSSLESS -> stringResource(R.string.player_quality_hires_lossless)
+                    PlayerQualityLabel.ATMOS -> stringResource(R.string.player_quality_atmos)
+                },
+            )
 
-    Text(
-        text = displayLabel,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.SemiBold,
-        color = color,
-        textAlign = TextAlign.Center,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .basicMarquee(iterations = 1, initialDelayMillis = 2200, velocity = 18.dp),
-    )
-}
+            if (bitrate != null && bitrate > 0) {
+                append(" • ")
+                append("${bitrate / 1000} kbps")
+            }
 
-@Composable
-private fun livePlayerQualityLabel(
-    fallbackLabel: String,
-    format: FormatEntity?,
-    useLivePlaybackBitrate: Boolean,
-): String {
-    val playerConnection = LocalPlayerConnection.current
-    val emptyLiveBitrateState = remember { mutableStateOf<Int?>(null) }
-    val livePlaybackBitrate by playerConnection
-        ?.service
-        ?.currentLivePlaybackBitrate
-        ?.collectAsStateWithLifecycle(initialValue = null)
-        ?: emptyLiveBitrateState
-    val animatedLivePlaybackBitrate by animateIntAsState(
-        targetValue = livePlaybackBitrate ?: 0,
-        animationSpec = tween(durationMillis = 220),
-        label = "LivePlaybackBitrate",
-    )
-
-    return remember(
-        fallbackLabel,
-        format,
-        useLivePlaybackBitrate,
-        livePlaybackBitrate,
-        animatedLivePlaybackBitrate,
-    ) {
-        if (useLivePlaybackBitrate) {
-            val liveBitrate =
-                animatedLivePlaybackBitrate
-                    .takeIf { livePlaybackBitrate != null && it >= 32_000 }
-            format?.playerQualityLabel(liveBitrate) ?: fallbackLabel
-        } else {
-            fallbackLabel
+            format?.sampleRate?.let { sampleRate ->
+                append(" • ")
+                append(sampleRate.formatSampleRateLabel())
+            }
         }
+
+        Text(
+            text = qualityText,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .basicMarquee(iterations = 1, initialDelayMillis = 2200, velocity = 18.dp),
+        )
     }
 }
-
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable

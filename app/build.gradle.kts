@@ -19,8 +19,8 @@ if (localPropertiesFile.exists()) {
 }
 
 val baseApplicationId = "com.metrofuse.plus"
-val metroFuseVersionCode = 725
-val metroFuseVersionName = "7.0.25"
+val metroFuseVersionCode = 726
+val metroFuseVersionName = "7.2.1"
 val metroFuseUpdateRepository = "caduHD4/MetroFusePlus"
 val discordRpcApplicationId = "1508739806186963045"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
@@ -106,6 +106,7 @@ plugins {
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.chaquopy)
 }
 
 abstract class GenerateProtoTask : DefaultTask() {
@@ -192,10 +193,11 @@ android {
         buildConfigField("long", "DISCORD_RPC_APPLICATION_ID", "${discordRpcApplicationId}L")
         manifestPlaceholders["discordRpcApplicationId"] = discordRpcApplicationId
 
-        if (!releaseBuildRequested) {
-            ndk {
-                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-            }
+        // Chaquopy requires ndk.abiFilters to always be set, regardless of
+        // whether release builds are also using `splits.abi` to produce
+        // per-ABI APKs — these are two independent mechanisms.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
 
         externalNativeBuild {
@@ -207,7 +209,13 @@ android {
 
     splits {
         abi {
-            isEnable = releaseBuildRequested
+            // Disabled: Chaquopy requires defaultConfig.ndk.abiFilters to be
+            // set unconditionally, and AGP forbids ndk.abiFilters + a
+            // splits.abi filter set being active at the same time. abiFilters
+            // above now does the ABI restriction for both debug and release;
+            // this means release builds produce one combined APK covering
+            // arm64-v8a + armeabi-v7a instead of separate per-ABI APKs.
+            isEnable = false
             reset()
             include("arm64-v8a", "armeabi-v7a")
         isUniversalApk = true
@@ -351,6 +359,15 @@ android {
             excludes += "META-INF/LICENSE.md"
             excludes += "META-INF/INDEX.LIST"
             excludes += "META-INF/io.netty.versions.properties"
+        }
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        pip {
+            install("yt-dlp")
         }
     }
 }

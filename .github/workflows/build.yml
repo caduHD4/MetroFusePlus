@@ -41,6 +41,11 @@ jobs:
           java-version: "21"
           distribution: "temurin"
 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
@@ -111,6 +116,11 @@ jobs:
         with:
           java-version: "21"
           distribution: "temurin"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
 
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
