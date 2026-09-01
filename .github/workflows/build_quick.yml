@@ -46,7 +46,18 @@ jobs:
           echo "${{ secrets.KEYSTORE }}" | base64 --decode > app/keystore/release.keystore
 
       - name: Build Release APK (No Lint)
-        run: ./gradlew --console=plain assembleFossRelease --warning-mode summary -x lint -x lintFossRelease
+        shell: bash
+        run: |
+          set +e
+          ./gradlew --console=plain assembleFossRelease --warning-mode summary -x lint -x lintFossRelease > gradle-build.log 2>&1
+          STATUS=$?
+          if [ "$STATUS" -ne 0 ]; then
+            echo "Gradle failed; showing the final 500 log lines"
+            tail -n 500 gradle-build.log
+          else
+            tail -n 100 gradle-build.log
+          fi
+          exit "$STATUS"
         env:
           METROLIST_APPLICATION_ID: com.metrofuse.plus.test
           METROLIST_APP_NAME: MetroFuse+ Testing
