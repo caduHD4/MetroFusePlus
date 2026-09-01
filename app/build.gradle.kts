@@ -20,8 +20,8 @@ if (localPropertiesFile.exists()) {
 
 val baseApplicationId = "com.metrofuse.plus"
 // Release automation reads both values when creating the GitHub tag and assets.
-val metroFuseVersionCode = 728
-val metroFuseVersionName = "7.2.3"
+val metroFuseVersionCode = 729
+val metroFuseVersionName = "7.2.4"
 val metroFuseUpdateRepository = "caduHD4/MetroFusePlus"
 val discordRpcApplicationId = "1508739806186963045"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
