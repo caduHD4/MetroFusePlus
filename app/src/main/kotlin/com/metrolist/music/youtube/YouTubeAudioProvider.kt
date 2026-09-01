@@ -5,6 +5,7 @@
 
 package com.metrolist.music.youtube
 
+import android.net.Uri
 import com.metrolist.innertube.NewPipeExtractor
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.NewPipeUtils
