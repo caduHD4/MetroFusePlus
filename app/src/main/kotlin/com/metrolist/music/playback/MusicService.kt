@@ -6589,7 +6589,7 @@ class MusicService :
         } else {
             null
         }
-        val resolved = YouTubeAudioProvider.resolve(mediaId, this@MusicService, fallbackQuery)
+        val resolved = YouTubeAudioProvider.resolve(mediaId, fallbackQuery)
         Timber.tag("MusicService").i(
             "Using YouTube AAC fallback for $mediaId: itag=${resolved.itag}, bitrate=${resolved.bitrate}",
         )
