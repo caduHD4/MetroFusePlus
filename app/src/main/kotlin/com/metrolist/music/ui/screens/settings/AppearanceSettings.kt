@@ -1311,17 +1311,15 @@ fun AppearanceSettings(
                         icon = painterResource(R.drawable.graphic_eq),
                         title = { Text(stringResource(R.string.live_playback_bitrate)) },
                         description = { Text(stringResource(R.string.live_playback_bitrate_desc)) },
-                        enabled = useLegacyQualityLabel,
                         trailingContent = {
                             Switch(
-                                checked = livePlaybackBitrate && useLegacyQualityLabel,
+                                checked = livePlaybackBitrate,
                                 onCheckedChange = onLivePlaybackBitrateChange,
-                                enabled = useLegacyQualityLabel,
                                 thumbContent = {
                                     Icon(
                                         painter =
                                             painterResource(
-                                                id = if (livePlaybackBitrate && useLegacyQualityLabel) R.drawable.check else R.drawable.close,
+                                                id = if (livePlaybackBitrate) R.drawable.check else R.drawable.close,
                                             ),
                                         contentDescription = null,
                                         modifier = Modifier.size(SwitchDefaults.IconSize),
