@@ -24,14 +24,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -76,7 +73,6 @@ import com.metrolist.music.constants.SkipSilenceKey
 import com.metrolist.music.constants.StopMusicOnTaskClearKey
 import com.metrolist.music.constants.StopOnProviderErrorKey
 import com.metrolist.music.constants.VarispeedKey
-import com.metrolist.music.constants.YtDlpUseNightlyChannelKey
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
@@ -87,10 +83,8 @@ import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
-import com.metrolist.music.youtube.YtDlpUpdater
 import java.util.Locale
 import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 import com.metrolist.music.ui.component.SleepTimerDialog
 import com.metrolist.music.constants.SleepTimerEnabledKey
 import com.metrolist.music.constants.SleepTimerRepeatKey
@@ -245,20 +239,6 @@ fun PlayerSettings(
         HistoryDuration,
         defaultValue = 30f
     )
-
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    var ytDlpStatusText by remember { mutableStateOf<String?>(null) }
-    var ytDlpChecking by remember { mutableStateOf(false) }
-    val (ytDlpUseNightly, onYtDlpUseNightlyChange) = rememberPreference(
-        YtDlpUseNightlyChannelKey,
-        defaultValue = false
-    )
-
-    LaunchedEffect(Unit) {
-        val installed = YtDlpUpdater.installedVersion()
-        ytDlpStatusText = installed?.let { "yt-dlp $it installed" } ?: "yt-dlp version unknown"
-    }
 
     var showAudioQualityDialog by remember {
         mutableStateOf(false)
@@ -438,67 +418,6 @@ fun PlayerSettings(
                             )
                         }
                     },
-                ))
-                add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.bug_report),
-                    title = { Text("YT-DLP Status") },
-                    description = {
-                        Text(
-                            when {
-                                ytDlpChecking -> "Checking for updates\u2026"
-                                ytDlpStatusText != null -> ytDlpStatusText!!
-                                else -> "Checking installed version\u2026"
-                            }
-                        )
-                    },
-                    enabled = !ytDlpChecking,
-                    onClick = {
-                        if (!ytDlpChecking) {
-                            ytDlpChecking = true
-                            val channel = if (ytDlpUseNightly) {
-                                YtDlpUpdater.Channel.NIGHTLY
-                            } else {
-                                YtDlpUpdater.Channel.STABLE
-                            }
-                            coroutineScope.launch {
-                                ytDlpStatusText = when (val result = YtDlpUpdater.manualUpdateCheck(context, channel)) {
-                                    is YtDlpUpdater.ManualUpdateResult.Updated ->
-                                        "Updated to yt-dlp ${result.version}"
-                                    is YtDlpUpdater.ManualUpdateResult.AlreadyUpToDate ->
-                                        "Up to date (yt-dlp ${result.version})"
-                                    is YtDlpUpdater.ManualUpdateResult.CooldownActive -> {
-                                        val hoursLeft = (result.remainingMs / (60 * 60 * 1000L) + 1)
-                                            .coerceAtLeast(1)
-                                        "Already checked recently \u2014 try again in ~${hoursLeft}h"
-                                    }
-                                    is YtDlpUpdater.ManualUpdateResult.Failed ->
-                                        "Update check failed: ${result.message}"
-                                }
-                                ytDlpChecking = false
-                            }
-                        }
-                    }
-                ))
-                add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.bug_report),
-                    title = { Text("YT-DLP Nightly Channel") },
-                    description = { Text("Use pre-release yt-dlp builds \u2014 useful if stable breaks after a YouTube change") },
-                    trailingContent = {
-                        Switch(
-                            checked = ytDlpUseNightly,
-                            onCheckedChange = onYtDlpUseNightlyChange,
-                            thumbContent = {
-                                Icon(
-                                    painter = painterResource(
-                                        id = if (ytDlpUseNightly) R.drawable.check else R.drawable.close
-                                    ),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(SwitchDefaults.IconSize)
-                                )
-                            }
-                        )
-                    },
-                    onClick = { onYtDlpUseNightlyChange(!ytDlpUseNightly) }
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.shuffle),

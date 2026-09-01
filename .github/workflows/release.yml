@@ -89,11 +89,6 @@ jobs:
           java-version: "21"
           distribution: "temurin"
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
@@ -127,7 +122,10 @@ jobs:
           OUTPUT_DIR="app/build/outputs/apk/${{ matrix.variant }}/release"
           mkdir -p "$OUTPUT_DIR/out"
 
-          SIGNED_APK=$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name "*release.apk" | head -1)
+          SIGNED_APK=$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name "*universal*release.apk" | head -1)
+          if [ -z "$SIGNED_APK" ]; then
+            SIGNED_APK=$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name "*release.apk" | head -1)
+          fi
 
           if [ -z "$SIGNED_APK" ]; then
             echo "No signed APK found for ${{ matrix.variant }}"

@@ -1,9806 +1,3736 @@
-/**
- * Metrolist Project (C) 2026
- * Licensed under GPL-3.0 | See git history for contributors
- */
-
-@file:Suppress("DEPRECATION")
-
-package com.metrolist.music.playback
-
-import android.app.ForegroundServiceStartNotAllowedException
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.BroadcastReceiver
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.ServiceInfo
-import android.database.SQLException
-import android.media.AudioDeviceCallback
-import android.media.AudioDeviceInfo
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.media.audiofx.AudioEffect
-import android.media.audiofx.LoudnessEnhancer
-import android.net.ConnectivityManager
-import android.net.Uri
-import android.os.Binder
-import android.os.Build
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
-import android.widget.Toast
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.ServiceCompat
-import androidx.core.content.getSystemService
-import androidx.core.net.toUri
-import androidx.datastore.preferences.core.edit
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
-import androidx.media3.common.Format
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.PlaybackParameters
-import androidx.media3.common.Player
-import androidx.media3.common.Player.EVENT_POSITION_DISCONTINUITY
-import androidx.media3.common.Player.EVENT_TIMELINE_CHANGED
-import androidx.media3.common.Player.REPEAT_MODE_ALL
-import androidx.media3.common.Player.REPEAT_MODE_OFF
-import androidx.media3.common.Player.REPEAT_MODE_ONE
-import androidx.media3.common.Player.STATE_IDLE
-import androidx.media3.common.Timeline
-import androidx.media3.common.Tracks
-import androidx.media3.common.audio.SonicAudioProcessor
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.HttpDataSource
-import androidx.media3.datasource.ResolvingDataSource
-import androidx.media3.datasource.TransferListener
-import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR
-import androidx.media3.datasource.cache.SimpleCache
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
-import androidx.media3.exoplayer.drm.FrameworkMediaDrm
-import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.analytics.PlaybackStats
-import androidx.media3.exoplayer.analytics.PlaybackStatsListener
-import androidx.media3.exoplayer.audio.DefaultAudioSink
-import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
-import androidx.media3.exoplayer.dash.DashMediaSource
-import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
-import androidx.media3.exoplayer.hls.HlsMediaSource
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.LoadEventInfo
-import androidx.media3.exoplayer.source.MediaLoadData
-import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
-import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.session.CommandButton
-import androidx.media3.session.DefaultMediaNotificationProvider
-import androidx.media3.session.MediaController
-import androidx.media3.session.MediaLibraryService
-import androidx.media3.session.MediaNotification
-import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
-import androidx.media3.session.SessionToken
-import com.google.common.collect.ImmutableList
-import com.google.common.util.concurrent.MoreExecutors
-import com.metrolist.innertube.YouTube
-import com.metrolist.innertube.models.SongItem
-import com.metrolist.innertube.models.WatchEndpoint
-import com.metrolist.innertube.models.YouTubeClient
-import com.metrolist.lastfm.LastFM
-import com.metrolist.music.MainActivity
-import com.metrolist.music.R
-import com.metrolist.music.constants.AndroidAutoSyncedLyricsKey
-import com.metrolist.music.constants.AndroidAutoTargetPlaylistKey
-import com.metrolist.music.constants.AudioNormalizationKey
-import com.metrolist.music.constants.AudioOffload
-import com.metrolist.music.constants.AudioProviderOrder
-import com.metrolist.music.constants.AudioProviderOrderItem
-import com.metrolist.music.constants.AudioProviderMatchOverridesKey
-import com.metrolist.music.constants.AudioProviderOrderKey
-import com.metrolist.music.constants.AudioQualityKey
-import com.metrolist.music.constants.ExperimentalLiveWallpaperKey
-import com.metrolist.music.constants.ExperimentalConfirmBeforeSkipKey
-import com.metrolist.music.constants.ExperimentalDeezerFirstKey
-import com.metrolist.music.constants.ExperimentalDeezerResolverFallbackKey
-import com.metrolist.music.constants.ExperimentalPlaybackDiagnosticsKey
-import com.metrolist.music.constants.ExperimentalPreserveSongCacheOnQualityChangeKey
-import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
-import com.metrolist.music.constants.ExperimentalYouTubeMusicHistorySyncKey
-import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryAndroidMusicKey
-import com.metrolist.music.constants.ExperimentalYouTubeMusicProgressiveHistorySyncKey
-import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryWebKey
-import com.metrolist.music.constants.ExperimentalYouTubeMusicHistoryWebRemixKey
-import com.metrolist.music.constants.isPlaybackProvider
-import com.metrolist.music.playback.CanvasWallpaperService
-import com.metrolist.music.utils.PreferenceCache
-import com.metrolist.music.utils.mix.harmonicMixHint
-import com.metrolist.music.utils.dataStore
-import com.metrolist.music.utils.get
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.onEach
-import com.metrolist.music.constants.AutoDownloadOnLikeKey
-import com.metrolist.music.amazon.AmazonAtmosDecryptor
-import com.metrolist.music.amazon.AmazonFfmpegDecryptor
-import com.metrolist.music.amazon.AmazonAudioProvider
-import com.metrolist.music.amazon.AmazonAudioProvider.toAmazonAsinOrNull
-import com.metrolist.music.amazon.AmazonFfmpegDataSource
-import com.metrolist.music.constants.AutoLoadMoreKey
-import com.metrolist.music.constants.AutoSkipNextOnErrorKey
-import com.metrolist.music.constants.AutoplayKey
-import com.metrolist.music.constants.CrossfadeDurationKey
-import com.metrolist.music.constants.CrossfadeEnabledKey
-import com.metrolist.music.constants.CrossfadeGaplessKey
-import com.metrolist.music.constants.DeezerAudioQuality
-import com.metrolist.music.constants.DeezerAudioQualityKey
-import com.metrolist.music.constants.DeezerCookieKey
-import com.metrolist.music.constants.DeezerUseAccountKey
-import com.metrolist.music.constants.DeezerFastModeKey
-import com.metrolist.music.constants.DeezerProxyModeKey
-import com.metrolist.music.constants.DeezerProxyUrlKey
-import com.metrolist.music.constants.DeezerResolverUrlKey
-import com.metrolist.music.constants.DisableLoadMoreWhenRepeatAllKey
-import com.metrolist.music.constants.DiscordAccessTokenKey
-import com.metrolist.music.constants.DiscordActivityNameKey
-import com.metrolist.music.constants.DiscordActivityTypeKey
-import com.metrolist.music.constants.DiscordAdvancedModeKey
-import com.metrolist.music.constants.DiscordAnimatedCanvasKey
-import com.metrolist.music.constants.DiscordAnimatedCanvasQuality
-import com.metrolist.music.constants.DiscordAnimatedCanvasQualityKey
-import com.metrolist.music.constants.DiscordButton1TextKey
-import com.metrolist.music.constants.DiscordButton1VisibleKey
-import com.metrolist.music.constants.DiscordButton2TextKey
-import com.metrolist.music.constants.DiscordButton2VisibleKey
-import com.metrolist.music.constants.DiscordHideWhenSpotifyHistoryKey
-import com.metrolist.music.constants.DiscordShowProviderKey
-import com.metrolist.music.constants.DiscordShowPlaybackDetailsKey
-import com.metrolist.music.constants.DiscordStatusKey
-import com.metrolist.music.constants.DiscordUseDetailsKey
-import com.metrolist.music.constants.DownloadCanvasMode
-import com.metrolist.music.constants.DownloadCanvasModeKey
-import com.metrolist.music.constants.EnableDiscordRPCKey
-import com.metrolist.music.constants.EnableLastFMScrobblingKey
-import com.metrolist.music.constants.EnableSongCacheKey
-import com.metrolist.music.constants.HideExplicitKey
-import com.metrolist.music.constants.HideVideoSongsKey
-import com.metrolist.music.constants.HistoryDuration
-import com.metrolist.music.constants.LastFMUseNowPlaying
-import com.metrolist.music.constants.MetroMixEnabledKey
-import com.metrolist.music.constants.MetroMixBarsKey
-import com.metrolist.music.constants.MetroMixEffectCurve
-import com.metrolist.music.constants.MetroMixEffectCurveKey
-import com.metrolist.music.constants.MetroMixEqCurve
-import com.metrolist.music.constants.MetroMixEqCurveKey
-import com.metrolist.music.constants.MetroMixPreset
-import com.metrolist.music.constants.MetroMixPresetKey
-import com.metrolist.music.constants.MetroMixVolumeCurve
-import com.metrolist.music.constants.MetroMixVolumeCurveKey
-import com.metrolist.music.constants.NextTrackPreloadCountKey
-import com.metrolist.music.constants.MediaSessionConstants
-import com.metrolist.music.constants.MediaSessionConstants.CommandAddToTargetPlaylist
-import com.metrolist.music.constants.MediaSessionConstants.CommandToggleLike
-import com.metrolist.music.constants.MediaSessionConstants.CommandToggleRepeatMode
-import com.metrolist.music.constants.MediaSessionConstants.CommandToggleShuffle
-import com.metrolist.music.constants.MediaSessionConstants.CommandToggleStartRadio
-import com.metrolist.music.constants.PauseListenHistoryKey
-import com.metrolist.music.constants.PauseOnMute
-import com.metrolist.music.constants.PersistentQueueKey
-import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
-import com.metrolist.music.constants.InstagramCookieKey
-import com.metrolist.music.constants.InstagramAppIdKey
-import com.metrolist.music.constants.InstagramUserAgentKey
-import com.metrolist.music.constants.InstagramUuidKey
-import com.metrolist.music.constants.PlayerLegacyQualityLabelKey
-import com.metrolist.music.constants.LivePlaybackBitrateKey
-import com.metrolist.music.constants.TidalAnimatedCoversEnabledKey
-import com.metrolist.music.constants.TidalAudioQuality
-import com.metrolist.music.constants.TidalAudioQualityKey
-import com.metrolist.music.constants.TidalCookieKey
-import com.metrolist.music.constants.TidalResolverEndpointsKey
-import com.metrolist.music.constants.QobuzCustomInstancesKey
-import com.metrolist.music.constants.PlayerVolumeKey
-import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
-import com.metrolist.music.constants.ProxyEnabledKey
-import com.metrolist.music.constants.QobuzBackend
-import com.metrolist.music.constants.QobuzBackendKey
-import com.metrolist.music.constants.QobuzCountryKey
-import com.metrolist.music.constants.SoundCloudAudioQuality
-import com.metrolist.music.constants.SoundCloudAudioQualityKey
-import com.metrolist.music.constants.SoundCloudAuthTokenKey
-import com.metrolist.music.constants.RememberShuffleAndRepeatKey
-import com.metrolist.music.constants.RepeatModeKey
-import com.metrolist.music.constants.ResumeOnBluetoothConnectKey
-import com.metrolist.music.constants.ScrobbleDelayPercentKey
-import com.metrolist.music.constants.ScrobbleDelaySecondsKey
-import com.metrolist.music.constants.ScrobbleMinSongDurationKey
-import com.metrolist.music.constants.ShowLyricsKey
-import com.metrolist.music.constants.ShuffleModeKey
-import com.metrolist.music.constants.ShufflePlaylistFirstKey
-import com.metrolist.music.constants.SimilarContent
-import com.metrolist.music.constants.SkipSilenceInstantKey
-import com.metrolist.music.constants.SkipSilenceKey
-import com.metrolist.music.constants.AmazonAudioQuality
-import com.metrolist.music.constants.AmazonAudioQualityKey
-import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
-import com.metrolist.music.constants.ContentCountryKey
-import com.metrolist.music.constants.ContentLanguageKey
-import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
-import com.metrolist.music.constants.SpotifyCookieKey
-import com.metrolist.music.constants.SpotifyCanvasEnabledKey
-import com.metrolist.music.constants.SpotifyListeningHistoryEnabledKey
-import com.metrolist.music.constants.SpotifyListeningHistoryGlobalKey
-import com.metrolist.music.constants.StopMusicOnTaskClearKey
-import com.metrolist.music.constants.StopOnProviderErrorKey
-import com.metrolist.music.deezer.DeezerAudioAwareDataSourceFactory
-import com.metrolist.music.deezer.DeezerAudioDataSource
-import com.metrolist.music.deezer.DeezerAudioProvider
-import com.metrolist.music.discord.DiscordActivity
-import com.metrolist.music.discord.DiscordRpcManager
-import com.metrolist.music.db.MusicDatabase
-import com.metrolist.music.db.entities.Event
-import com.metrolist.music.db.entities.FormatEntity
-import com.metrolist.music.db.entities.LyricsEntity
-import com.metrolist.music.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
-import com.metrolist.music.db.entities.PlaylistEntity
-import com.metrolist.music.db.entities.RelatedSongMap
-import com.metrolist.music.db.entities.Song
-import com.metrolist.music.di.DownloadCache
-import com.metrolist.music.di.PlayerCache
-import com.metrolist.music.eq.EqualizerService
-import com.metrolist.music.eq.audio.CustomEqualizerAudioProcessor
-import com.metrolist.music.eq.data.EQProfileRepository
-import com.metrolist.music.eq.data.FilterType
-import com.metrolist.music.eq.data.ParametricEQBand
-import com.metrolist.music.extensions.SilentHandler
-import com.metrolist.music.extensions.collect
-import com.metrolist.music.extensions.collectLatest
-import com.metrolist.music.extensions.currentMetadata
-import com.metrolist.music.extensions.findNextMediaItemById
-import com.metrolist.music.extensions.mediaItems
-import com.metrolist.music.extensions.metadata
-import com.metrolist.music.extensions.setOffloadEnabled
-import com.metrolist.music.extensions.toEnum
-import com.metrolist.music.extensions.toMediaItem
-import com.metrolist.music.extensions.toPersistQueue
-import com.metrolist.music.extensions.toQueue
-import com.metrolist.music.lyrics.LyricsHelper
-import com.metrolist.music.lyrics.LyricsUtils
-import com.metrolist.music.models.MediaMetadata
-import com.metrolist.music.models.PersistPlayerState
-import com.metrolist.music.models.PersistQueue
-import com.metrolist.music.models.toMediaMetadata
-import com.metrolist.music.playback.alarm.MusicAlarmScheduler
-import com.metrolist.music.playback.alarm.MusicAlarmStore
-import com.metrolist.music.playback.audio.SilenceDetectorAudioProcessor
-import com.metrolist.music.playback.queues.EmptyQueue
-import com.metrolist.music.playback.queues.ListQueue
-import com.metrolist.music.playback.queues.Queue
-import com.metrolist.music.playback.queues.SoundCloudQueue
-import com.metrolist.music.playback.queues.YouTubeQueue
-import com.metrolist.music.providers.SoundCloudHomeFeedProvider
-import com.metrolist.music.playback.queues.filterExplicit
-import com.metrolist.music.extensions.toEnum
-import com.metrolist.music.playback.queues.filterVideoSongs
-import com.metrolist.music.providers.DeezerHomeFeedProvider
-import com.metrolist.music.providers.IsrcResolver
-import com.metrolist.music.providers.ProviderIsrc
-import com.metrolist.music.providers.ProviderFallbackMatcher
-import com.metrolist.music.providers.ProviderMatchOverride
-import com.metrolist.music.providers.ProviderMatchOverrides
-import com.metrolist.music.providers.ProviderMatchSearch
-import com.metrolist.music.providers.ExperimentalPlaybackPolicy
-import com.metrolist.music.providers.TidalHomeFeedProvider
-import com.metrolist.music.qobuz.QobuzAudioProvider
-import com.metrolist.music.soundcloud.SoundCloudAudioProvider
-import com.metrolist.music.instagram.InstagramAudioProvider
-import com.metrolist.music.apple.AppleAudioProvider
-import com.metrolist.music.constants.AppleAudioQuality
-import com.metrolist.music.constants.AppleAudioQualityKey
-import com.metrolist.music.tidal.TidalAudioProvider
-import com.metrolist.music.constants.LoudnessLevel
-import com.metrolist.music.constants.LoudnessLevelKey
-import com.metrolist.music.ui.utils.resize
-import com.metrolist.music.utils.CoilBitmapLoader
-import com.metrolist.music.utils.NetworkConnectivityObserver
-import com.metrolist.music.utils.ScrobbleManager
-import com.metrolist.music.utils.SyncUtils
-import com.metrolist.music.apple.AppleMusicCanvasProvider
-import com.metrolist.music.utils.discord.DiscordCanvasRemoteRenderer
-import com.metrolist.music.utils.reportException
-import com.metrolist.music.widget.MetrolistWidgetManager
-import com.metrolist.music.widget.MusicWidgetReceiver
-import com.metrolist.music.utils.spotify.SpotifyCanvasClient
-import com.metrolist.music.utils.spotify.SpotifyListeningHistoryManager
-import com.metrolist.music.youtube.YouTubeAudioProvider
-import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.CancellationException
-import kotlin.coroutines.coroutineContext
-import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest as collectLatestSuspending
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.distinctUntilChangedBy
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.plus
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.OkHttpClient
-import timber.log.Timber
-import java.io.File
-import java.io.IOException
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
-import java.time.LocalDateTime
-import java.util.ArrayDeque
-import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
-import java.util.concurrent.atomic.AtomicLong
-import javax.inject.Inject
-import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.random.Random
-import java.util.Collections
-
-private const val INSTANT_SILENCE_SKIP_STEP_MS = 15_000L
-private const val INSTANT_SILENCE_SKIP_SETTLE_MS = 350L
-
-private data class CrossfadePreferenceState(
-    val crossfadeEnabled: Boolean,
-    val crossfadeDuration: Float,
-    val crossfadeGapless: Boolean,
-    val metroMixEnabled: Boolean,
-    val metroMixPreset: MetroMixPreset,
-    val metroMixBars: Int,
-    val metroMixVolumeCurve: MetroMixVolumeCurve,
-    val metroMixEqCurve: MetroMixEqCurve,
-    val metroMixEffectCurve: MetroMixEffectCurve,
-)
-
-private data class MetroMixRuntimeProfile(
-    val preset: MetroMixPreset?,
-    val durationMs: Long,
-    val volumeCurve: MetroMixVolumeCurve = MetroMixVolumeCurve.AUTO,
-    val eqCurve: MetroMixEqCurve = MetroMixEqCurve.AUTO,
-    val effectCurve: MetroMixEffectCurve = MetroMixEffectCurve.AUTO,
-)
-
-/**
- * Everything the Automix engine needs for one transition, computed once at
- * [MusicService.startCrossfade] time from BPM + Camelot key metadata and then
- * reused by both the beat-phase seek (so tracks start aligned) and the
- * crossfade tick loop (so the tempo ramp and duration scaling stay in sync
- * with the number that was actually used to align the beat grids).
- */
-private data class AutomixPlan(
-    val bpmA: Float,
-    val bpmB: Float,
-    val targetBpm: Float,
-    // Playback speed multiplier for each track, capped to +/-8% so Sonic's
-    // pitch-preserving time-stretch stays inaudible.
-    val speedA: Float,
-    val speedB: Float,
-    // How far into track B to start playback so its downbeat lines up with
-    // track A's beat grid at the moment the transition begins. Approximated
-    // by assuming both tracks start on a downbeat, since no true onset/beat
-    // tracker is available - a fair assumption for the mainstream catalog.
-    val phaseOffsetMs: Long,
-    val keyCompatibility: com.metrolist.music.utils.mix.KeyCompatibility,
-    val durationScale: Float,
-    val bassSeparation: Float,
-)
-
-@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
-@androidx.annotation.OptIn(UnstableApi::class)
-@AndroidEntryPoint
-class MusicService :
-    MediaLibraryService(),
-    Player.Listener,
-    AnalyticsListener,
-    PlaybackStatsListener.Callback {
-    @Inject
-    lateinit var database: MusicDatabase
-
-    @Inject
-    lateinit var lyricsHelper: LyricsHelper
-
-    @Inject
-    lateinit var syncUtils: SyncUtils
-
-    @Inject
-    lateinit var mediaLibrarySessionCallback: MediaLibrarySessionCallback
-
-    @Inject
-    lateinit var equalizerService: EqualizerService
-
-    @Inject
-    lateinit var eqProfileRepository: EQProfileRepository
-
-    @Inject
-    lateinit var widgetManager: MetrolistWidgetManager
-
-    @Inject
-    lateinit var listenTogetherManager: com.metrolist.music.listentogether.ListenTogetherManager
-
-    private lateinit var audioManager: AudioManager
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private var lastAudioFocusState = AudioManager.AUDIOFOCUS_NONE
-    private var wasPlayingBeforeAudioFocusLoss = false
-    private var hasAudioFocus = false
-    private var reentrantFocusGain = false
-    private var wasPlayingBeforeVolumeMute = false
-    private var isPausedByVolumeMute = false
-
-    private var crossfadeEnabled = false
-    private var crossfadeDuration = 5000f
-    private var crossfadeGapless = true
-    private var activeMetroMixPreset: MetroMixPreset? = null
-    private var activeMetroMixBars = 8
-    private var activeMetroMixVolumeCurve = MetroMixVolumeCurve.AUTO
-    private var activeMetroMixEqCurve = MetroMixEqCurve.AUTO
-    private var activeMetroMixEffectCurve = MetroMixEffectCurve.AUTO
-    private var pendingMetroMixProfile: MetroMixRuntimeProfile? = null
-    private var activeCrossfadeDurationMs = 5000L
-    private var activeMetroMixRuntimePreset: MetroMixPreset? = null
-    private var activeMetroMixRuntimeProfile: MetroMixRuntimeProfile? = null
-    private var activeAutomixPlan: AutomixPlan? = null
-    private var crossfadeTriggerJob: Job? = null
-    private var crossfadePrepareJob: Job? = null
-
-    private val secondaryPlayerListener =
-        object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) {
-                Timber.tag(TAG).e(error, "Secondary player error")
-                cleanupSecondaryCrossfadePlayer()
-            }
-        }
-
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var youtubeMusicHistoryFailureNotified = false
-    private val youtubeMusicHistorySyncManager =
-        YouTubeMusicHistorySyncManager(
-            scope = scope,
-            isEnabled = {
-                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, true) &&
-                    !dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, true)
-            },
-            isAuthenticated = { YouTube.hasBrowserAuthentication },
-            reportPlayback = ::reportYouTubeMusicHistoryPlayback,
-        )
-    private val youtubeMusicProgressiveHistorySyncManager =
-        YouTubeMusicProgressiveHistorySyncManager(
-            scope = scope,
-            isEnabled = {
-                dataStore.get(ExperimentalYouTubeMusicHistorySyncKey, true) &&
-                    dataStore.get(ExperimentalYouTubeMusicProgressiveHistorySyncKey, true)
-            },
-            isAuthenticated = { YouTube.hasBrowserAuthentication },
-            currentPositionMs = { player.currentPosition.coerceAtLeast(0L) },
-            startSession = ::startYouTubeMusicProgressiveHistorySession,
-            reportProgress = ::reportYouTubeMusicProgressiveHistoryProgress,
-        )
-
-    private val binder = MusicBinder()
-
-    inner class MusicBinder : Binder() {
-        val service: MusicService
-            get() = this@MusicService
-    }
-
-    private lateinit var connectivityManager: ConnectivityManager
-    lateinit var connectivityObserver: NetworkConnectivityObserver
-    val waitingForNetworkConnection = MutableStateFlow(false)
-    private val isNetworkConnected = MutableStateFlow(false)
-
-    private lateinit var audioQuality: com.metrolist.music.constants.AudioQuality
-
-    private var currentQueue: Queue = EmptyQueue
-    var queueTitle: String? = null
-    private var queueSaveJob: Job? = null
-    private var spotifyAutoplayJob: Job? = null
-    private var spotifyAutoplayPreviewJob: Job? = null
-    private var spotifyAutoplaySeedKey: String? = null
-
-    val currentMediaMetadata = MutableStateFlow<com.metrolist.music.models.MediaMetadata?>(null)
-    val currentTidalCanvasUrl = MutableStateFlow<String?>(null)
-    val currentAppleCanvasUrl = MutableStateFlow<String?>(null)
-    val currentAppleTallCanvasUrl = MutableStateFlow<String?>(null)
-    val currentEmbeddedCanvasUrl = MutableStateFlow<String?>(null)
-    val currentPreferredArtworkUrl = MutableStateFlow<String?>(null)
-    val currentTidalArtworkUrl = currentPreferredArtworkUrl
-    private val preferredArtworkCache =
-        object : LinkedHashMap<String, String?>(256, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean = size > 256
-        }
-    private val tidalAnimatedArtworkCache =
-        object : LinkedHashMap<String, String?>(128, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean = size > 128
-        }
-    private val appleMusicArtistMotionBackgroundCache =
-        object : LinkedHashMap<String, String?>(128, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean = size > 128
-        }
-    private val currentSong =
-        currentMediaMetadata
-            .flatMapLatest { mediaMetadata ->
-                database.song(mediaMetadata?.id)
-            }.stateIn(scope, SharingStarted.Lazily, null)
-    val currentFormat =
-        currentMediaMetadata.flatMapLatest { mediaMetadata ->
-            database.format(mediaMetadata?.id)
-        }
-    val currentPlaybackFormat = MutableStateFlow<FormatEntity?>(null)
-    val currentLivePlaybackBitrate = MutableStateFlow<Int?>(null)
-    private val livePlaybackBitrateSamples = ArrayDeque<LivePlaybackBitrateSample>()
-    private val livePlaybackBitrateLock = Any()
-    private var livePlaybackBitrateTickerJob: Job? = null
-    private var lastLivePlaybackBitrateUpdateMs = 0L
-
-    lateinit var playerVolume: MutableStateFlow<Float>
-    val isMuted = MutableStateFlow(false)
-    private val sleepTimerVolumeMultiplier = MutableStateFlow(1f)
-    private val audioFocusVolumeMultiplier = MutableStateFlow(1f)
-
-    fun toggleMute() {
-        val newMutedState = !isMuted.value
-        isMuted.value = newMutedState
-        applyEffectiveVolume()
-    }
-
-    fun setMuted(muted: Boolean) {
-        isMuted.value = muted
-        applyEffectiveVolume()
-    }
-
-    private fun calculateEffectiveVolume(
-        volume: Float = playerVolume.value,
-        muted: Boolean = isMuted.value,
-        sleepTimerMultiplier: Float = sleepTimerVolumeMultiplier.value,
-        focusMultiplier: Float = audioFocusVolumeMultiplier.value,
-    ): Float {
-        if (muted) return 0f
-        return (volume * sleepTimerMultiplier * focusMultiplier).coerceIn(0f, 1f)
-    }
-
-    private fun applyEffectiveVolume() {
-        if (!::player.isInitialized || isCrossfading) return
-        player.volume = calculateEffectiveVolume()
-    }
-
-    fun prepareManualPlaybackTransition() {
-        crossfadeTriggerJob?.cancel()
-        crossfadeTriggerJob = null
-        crossfadePrepareJob?.cancel()
-        crossfadePrepareJob = null
-        crossfadeJob?.cancel()
-        crossfadeJob = null
-        pendingMetroMixProfile = null
-        activeMetroMixRuntimePreset = null
-        activeMetroMixRuntimeProfile = null
-
-        if (secondaryPlayer != null) {
-            cleanupSecondaryCrossfadePlayer(scheduleNext = false)
-        }
-
-        if (fadingPlayer != null || isCrossfading) {
-            cleanupCrossfade(
-                fadingPlayerSessionId = fadingPlayer?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET,
-                scheduleNext = false,
-            )
-        }
-
-        isCrossfading = false
-        applyEffectiveVolume()
-    }
-
-    lateinit var sleepTimer: SleepTimer
-
-    @Inject
-    @PlayerCache
-    lateinit var playerCache: SimpleCache
-
-    @Inject
-    @DownloadCache
-    lateinit var downloadCache: SimpleCache
-
-    lateinit var player: ExoPlayer
-        private set
-    private var nextTrackPreloadCoordinator: NextTrackPreloadCoordinator? = null
-    private var secondaryPlayer: ExoPlayer? = null
-    private var fadingPlayer: ExoPlayer? = null
-    private var isCrossfading = false
-    private var crossfadeJob: Job? = null
-
-    private lateinit var mediaSession: MediaLibrarySession
-
-    // Tracks if player has been properly initilized
-    private val playerInitialized = MutableStateFlow(false)
-    val isPlayerReady: kotlinx.coroutines.flow.StateFlow<Boolean> = playerInitialized.asStateFlow()
-
-    // Expose active player flow for UI/Connection updates
-    private val _playerFlow = MutableStateFlow<ExoPlayer?>(null)
-    val playerFlow = _playerFlow.asStateFlow()
-
-    init {
-        scope.launch {
-            combine(
-                currentAppleTallCanvasUrl,
-                currentAppleCanvasUrl,
-                currentTidalCanvasUrl,
-                currentEmbeddedCanvasUrl,
-                currentPreferredArtworkUrl,
-            ) { appleTall, appleSquare, tidal, embedded, artwork ->
-                (appleTall ?: appleSquare ?: tidal ?: embedded) to artwork
-            }.collect { (url, artwork) ->
-                broadcastWallpaperUpdate(url, artwork)
-            }
-        }
-    }
-
-    private fun broadcastWallpaperUpdate(
-        url: String?,
-        artwork: String?,
-    ) {
-        if (dataStore.get(ExperimentalLiveWallpaperKey, false)) {
-            sendBroadcast(
-                Intent(CanvasWallpaperService.ACTION_UPDATE_WALLPAPER).apply {
-                    setPackage(packageName)
-                    putExtra(CanvasWallpaperService.EXTRA_CANVAS_URL, url)
-                    putExtra(CanvasWallpaperService.EXTRA_CANVAS_ARTWORK_URL, artwork)
-                },
-            )
-        }
-    }
-
-    private val playerSilenceProcessors = HashMap<Player, SilenceDetectorAudioProcessor>()
-    private val playerEqProcessors = HashMap<Player, CustomEqualizerAudioProcessor>()
-
-    private val instantSilenceSkipEnabled = MutableStateFlow(false)
-
-    private data class QueueSaveSnapshot(
-        val queue: PersistQueue,
-        val automix: PersistQueue,
-        val playerState: PersistPlayerState,
-    )
-
-    private var isAudioEffectSessionOpened = false
-    private var openedAudioEffectSessionId: Int = C.AUDIO_SESSION_ID_UNSET
-    private var loudnessEnhancer: LoudnessEnhancer? = null
-
-    private var loudnessSetupJob: Job? = null
-    private var loudnessSetupGeneration: Long = 0L
-    private var automotiveLyricsGeneration: Long = 0L
-
-    @Volatile
-    private var normalizationEnabledCached: Boolean = false
-
-    @Volatile
-    private var loudnessLevelCached: LoudnessLevel = LoudnessLevel.BALANCED
-
-    private var cachedNormalizationGainMb: Int? = null
-    private var cachedNormalizationEnabled: Boolean = false
-    @Volatile
-    private var cachedInstagramCookie: String = ""
-    @Volatile
-    private var cachedSpotifyCookie: String = ""
-    @Volatile
-    private var cachedInstagramUserAgent: String = InstagramAudioProvider.DEFAULT_USER_AGENT
-
-    @Volatile
-    private var spotifyHistoryPresenceActiveValue = false
-    @Volatile
-    private var spotifyListeningHistoryEnabledValue = false
-    @Volatile
-    private var spotifyListeningHistoryGlobalValue = false
-    private var spotifyListeningHistorySourceAllowed = false
-    private val _spotifyHistoryPresenceActive = MutableStateFlow(false)
-    val spotifyHistoryPresenceActive = _spotifyHistoryPresenceActive.asStateFlow()
-
-    @Volatile
-    private var latestMediaNotification: Notification? = null
-
-    private var scrobbleManager: ScrobbleManager? = null
-    private var discordRpcEnabled = false
-    private var discordHideWhenSpotifyHistory = false
-    private var lastPlaybackSpeed = 1.0f
-    private var discordUpdateJob: Job? = null
-    private val discordUpdateGeneration = AtomicLong(0L)
-    private val discordAnimatedArtworkRefreshJobs = ConcurrentHashMap<String, Job>()
-    private var spotifyListeningHistoryManager: SpotifyListeningHistoryManager? = null
-
-    val automixItems = MutableStateFlow<List<MediaItem>>(emptyList())
-
-    // Tracks the original queue size to distinguish original items from auto-added ones
-    private var originalQueueSize: Int = 0
-
-    private var consecutivePlaybackErr = 0
-    private var retryJob: Job? = null
-    private var retryCount = 0
-    private var silenceSkipJob: Job? = null
-
-    private data class CachedSongStream(
-        val uri: String,
-        val expiresAtMs: Long,
-        val cacheKey: String,
-        val selectionKey: String,
-        val format: FormatEntity,
-        val mimeType: String? = null,
-        val drmLicenseUri: String? = null,
-        val kid: String? = null,
-        val decryptionKey: String? = null,
-    )
-
-    private data class PlaybackStreamResolution(
-        val uri: String,
-        val expiresAtMs: Long,
-        val cacheKey: String,
-        val format: FormatEntity,
-        val mimeType: String? = null,
-        val drmLicenseUri: String? = null,
-        val tempFilePath: String? = null,
-        val kid: String? = null,
-        val decryptionKey: String? = null,
-    )
-
-    // Cached preferences to avoid runBlocking DataStore reads in hot paths
-    @Volatile
-    private var cachedPersistentQueue = true
-    @Volatile
-    private var cachedAutoplay = true
-    @Volatile
-    private var cachedDisableLoadMoreWhenRepeatAll = false
-    @Volatile
-    private var cachedHideExplicit = false
-    @Volatile
-    private var cachedHideVideoSongs = false
-    @Volatile
-    private var cachedShufflePlaylistFirst = false
-    @Volatile
-    private var cachedAutoLoadMore = true
-    @Volatile
-    private var cachedSpotifyCanvasEnabled = false
-    @Volatile
-    private var cachedDownloadCanvasMode = DownloadCanvasMode.OFF
-
-    // URL cache for stream URLs - class-level so it can be invalidated on errors
-    private val songUrlCache = Collections.synchronizedMap(
-        object : LinkedHashMap<String, CachedSongStream>(0, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedSongStream>): Boolean {
-                return size > 500
-            }
-        }
-    )
-    private val audioFormatRetryJobs = ConcurrentHashMap<String, Job>()
-    private val audioFormatRefreshJobs = ConcurrentHashMap<String, Job>()
-
-    // Flag to bypass cache when quality changes - forces fresh stream fetch
-    private val bypassCacheForQualityChange = mutableSetOf<String>()
-    private val skipTidalLiveManifestOnceMediaIds = ConcurrentHashMap.newKeySet<String>()
-    private val tidalProgressivePreferredMediaIds = ConcurrentHashMap.newKeySet<String>()
-    @Volatile private var isScreenInteractiveForLiveBitrate = true
-
-    // Enhanced error tracking for strict retry management
-    private var currentMediaIdRetryCount = mutableMapOf<String, Int>()
-    private val MAX_RETRY_PER_SONG = 3
-    private val RETRY_DELAY_MS = 1000L
-
-    // Track failed songs to prevent infinite retry loops
-    private val recentlyFailedSongs = mutableSetOf<String>()
-    private var failedSongsClearJob: Job? = null
-
-    // Google Cast support
-    var castConnectionHandler: CastConnectionHandler? = null
-        private set
-
-    private val screenStateReceiver =
-        object : BroadcastReceiver() {
-            override fun onReceive(
-                context: Context,
-                intent: Intent,
-            ) {
-                when (intent.action) {
-                    Intent.ACTION_SCREEN_OFF -> {
-                        isScreenInteractiveForLiveBitrate = false
-                        stopLivePlaybackBitrateTicker(clearValue = true, clearSamples = false)
-                    }
-
-                    Intent.ACTION_SCREEN_ON -> {
-                        isScreenInteractiveForLiveBitrate = true
-                        if (dataStore.get(LivePlaybackBitrateKey, false)) {
-                            startLivePlaybackBitrateTicker()
-                        }
-                    }
-                }
-            }
-        }
-
-    private val wallpaperRequestReceiver =
-        object : BroadcastReceiver() {
-            override fun onReceive(
-                context: Context,
-                intent: Intent,
-            ) {
-                if (intent.action == CanvasWallpaperService.ACTION_REQUEST_UPDATE) {
-                    val url =
-                        currentAppleTallCanvasUrl.value
-                            ?: currentAppleCanvasUrl.value
-                            ?: currentTidalCanvasUrl.value
-                            ?: currentEmbeddedCanvasUrl.value
-                    val artwork = currentPreferredArtworkUrl.value
-                    broadcastWallpaperUpdate(url, artwork)
-                }
-            }
-        }
-
-    private val audioDeviceCallback =
-        object : AudioDeviceCallback() {
-            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
-                super.onAudioDevicesAdded(addedDevices)
-                val hasBluetooth =
-                    addedDevices?.any {
-                        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-                    } == true
-
-                if (hasBluetooth) {
-                    if (dataStore.get(ResumeOnBluetoothConnectKey, false)) {
-                        if (player.playbackState == Player.STATE_READY && !player.isPlaying) {
-                            player.play()
-                        }
-                    }
-                }
-            }
-        }
-
-    override fun onCreate() {
-        super.onCreate()
-        isRunning = true
-
-        // Initialize Global Preference Cache to avoid runBlocking DataStore reads in hot paths
-        PreferenceCache.initialize(this, scope)
-
-        // Initialize the Amazon FFmpeg decryptor cache directory so it can
-        // be queried from non-Context paths (invalidate, cache lookups).
-        AmazonFfmpegDecryptor.init(this)
-        AmazonAtmosDecryptor.init(this)
-
-        setListener(
-            object : MediaSessionService.Listener {
-                override fun onForegroundServiceStartNotAllowedException() {
-                    handleForegroundServiceStartNotAllowed(null)
-                }
-            },
-        )
-
-        // Player rediness reset to false
-        playerInitialized.value = false
-
-        // 3. Connect the processor to the service
-        // handled in createExoPlayer
-
-        seedLoudnessCacheFromPrefs()
-        cachedInstagramCookie = dataStore.get(InstagramCookieKey, "")
-        cachedSpotifyCookie = dataStore.get(SpotifyCookieKey, "")
-        cachedInstagramUserAgent =
-            dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-                .takeIf { it.isNotBlank() }
-                ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-
-        if (!ensureStartedAsForegroundOrStop()) {
-            return
-        }
-
-        val defaultMediaNotificationProvider =
-            DefaultMediaNotificationProvider(
-                this,
-                { NOTIFICATION_ID },
-                CHANNEL_ID,
-                R.string.music_player,
-            ).apply {
-                setSmallIcon(R.drawable.small_icon)
-            }
-
-        setMediaNotificationProvider(
-            object : MediaNotification.Provider {
-                override fun createNotification(
-                    mediaSession: MediaSession,
-                    mediaButtonPreferences: ImmutableList<CommandButton>,
-                    actionFactory: MediaNotification.ActionFactory,
-                    onNotificationChangedCallback: MediaNotification.Provider.Callback,
-                ): MediaNotification {
-                    val trackingCallback =
-                        MediaNotification.Provider.Callback { notification ->
-                            latestMediaNotification = notification.notification
-                            Handler(Looper.getMainLooper()).post {
-                                runCatching {
-                                    val notificationManager = NotificationManagerCompat.from(this@MusicService)
-                                    if (notificationManager.areNotificationsEnabled()) {
-                                        notificationManager.notify(notification.notificationId, notification.notification)
-                                    }
-                                }.onFailure { error ->
-                                    Timber.tag(TAG).w(error, "Failed to post async media notification update")
-                                }
-                            }
-                        }
-
-                    return defaultMediaNotificationProvider
-                        .createNotification(
-                            mediaSession,
-                            mediaButtonPreferences,
-                            actionFactory,
-                            trackingCallback,
-                        ).also { mediaNotification ->
-                            latestMediaNotification = mediaNotification.notification
-                        }
-                }
-
-                override fun handleCustomCommand(
-                    session: MediaSession,
-                    action: String,
-                    extras: Bundle,
-                ): Boolean = defaultMediaNotificationProvider.handleCustomCommand(session, action, extras)
-
-                override fun getNotificationChannelInfo(): MediaNotification.Provider.NotificationChannelInfo =
-                    defaultMediaNotificationProvider.notificationChannelInfo
-            },
-        )
-        player = createExoPlayer()
-        player.addListener(this@MusicService)
-        observeLivePlaybackBitrateSetting()
-        sleepTimer =
-            SleepTimer(scope, player) { multiplier ->
-                sleepTimerVolumeMultiplier.value = multiplier
-            }
-        player.addListener(sleepTimer)
-
-        // Mark player as initialized after successful creation
-        playerInitialized.value = true
-        Timber.tag(TAG).d("Player successfully initialized")
-
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        setupAudioFocusRequest()
-
-        mediaLibrarySessionCallback.apply {
-            service = this@MusicService
-            toggleLike = ::toggleLike
-            toggleStartRadio = ::toggleStartRadio
-            toggleLibrary = ::toggleLibrary
-            addToTargetPlaylist = ::addToTargetPlaylist
-        }
-        mediaSession =
-            MediaLibrarySession
-                .Builder(this, player, mediaLibrarySessionCallback)
-                .setSessionActivity(
-                    PendingIntent.getActivity(
-                        this,
-                        0,
-                        Intent(this, MainActivity::class.java),
-                        PendingIntent.FLAG_IMMUTABLE,
-                    ),
-                ).setBitmapLoader(CoilBitmapLoader(this, scope))
-                .build()
-        player.repeatMode = dataStore.get(RepeatModeKey, REPEAT_MODE_OFF)
-
-        // Restore shuffle mode if remember option is enabled
-        if (dataStore.get(RememberShuffleAndRepeatKey, true)) {
-            player.shuffleModeEnabled = dataStore.get(ShuffleModeKey, false)
-        }
-
-        // Keep a connected controller so that notification works
-        val sessionToken = SessionToken(this, ComponentName(this, MusicService::class.java))
-        val controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
-        controllerFuture.addListener({ controllerFuture.get() }, MoreExecutors.directExecutor())
-
-        connectivityManager = getSystemService()!!
-        connectivityObserver = NetworkConnectivityObserver(this)
-        isNetworkConnected.value = connectivityObserver.isCurrentlyConnected()
-        nextTrackPreloadCoordinator =
-            NextTrackPreloadCoordinator(
-                parentScope = scope,
-                player = player,
-                canPreload = {
-                    isNetworkConnected.value &&
-                        player.isPlaying &&
-                        dataStore.get(EnableSongCacheKey, true)
-                },
-                isPreparedElsewhere = { mediaId ->
-                    secondaryPlayer?.currentMediaItem?.mediaId == mediaId
-                },
-                preload = ::preloadNextTrack,
-            )
-
-        val screenStateFilter =
-            IntentFilter().apply {
-                addAction(Intent.ACTION_SCREEN_ON)
-                addAction(Intent.ACTION_SCREEN_OFF)
-            }
-        registerReceiver(screenStateReceiver, screenStateFilter)
-        registerReceiver(
-            wallpaperRequestReceiver,
-            IntentFilter(CanvasWallpaperService.ACTION_REQUEST_UPDATE),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Context.RECEIVER_NOT_EXPORTED else 0
-        )
-
-        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
-
-        audioQuality = dataStore.get<String>(AudioQualityKey).toEnum(com.metrolist.music.constants.AudioQuality.AUTO)
-        playerVolume = MutableStateFlow(dataStore.get(PlayerVolumeKey, 1f).coerceIn(0f, 1f))
-        dataStore.data
-            .map { it[InstagramCookieKey] ?: "" }
-            .distinctUntilChanged()
-            .collectLatest(scope) { cachedInstagramCookie = it }
-        dataStore.data
-            .map { it[SpotifyCookieKey] ?: "" }
-            .distinctUntilChanged()
-            .collectLatest(scope) { cachedSpotifyCookie = it }
-        dataStore.data
-            .map { prefs ->
-                prefs[InstagramUserAgentKey]
-                    ?.takeIf { it.isNotBlank() }
-                    ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-            }
-            .distinctUntilChanged()
-            .collectLatest(scope) { cachedInstagramUserAgent = it }
-
-        // Initialize Google Cast
-        initializeCast()
-
-        // Update lyrics provider order preference
-        // Collecting this flow activates the internal map that updates lyricsProviders in LyricsHelper
-        lyricsHelper.preferred.collectLatest(scope) {}
-
-        currentMediaMetadata
-            .distinctUntilChangedBy { it?.id }
-            .collectLatest(scope) { metadata ->
-                resetLivePlaybackBitrate(metadata?.id)
-                coroutineScope {
-                    launch(Dispatchers.IO + SilentHandler) { updateTidalCanvas(metadata) }
-                    launch(Dispatchers.IO + SilentHandler) { updateAppleMusicMotionBackground(metadata) }
-                    launch(Dispatchers.IO + SilentHandler) { updatePreferredArtwork(metadata) }
-                    if (metadata != null && !metadata.isEpisode && !metadata.isVideoSong) {
-                        launch(Dispatchers.Main + SilentHandler) {
-                            currentEmbeddedCanvasUrl.value = null
-                            if (isLocalMedia(metadata)) {
-                                loadEmbeddedCanvasInBackground(metadata.id)
-                            }
-                        }
-                    } else {
-                        currentEmbeddedCanvasUrl.value = null
-                    }
-                }
-            }
-
-        dataStore.data
-            .map { prefs ->
-                Pair(
-                    prefs[SpotifyCanvasEnabledKey] ?: false,
-                    prefs[DownloadCanvasModeKey].toEnum(DownloadCanvasMode.OFF),
-                )
-            }
-            .distinctUntilChanged()
-            .collectLatest(scope) { prefs ->
-                cachedSpotifyCanvasEnabled = prefs.first
-                cachedDownloadCanvasMode = prefs.second
-            }
-
-        // 4. Watch for EQ profile changes
-        scope.launch {
-            eqProfileRepository.activeProfile.collect { profile ->
-                if (profile != null) {
-                    val result = equalizerService.applyProfile(profile)
-                    if (result.isSuccess && player.playbackState == Player.STATE_READY && player.isPlaying) {
-                        // Instant update: flush buffers and seek slightly to re-process audio
-                        // Small seek to force re-buffer through the new EQ settings
-                        // Seek to current position effectively resets the pipeline
-                        player.seekTo(player.currentPosition)
-                    }
-                } else {
-                    equalizerService.disable()
-                    if (player.playbackState == Player.STATE_READY && player.isPlaying) {
-                        player.seekTo(player.currentPosition)
-                    }
-                }
-            }
-        }
-
-        scope.launch {
-            connectivityObserver.networkStatus.collect { isConnected ->
-                isNetworkConnected.value = isConnected
-                nextTrackPreloadCoordinator?.requestRefresh()
-                if (isConnected && waitingForNetworkConnection.value) {
-                    triggerRetry()
-                }
-                if (isConnected && discordRpcEnabled && player.isPlaying) {
-                    currentSong.value?.let { song ->
-                        updateDiscordRPC(song)
-                    }
-                }
-            }
-        }
-
-        var lastPreloadSelectionSignature: Int? = null
-        scope.launch {
-            dataStore.data
-                .map { prefs ->
-                    val selectionSignature =
-                        listOf(
-                            prefs[AudioQualityKey],
-                            prefs[TidalAudioQualityKey],
-                            prefs[TidalResolverEndpointsKey],
-                            prefs[DeezerAudioQualityKey],
-                            prefs[DeezerResolverUrlKey],
-                            prefs[DeezerFastModeKey],
-                            prefs[DeezerProxyModeKey],
-                            prefs[DeezerProxyUrlKey],
-                            prefs[SoundCloudAudioQualityKey],
-                            prefs[SoundCloudAuthTokenKey],
-                            prefs[AppleAudioQualityKey],
-                            prefs[AmazonAudioQualityKey],
-                            prefs[QobuzBackendKey],
-                            prefs[QobuzCountryKey],
-                            prefs[AudioProviderOrderKey],
-                            prefs[AudioProviderMatchOverridesKey],
-                            prefs[InstagramCookieKey],
-                            prefs[InstagramUserAgentKey],
-                            prefs[InstagramAppIdKey],
-                            prefs[InstagramUuidKey],
-                            prefs[ProxyEnabledKey],
-                            prefs[StopOnProviderErrorKey],
-                        ).hashCode()
-                    (prefs[NextTrackPreloadCountKey] ?: NextTrackPreloadPolicy.DEFAULT_COUNT) to selectionSignature
-                }.distinctUntilChanged()
-                .collect { (count, selectionSignature) ->
-                    val coordinator = nextTrackPreloadCoordinator ?: return@collect
-                    if (
-                        lastPreloadSelectionSignature != null &&
-                        lastPreloadSelectionSignature != selectionSignature
-                    ) {
-                        cleanupSecondaryCrossfadePlayer(scheduleNext = false)
-                        coordinator.invalidateSelection().forEach(::invalidateResolvedProviderStream)
-                    }
-                    lastPreloadSelectionSignature = selectionSignature
-                    coordinator.updateCount(count)
-                    coordinator.requestRefresh()
-                }
-        }
-
-        // Watch for audio quality setting changes
-        var isFirstQualityEmit = true
-        scope.launch {
-            dataStore.data
-                .map {
-                    it[AudioQualityKey]?.let { value ->
-                        com.metrolist.music.constants.AudioQuality.entries
-                            .find { it.name == value }
-                    } ?: com.metrolist.music.constants.AudioQuality.AUTO
-                }.distinctUntilChanged()
-                .collect { newQuality ->
-                    val oldQuality = audioQuality
-                    audioQuality = newQuality
-
-                    // Skip reload on first emit (app startup)
-                    if (isFirstQualityEmit) {
-                        isFirstQualityEmit = false
-                        Timber.tag("MusicService").i("QUALITY INIT: $newQuality")
-                        return@collect
-                    }
-
-                    Timber.tag("MusicService").i("QUALITY CHANGED: $oldQuality -> $newQuality")
-
-                    // Reload current song with new quality
-                    val mediaId = player.currentMediaItem?.mediaId ?: return@collect
-                    val currentPosition = player.currentPosition
-                    val wasPlaying = player.isPlaying
-                    val currentIndex = player.currentMediaItemIndex
-
-                    Timber.tag("MusicService").i("RELOADING STREAM: $mediaId at position ${currentPosition}ms")
-
-                    // Clear cached URL to force fresh fetch
-                    songUrlCache.remove(mediaId)
-                    QobuzAudioProvider.invalidate(mediaId)
-                    TidalAudioProvider.invalidate(mediaId)
-                    DeezerAudioProvider.invalidate(mediaId)
-                    SoundCloudAudioProvider.invalidate(mediaId)
-                    InstagramAudioProvider.invalidate(mediaId)
-                    YouTubeAudioProvider.invalidate(mediaId)
-
-                    val preserveCachedAudio =
-                        dataStore.get(ExperimentalPreserveSongCacheOnQualityChangeKey, true)
-                    if (ExperimentalPlaybackCachePolicy.shouldClearCacheOnQualityChange(preserveCachedAudio)) {
-                        // Clear cache for the base behavior because formats from different sources can be incompatible.
-                        runBlocking(Dispatchers.IO) {
-                            try {
-                                removeCachedAudio(mediaId)
-                                Timber.tag("MusicService").d("Cleared player and download cache for $mediaId")
-                            } catch (e: Exception) {
-                                Timber.tag("MusicService").e(e, "Failed to clear cache for $mediaId")
-                            }
-                        }
-                        bypassCacheForQualityChange.add(mediaId)
-                        Timber.tag("MusicService").d("Set bypass cache flag for $mediaId")
-                    } else {
-                        Timber.tag("MusicService").d("Keeping cached audio for $mediaId after quality change")
-                    }
-
-                    // Reload player at same position
-                    player.stop()
-                    player.seekTo(currentIndex, currentPosition)
-                    player.prepare()
-                    if (wasPlaying) {
-                        player.play()
-                    }
-                }
-        }
-
-        combine(
-            playerVolume,
-            isMuted,
-            sleepTimerVolumeMultiplier,
-            audioFocusVolumeMultiplier,
-        ) { volume, muted, timerMultiplier, focusMultiplier ->
-            calculateEffectiveVolume(
-                volume = volume,
-                muted = muted,
-                sleepTimerMultiplier = timerMultiplier,
-                focusMultiplier = focusMultiplier,
-            )
-        }.collectLatest(scope) {
-            if (!isCrossfading) {
-                player.volume = it
-            }
-        }
-
-        playerVolume.debounce(1000).collect(scope) { volume ->
-            dataStore.edit { settings ->
-                settings[PlayerVolumeKey] = volume
-            }
-        }
-
-        currentSong.debounce(1000).collect(scope) { song ->
-            updateNotification()
-            updateWidgetUI(player.isPlaying)
-        }
-
-        currentFormat.collect(scope) { format ->
-            val mediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
-            val playbackFormat = format?.takeIf { mediaId == null || it.id == mediaId }
-            currentPlaybackFormat.value = playbackFormat
-        }
-
-        combine(
-            currentMediaMetadata.distinctUntilChangedBy { it?.id },
-            dataStore.data.map { it[ShowLyricsKey] ?: false }.distinctUntilChanged(),
-            dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
-            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
-        ) { mediaMetadata, showLyrics, showAndroidAutoLyrics, automotiveConnected ->
-            Triple(mediaMetadata, showLyrics, showAndroidAutoLyrics && automotiveConnected)
-        }.collectLatest(scope) { (mediaMetadata, showLyrics, showAndroidAutoLyrics) ->
-            if ((showLyrics || showAndroidAutoLyrics) && mediaMetadata != null && database
-                    .lyrics(mediaMetadata.id)
-                    .first() == null
-            ) {
-                val lyricsWithProvider = lyricsHelper.getLyrics(mediaMetadata)
-                database.query {
-                    upsert(
-                        LyricsEntity(
-                            id = mediaMetadata.id,
-                            lyrics = lyricsWithProvider.lyrics,
-                            provider = lyricsWithProvider.provider,
-                        ),
-                    )
-                }
-            }
-        }
-
-        combine(
-            currentMediaMetadata.distinctUntilChangedBy { it?.id },
-            dataStore.data.map { it[AndroidAutoSyncedLyricsKey] ?: false }.distinctUntilChanged(),
-            mediaLibrarySessionCallback.isAutomotiveControllerConnected,
-        ) { mediaMetadata, enabled, automotiveConnected ->
-            Triple(mediaMetadata, enabled, automotiveConnected)
-        }.collectLatest(scope) { (mediaMetadata, enabled, automotiveConnected) ->
-            ++automotiveLyricsGeneration
-            if (!enabled || !automotiveConnected || mediaMetadata == null || mediaMetadata.isEpisode) {
-                return@collectLatest
-            }
-
-            val mediaId = mediaMetadata.id
-            val originalSubtitle: CharSequence? = player.currentMediaItem
-                ?.takeIf { it.mediaId == mediaId }
-                ?.mediaMetadata
-                ?.subtitle
-
-            withTimeoutOrNull(30_000L) {
-                database.lyrics(mediaId).first { it != null }
-            } ?: return@collectLatest
-
-            database.lyrics(mediaId)
-                .filterNotNull()
-                .distinctUntilChanged()
-                .collectLatestSuspending { lyricsEntity ->
-                    val generation = ++automotiveLyricsGeneration
-                    if (lyricsEntity.lyrics == LYRICS_NOT_FOUND) return@collectLatestSuspending
-
-                    try {
-                        val lines = LyricsUtils.parseLyrics(lyricsEntity.lyrics)
-                        if (lines.isEmpty()) return@collectLatestSuspending
-
-                        var lastSegmentKey: Pair<Int, Int>? = null
-                        var lastSubtitle: CharSequence? = null
-                        var lastLoggedLineIndex: Int? = null
-
-                        while (
-                            coroutineContext.isActive &&
-                            generation == automotiveLyricsGeneration &&
-                            player.currentMediaItem?.mediaId == mediaId
-                        ) {
-                            val lyricsOffsetMs = currentSong.value
-                                ?.takeIf { it.id == mediaId }
-                                ?.song
-                                ?.lyricsOffset
-                                ?.toLong()
-                                ?: 0L
-                            val trackDurationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }
-                            val sampledPositionMs = player.currentPosition.coerceAtLeast(0L)
-                            var currentLine = AndroidAutoLyrics.currentLine(
-                                lines = lines,
-                                positionMs = sampledPositionMs,
-                                offsetMs = lyricsOffsetMs,
-                                trackDurationMs = trackDurationMs,
-                            )
-
-                            val confirmedPositionMs = player.currentPosition.coerceAtLeast(0L)
-                            if (confirmedPositionMs != sampledPositionMs) {
-                                currentLine = AndroidAutoLyrics.currentLine(
-                                    lines = lines,
-                                    positionMs = confirmedPositionMs,
-                                    offsetMs = lyricsOffsetMs,
-                                    trackDurationMs = trackDurationMs,
-                                )
-                            }
-                            if (
-                                generation != automotiveLyricsGeneration ||
-                                player.currentMediaItem?.mediaId != mediaId
-                            ) {
-                                break
-                            }
-
-                            val subtitle = currentLine?.text ?: originalSubtitle
-                            val segmentKey = currentLine?.let { it.index to it.segmentIndex }
-                            if (
-                                currentLine != null &&
-                                currentLine.segments.size > 1 &&
-                                currentLine.index != lastLoggedLineIndex
-                            ) {
-                                Timber.tag("AutomotiveLyrics").d(
-                                    "Segmented mediaId=%s line=%d window=%d..%d segments=%s transitions=%s",
-                                    mediaId,
-                                    currentLine.index,
-                                    currentLine.windowStartMs,
-                                    currentLine.windowEndMs,
-                                    currentLine.segments.joinToString(" | ") { it.text },
-                                    currentLine.segments.joinToString(",") { it.startTimeMs.toString() },
-                                )
-                                lastLoggedLineIndex = currentLine.index
-                            }
-                            if (segmentKey != lastSegmentKey || subtitle != lastSubtitle) {
-                                replaceCurrentMediaSubtitle(mediaId, subtitle)
-                                lastSegmentKey = segmentKey
-                                lastSubtitle = subtitle
-                            }
-                            delay(AndroidAutoLyrics.UPDATE_INTERVAL_MS)
-                        }
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (error: Exception) {
-                        Timber.tag("AutomotiveLyrics").w(
-                            error,
-                            "Failed to update synced lyrics for mediaId=%s",
-                            mediaId,
-                        )
-                    } finally {
-                        if (
-                            generation == automotiveLyricsGeneration &&
-                            player.currentMediaItem?.mediaId == mediaId
-                        ) {
-                            replaceCurrentMediaSubtitle(mediaId, originalSubtitle)
-                        }
-                    }
-                }
-        }
-        dataStore.data
-            .map { (it[SkipSilenceKey] ?: false) to (it[SkipSilenceInstantKey] ?: false) }
-            .distinctUntilChanged()
-            .collectLatest(scope) { (skipSilence, instantSkip) ->
-                player.skipSilenceEnabled = skipSilence
-                secondaryPlayer?.skipSilenceEnabled = skipSilence
-
-                val enableInstant = skipSilence && instantSkip
-                instantSilenceSkipEnabled.value = enableInstant
-
-                playerSilenceProcessors.values.forEach { processor ->
-                    processor.instantModeEnabled = enableInstant
-                    if (!enableInstant) {
-                        processor.resetTracking()
-                    }
-                }
-
-                if (!enableInstant) {
-                    silenceSkipJob?.cancel()
-                }
-            }
-
-        combine(
-            currentFormat,
-            dataStore.data
-                .map { it[AudioNormalizationKey] ?: true }
-                .distinctUntilChanged(),
-            dataStore.data
-                .map { prefs -> prefs[LoudnessLevelKey].toEnum(LoudnessLevel.BALANCED) }
-                .distinctUntilChanged(),
-        ) { format, normalizeAudio, loudnessLevel ->
-            Triple(format, normalizeAudio, loudnessLevel)
-        }.collectLatest(scope) { (format, normalizeAudio, loudnessLevel) ->
-            normalizationEnabledCached = normalizeAudio
-            loudnessLevelCached = loudnessLevel
-            setupLoudnessEnhancer()
-        }
-
-        combine(
-            dataStore.data.map { it[AudioOffload] ?: false },
-            dataStore.data.map { it[CrossfadeEnabledKey] ?: false },
-            dataStore.data.map { it[MetroMixEnabledKey] ?: false },
-        ) { offloadPref, crossfadeEnabled, metroMixEnabled ->
-            shouldEnableAudioOffload(offloadPref, crossfadeEnabled || metroMixEnabled)
-        }.distinctUntilChanged()
-            .collectLatest(scope) { useOffload ->
-                player.setOffloadEnabled(useOffload)
-                secondaryPlayer?.setOffloadEnabled(useOffload)
-            }
-
-        DiscordRpcManager.init()
-        dataStore.data
-            .map { it[DiscordAccessTokenKey].orEmpty() to (it[EnableDiscordRPCKey] ?: true) }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) { (accessToken, enabled) ->
-                discordRpcEnabled = accessToken.isNotBlank() && enabled
-                if (discordRpcEnabled) {
-                    if (!DiscordRpcManager.isReady()) {
-                        DiscordRpcManager.reconnectWithToken(accessToken)
-                    }
-                    if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
-                        currentSong.value?.let { song ->
-                            updateDiscordRPC(song, showFeedback = true)
-                        }
-                    }
-                } else {
-                    DiscordRpcManager.disconnect()
-                }
-            }
-
-        dataStore.data
-            .map {
-                listOf(
-                    it[DiscordUseDetailsKey],
-                    it[DiscordShowProviderKey],
-                    it[DiscordHideWhenSpotifyHistoryKey],
-                    it[DiscordAdvancedModeKey],
-                    it[DiscordStatusKey],
-                    it[DiscordButton1TextKey],
-                    it[DiscordButton1VisibleKey],
-                    it[DiscordButton2TextKey],
-                    it[DiscordButton2VisibleKey],
-                    it[DiscordActivityTypeKey],
-                    it[DiscordActivityNameKey],
-                    it[DiscordAnimatedCanvasKey],
-                    it[DiscordAnimatedCanvasQualityKey],
-                )
-            }.debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) {
-                if (player.playbackState == Player.STATE_READY) {
-                    currentSong.value?.let { song ->
-                        updateDiscordRPC(song, showFeedback = true)
-                    }
-                }
-            }
-
-        combine(
-            currentAppleCanvasUrl,
-            currentAppleTallCanvasUrl,
-            currentPreferredArtworkUrl,
-        ) { appleSquare, appleTall, artwork ->
-            listOf(appleSquare, appleTall, artwork)
-        }.debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) {
-                if (discordRpcEnabled && player.playbackState == Player.STATE_READY && player.isPlaying) {
-                    currentSong.value?.let { song ->
-                        updateDiscordRPC(song)
-                    }
-                }
-            }
-
-        dataStore.data
-            .map { it[DiscordHideWhenSpotifyHistoryKey] ?: false }
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                discordHideWhenSpotifyHistory = enabled
-                if (shouldSuppressDiscordRpcForSpotifyHistory()) {
-                    suppressDiscordRpcForSpotifyHistory()
-                } else if (player.playbackState == Player.STATE_READY && player.isPlaying) {
-                    currentSong.value?.let { song ->
-                        updateDiscordRPC(song)
-                    }
-                }
-            }
-
-        scope.launch {
-            DiscordRpcManager.connectionStatus.collect { status ->
-                if (status == DiscordRpcManager.Status.Connected && discordRpcEnabled && player.isPlaying) {
-                    currentSong.value?.let { song ->
-                        updateDiscordRPC(song, showFeedback = true)
-                    }
-                }
-            }
-        }
-
-        scope.launch {
-            DiscordRpcManager.errors.collect { message ->
-                showPlaybackToast(message)
-            }
-        }
-
-        dataStore.data
-            .map { it[EnableLastFMScrobblingKey] ?: false }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                if (enabled && scrobbleManager == null) {
-                    val delayPercent = dataStore.get(ScrobbleDelayPercentKey, LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT)
-                    val minSongDuration =
-                        dataStore.get(ScrobbleMinSongDurationKey, LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION)
-                    val delaySeconds = dataStore.get(ScrobbleDelaySecondsKey, LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS)
-                    scrobbleManager =
-                        ScrobbleManager(
-                            scope,
-                            minSongDuration = minSongDuration,
-                            scrobbleDelayPercent = delayPercent,
-                            scrobbleDelaySeconds = delaySeconds,
-                        )
-                    scrobbleManager?.useNowPlaying = dataStore.get(LastFMUseNowPlaying, false)
-                } else if (!enabled && scrobbleManager != null) {
-                    scrobbleManager?.destroy()
-                    scrobbleManager = null
-                }
-            }
-
-        dataStore.data
-            .map { it[LastFMUseNowPlaying] ?: false }
-            .distinctUntilChanged()
-            .collectLatest(scope) {
-                scrobbleManager?.useNowPlaying = it
-            }
-
-        dataStore.data
-            .map { it[SpotifyListeningHistoryEnabledKey] ?: false }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                spotifyListeningHistoryEnabledValue = enabled
-                if (enabled && spotifyListeningHistoryManager == null) {
-                    scope.launch(Dispatchers.IO) {
-                        SpotifyCanvasClient.refreshListeningHistoryVersionBestEffort()
-                    }
-                    SpotifyCanvasClient.setListeningHistoryFailureReporter { reason ->
-                        val detail = reason.ifBlank { getString(R.string.spotify_listening_history_unknown_error) }
-                        showPlaybackToast(getString(R.string.spotify_listening_history_failed, detail))
-                    }
-                    spotifyListeningHistoryManager =
-                        SpotifyListeningHistoryManager(
-                            scope = scope,
-                            cookieProvider = {
-                                dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() }
-                            },
-                            deviceNameProvider = {
-                                getString(R.string.spotify_listening_history_device_name)
-                            },
-                            onSpotifyPresenceActiveChanged = ::setSpotifyHistoryPresenceActive,
-                            onSpotifyAutoplayQueueReady = ::syncSpotifyAutoplayQueue,
-                            minSongDuration = LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION,
-                            reportDelayPercent = LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT,
-                            reportDelaySeconds = 30,
-                        )
-                    startSpotifyListeningHistoryIfAllowed(
-                        metadata = player.currentMediaItem?.metadata ?: currentMediaMetadata.value ?: player.currentMetadata,
-                        duration = currentPlaybackDurationIfReady(),
-                    )
-                } else if (!enabled && spotifyListeningHistoryManager != null) {
-                    spotifyListeningHistoryManager?.destroy()
-                    spotifyListeningHistoryManager = null
-                    spotifyListeningHistorySourceAllowed = false
-                    setSpotifyHistoryPresenceActive(false)
-                    SpotifyCanvasClient.setListeningHistoryFailureReporter(null)
-                }
-            }
-
-        dataStore.data
-            .map { it[SpotifyListeningHistoryGlobalKey] ?: false }
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                spotifyListeningHistoryGlobalValue = enabled
-                val metadata = player.currentMediaItem?.metadata ?: currentMediaMetadata.value ?: player.currentMetadata
-                if (!spotifyListeningHistoryAllowedFor(metadata)) {
-                    stopSpotifyListeningHistory()
-                }
-            }
-
-        dataStore.data
-            .map { prefs ->
-                Triple(
-                    prefs[ScrobbleDelayPercentKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT,
-                    prefs[ScrobbleMinSongDurationKey] ?: LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION,
-                    prefs[ScrobbleDelaySecondsKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS,
-                )
-            }.distinctUntilChanged()
-            .collect(scope) { (delayPercent, minSongDuration, delaySeconds) ->
-                scrobbleManager?.let {
-                    it.scrobbleDelayPercent = delayPercent
-                    it.minSongDuration = minSongDuration
-                    it.scrobbleDelaySeconds = delaySeconds
-                }
-            }
-
-        combine(
-            dataStore.data.map { prefs ->
-                CrossfadePreferenceState(
-                    crossfadeEnabled = prefs[CrossfadeEnabledKey] ?: false,
-                    crossfadeDuration = prefs[CrossfadeDurationKey] ?: 5f,
-                    crossfadeGapless = prefs[CrossfadeGaplessKey] ?: true,
-                    metroMixEnabled = prefs[MetroMixEnabledKey] ?: false,
-                    metroMixPreset = prefs[MetroMixPresetKey].toEnum(defaultValue = MetroMixPreset.AUTO),
-                    metroMixBars = prefs[MetroMixBarsKey] ?: 8,
-                    metroMixVolumeCurve = prefs[MetroMixVolumeCurveKey].toEnum(defaultValue = MetroMixVolumeCurve.AUTO),
-                    metroMixEqCurve = prefs[MetroMixEqCurveKey].toEnum(defaultValue = MetroMixEqCurve.AUTO),
-                    metroMixEffectCurve = prefs[MetroMixEffectCurveKey].toEnum(defaultValue = MetroMixEffectCurve.AUTO),
-                )
-            },
-            listenTogetherManager.roomState,
-        ) { prefs, roomState ->
-            // Disable crossfade if user is in a listen together room
-            CrossfadePreferenceState(
-                crossfadeEnabled = (prefs.crossfadeEnabled || prefs.metroMixEnabled) && roomState == null,
-                crossfadeDuration = if (prefs.metroMixEnabled) prefs.metroMixPreset.durationSeconds else prefs.crossfadeDuration,
-                crossfadeGapless = if (prefs.metroMixEnabled) false else prefs.crossfadeGapless,
-                metroMixEnabled = prefs.metroMixEnabled && roomState == null,
-                metroMixPreset = prefs.metroMixPreset,
-                metroMixBars = prefs.metroMixBars,
-                metroMixVolumeCurve = prefs.metroMixVolumeCurve,
-                metroMixEqCurve = prefs.metroMixEqCurve,
-                metroMixEffectCurve = prefs.metroMixEffectCurve,
-            )
-        }.distinctUntilChanged()
-            .collect(scope) { prefs ->
-                crossfadeEnabled = prefs.crossfadeEnabled
-                crossfadeDuration = prefs.crossfadeDuration * 1000f // Convert to ms
-                crossfadeGapless = prefs.crossfadeGapless
-                activeMetroMixPreset = prefs.metroMixPreset.takeIf { prefs.metroMixEnabled }
-                activeMetroMixBars = prefs.metroMixBars.coerceIn(2, 32)
-                activeMetroMixVolumeCurve = prefs.metroMixVolumeCurve
-                activeMetroMixEqCurve = prefs.metroMixEqCurve
-                activeMetroMixEffectCurve = prefs.metroMixEffectCurve
-                scheduleCrossfade()
-            }
-
-        // Observe and cache common preferences to avoid runBlocking reads in playback callbacks
-        scope.launch {
-            dataStore.data.map { it[PersistentQueueKey] ?: true }.distinctUntilChanged().collect { cachedPersistentQueue = it }
-        }
-        scope.launch {
-            dataStore.data.map { it[AutoplayKey] ?: true }.distinctUntilChanged().collect { cachedAutoplay = it }
-        }
-        scope.launch {
-            dataStore.data.map { it[DisableLoadMoreWhenRepeatAllKey] ?: false }.distinctUntilChanged().collect { cachedDisableLoadMoreWhenRepeatAll = it }
-        }
-        scope.launch {
-            dataStore.data.map { it[HideExplicitKey] ?: false }.distinctUntilChanged().collect { cachedHideExplicit = it }
-        }
-        scope.launch {
-            dataStore.data.map { it[HideVideoSongsKey] ?: false }.distinctUntilChanged().collect { cachedHideVideoSongs = it }
-        }
-        scope.launch {
-            dataStore.data.map { it[ShufflePlaylistFirstKey] ?: false }.distinctUntilChanged().collect { cachedShufflePlaylistFirst = it }
-        }
-        scope.launch {
-            dataStore.data.map { it[AutoLoadMoreKey] ?: true }.distinctUntilChanged().collect { cachedAutoLoadMore = it }
-        }
-
-        if (dataStore.get(PersistentQueueKey, true)) {
-            val queueFile = filesDir.resolve(PERSISTENT_QUEUE_FILE)
-            if (queueFile.exists()) {
-                runCatching {
-                    queueFile.inputStream().use { fis ->
-                        ObjectInputStream(fis).use { oos ->
-                            oos.readObject() as PersistQueue
-                        }
-                    }
-                }.onSuccess { queue ->
-                    runCatching {
-                        // Convert back to proper queue type
-                        val restoredQueue = queue.toQueue()
-                        // Wait for player initialization before playing
-                        scope.launch {
-                            playerInitialized.first { it }
-                            if (isActive) {
-                                playQueue(
-                                    queue = restoredQueue,
-                                    playWhenReady = false,
-                                )
-                            }
-                        }
-                    }.onFailure { error ->
-                        Timber.tag(TAG).w(error, "Failed to restore persisted queue, clearing data")
-                        clearPersistedQueueFiles()
-                    }
-                }.onFailure { error ->
-                    Timber.tag(TAG).w(error, "Failed to read persisted queue, clearing data")
-                    clearPersistedQueueFiles()
-                }
-            }
-
-            val automixFile = filesDir.resolve(PERSISTENT_AUTOMIX_FILE)
-            if (automixFile.exists()) {
-                runCatching {
-                    automixFile.inputStream().use { fis ->
-                        ObjectInputStream(fis).use { oos ->
-                            oos.readObject() as PersistQueue
-                        }
-                    }
-                }.onSuccess { queue ->
-                    runCatching {
-                        automixItems.value = queue.items.map { it.toMediaItem() }
-                    }.onFailure { error ->
-                        Timber.tag(TAG).w(error, "Failed to restore automix queue, clearing data")
-                        clearPersistedQueueFiles()
-                    }
-                }.onFailure { error ->
-                    Timber.tag(TAG).w(error, "Failed to read automix queue, clearing data")
-                    clearPersistedQueueFiles()
-                }
-            }
-
-            // Restore player state
-            val playerStateFile = filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE)
-            if (playerStateFile.exists()) {
-                runCatching {
-                    playerStateFile.inputStream().use { fis ->
-                        ObjectInputStream(fis).use { oos ->
-                            oos.readObject() as PersistPlayerState
-                        }
-                    }
-                }.onSuccess { playerState ->
-                    // Restore player settings after queue is loaded
-                    scope.launch {
-                        delay(1000) // Wait for queue to be loaded
-                        // Don't restore repeat/shuffle from playerState as they are already set from DataStore (source of truth)
-                        // player.repeatMode = playerState.repeatMode
-                        // player.shuffleModeEnabled = playerState.shuffleModeEnabled
-                        playerVolume.value = playerState.volume
-
-                        // Restore position if it's still valid
-                        if (playerState.currentMediaItemIndex < player.mediaItemCount) {
-                            player.seekTo(playerState.currentMediaItemIndex, playerState.currentPosition)
-                        }
-                    }
-                }.onFailure { error ->
-                    Timber.tag(TAG).w(error, "Failed to read player state, clearing data")
-                    clearPersistedQueueFiles()
-                }
-            }
-        }
-
-        // Save queue periodically to prevent queue loss from crash or force kill
-        scope.launch {
-            while (isActive) {
-                delay(30.seconds)
-                if (cachedPersistentQueue) {
-                    saveQueueToDisk()
-                }
-                // Also save episode position periodically
-                val currentMetadata = player.currentMediaItem?.metadata
-                if (currentMetadata?.isEpisode == true && player.isPlaying && player.currentPosition > 0) {
-                    previousEpisodePosition = player.currentPosition
-                    saveEpisodePosition(currentMetadata.id, player.currentPosition)
-                }
-            }
-        }
-
-    }
-
-    private fun createExoPlayer(publishToUi: Boolean = true): ExoPlayer {
-        val eqProcessor = CustomEqualizerAudioProcessor()
-        equalizerService.addAudioProcessor(eqProcessor)
-
-        val silenceProcessor = SilenceDetectorAudioProcessor { handleLongSilenceDetected() }
-
-        // Set initial state
-        runBlocking {
-            val skipSilence = dataStore.get(SkipSilenceKey, false)
-            val instantSkip = dataStore.get(SkipSilenceInstantKey, false)
-            silenceProcessor.instantModeEnabled = skipSilence && instantSkip
-        }
-
-        val player =
-            ExoPlayer
-                .Builder(this)
-                .setMediaSourceFactory(createMediaSourceFactory())
-                .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor))
-                .setTrackSelector(createAudioTrackSelector())
-                .setLoadControl(createLoadControl())
-                .setHandleAudioBecomingNoisy(true)
-                .setWakeMode(C.WAKE_MODE_NETWORK)
-                .setAudioAttributes(
-                    AudioAttributes
-                        .Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                        .build(),
-                    false,
-                ).setSeekBackIncrementMs(5000)
-                .setSeekForwardIncrementMs(5000)
-                .setDeviceVolumeControlEnabled(true)
-                .build()
-
-        playerSilenceProcessors[player] = silenceProcessor
-
-        player.apply {
-            runBlocking {
-                val offload = dataStore.get(AudioOffload, false)
-                val crossfade = dataStore.get(CrossfadeEnabledKey, false)
-                val metroMix = dataStore.get(MetroMixEnabledKey, false)
-                val useOffload = shouldEnableAudioOffload(offload, crossfade || metroMix)
-                setOffloadEnabled(useOffload)
-                skipSilenceEnabled = dataStore.get(SkipSilenceKey, false)
-            }
-            addAnalyticsListener(PlaybackStatsListener(false, this@MusicService))
-            addAnalyticsListener(this@MusicService)
-
-            // Cleanup handled manually in onDestroy/release
-        }
-        if (publishToUi) {
-            _playerFlow.value = player
-        }
-        return player
-    }
-
-    private fun createAudioTrackSelector(): DefaultTrackSelector =
-        DefaultTrackSelector(this).apply {
-            setParameters(
-                buildUponParameters()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                    .setForceHighestSupportedBitrate(true)
-                    .build(),
-            )
-        }
-
-    private fun setupAudioFocusRequest() {
-        audioFocusRequest =
-            AudioFocusRequest
-                .Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(
-                    android.media.AudioAttributes
-                        .Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build(),
-                ).setOnAudioFocusChangeListener { focusChange ->
-                    handleAudioFocusChange(focusChange)
-                }.setAcceptsDelayedFocusGain(true)
-                .build()
-    }
-
-    private fun handleAudioFocusChange(focusChange: Int) {
-        when (focusChange) {
-            AudioManager.AUDIOFOCUS_GAIN,
-            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
-                -> {
-                hasAudioFocus = true
-                audioFocusVolumeMultiplier.value = 1f
-
-                if (wasPlayingBeforeAudioFocusLoss && !player.isPlaying && !reentrantFocusGain) {
-                    reentrantFocusGain = true
-                    scope.launch {
-                        delay(300)
-                        if (hasAudioFocus && wasPlayingBeforeAudioFocusLoss && !player.isPlaying) {
-                            // Don't start local playback if casting
-                            if (castConnectionHandler?.isCasting?.value != true) {
-                                player.play()
-                            }
-                            wasPlayingBeforeAudioFocusLoss = false
-                        }
-                        reentrantFocusGain = false
-                    }
-                }
-
-                applyEffectiveVolume()
-                lastAudioFocusState = focusChange
-            }
-
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                hasAudioFocus = false
-                audioFocusVolumeMultiplier.value = 1f
-                wasPlayingBeforeAudioFocusLoss = player.isPlaying
-                if (player.isPlaying) {
-                    player.pause()
-                }
-                abandonAudioFocus()
-                lastAudioFocusState = focusChange
-            }
-
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                hasAudioFocus = false
-                audioFocusVolumeMultiplier.value = 1f
-                wasPlayingBeforeAudioFocusLoss = player.isPlaying
-                if (player.isPlaying) {
-                    player.pause()
-                }
-                lastAudioFocusState = focusChange
-            }
-
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                hasAudioFocus = false
-                audioFocusVolumeMultiplier.value = 0.2f
-                wasPlayingBeforeAudioFocusLoss = player.isPlaying
-                if (player.isPlaying) {
-                    applyEffectiveVolume()
-                }
-                lastAudioFocusState = focusChange
-            }
-
-            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK -> {
-                hasAudioFocus = true
-                audioFocusVolumeMultiplier.value = 1f
-                applyEffectiveVolume()
-                lastAudioFocusState = focusChange
-            }
-        }
-    }
-
-    private fun requestAudioFocus(): Boolean {
-        if (hasAudioFocus) return true
-
-        audioFocusRequest?.let { request ->
-            val result = audioManager.requestAudioFocus(request)
-            hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-            return hasAudioFocus
-        }
-        return false
-    }
-
-    private fun abandonAudioFocus() {
-        if (hasAudioFocus) {
-            audioFocusRequest?.let { request ->
-                audioManager.abandonAudioFocusRequest(request)
-                hasAudioFocus = false
-            }
-        }
-    }
-
-    private fun clearPersistedQueueFiles() {
-        runCatching { filesDir.resolve(PERSISTENT_QUEUE_FILE).delete() }
-        runCatching { filesDir.resolve(PERSISTENT_AUTOMIX_FILE).delete() }
-        runCatching { filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE).delete() }
-    }
-
-    fun hasAudioFocusForPlayback(): Boolean = hasAudioFocus
-
-    private fun waitOnNetworkError() {
-        if (waitingForNetworkConnection.value) return
-
-        // Check if we've exceeded max retry attempts
-        if (retryCount >= MAX_RETRY_COUNT) {
-            Timber.tag(TAG).w("Max retry count ($MAX_RETRY_COUNT) reached, stopping playback")
-            stopOnError()
-            retryCount = 0
-            return
-        }
-
-        waitingForNetworkConnection.value = true
-
-        // Start a retry timer with exponential backoff
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                // Exponential backoff: 3s, 6s, 12s, 24s... max 30s
-                val delayMs = minOf(3000L * (1 shl retryCount), 30000L)
-                Timber.tag(TAG).d("Waiting ${delayMs}ms before retry attempt ${retryCount + 1}/$MAX_RETRY_COUNT")
-                delay(delayMs)
-
-                if (isNetworkConnected.value && waitingForNetworkConnection.value) {
-                    retryCount++
-                    triggerRetry()
-                }
-            }
-    }
-
-    private fun triggerRetry() {
-        waitingForNetworkConnection.value = false
-        retryJob?.cancel()
-
-        if (player.currentMediaItem != null) {
-            // After 3+ failed retries, try to refresh the stream URL by seeking to current position
-            // This forces ExoPlayer to re-resolve the data source and get a fresh URL
-            if (retryCount > 3) {
-                Timber.tag(TAG).d("Retry count > 3, attempting to refresh stream URL")
-                val currentPosition = player.currentPosition
-                player.seekTo(player.currentMediaItemIndex, currentPosition)
-            }
-            player.prepare()
-            // Don't call play() here - let the player auto-resume via playWhenReady
-            // This avoids stealing audio focus during retry attempts
-        }
-    }
-
-    private fun skipOnError() {
-        /**
-         * Auto skip to the next media item on error.
-         *
-         * To prevent a "runaway diesel engine" scenario, force the user to take action after
-         * too many errors come up too quickly. Pause to show player "stopped" state
-         */
-        consecutivePlaybackErr += 2
-        val nextWindowIndex = player.nextMediaItemIndex
-
-        if (consecutivePlaybackErr <= MAX_CONSECUTIVE_ERR && nextWindowIndex != C.INDEX_UNSET) {
-            player.seekTo(nextWindowIndex, C.TIME_UNSET)
-            player.prepare()
-            // Don't start local playback if casting
-            if (castConnectionHandler?.isCasting?.value != true) {
-                player.play()
-            }
-            return
-        }
-
-        player.pause()
-        consecutivePlaybackErr = 0
-    }
-
-    fun skipAfterExperimentalFailure() {
-        skipOnError()
-    }
-
-    private fun stopOnError() {
-        player.pause()
-    }
-
-    private fun updateNotification() {
-        val notificationMetadata = currentMediaMetadata.value ?: player.currentMetadata
-        val notificationSong = currentSong.value?.song
-        val notificationLiked = if (notificationSong?.isEpisode == true) {
-            notificationSong.inLibrary != null
-        } else {
-            notificationSong?.liked ?: notificationMetadata?.liked == true
-        }
-        mediaSession.setCustomLayout(
-            listOf(
-                CommandButton
-                    .Builder()
-                    .setDisplayName(
-                        getString(
-                            if (notificationLiked) {
-                                R.string.action_remove_like
-                            } else {
-                                R.string.action_like
-                            },
-                        ),
-                    ).setIconResId(if (notificationLiked) R.drawable.ic_heart else R.drawable.ic_heart_outline)
-                    .setSessionCommand(CommandToggleLike)
-                    .setEnabled(notificationMetadata != null || notificationSong != null)
-                    .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(
-                        getString(
-                            when (player.repeatMode) {
-                                REPEAT_MODE_OFF -> R.string.repeat_mode_off
-                                REPEAT_MODE_ONE -> R.string.repeat_mode_one
-                                REPEAT_MODE_ALL -> R.string.repeat_mode_all
-                                else -> throw IllegalStateException()
-                            },
-                        ),
-                    ).setIconResId(
-                        when (player.repeatMode) {
-                            REPEAT_MODE_OFF -> R.drawable.repeat
-                            REPEAT_MODE_ONE -> R.drawable.repeat_one_on
-                            REPEAT_MODE_ALL -> R.drawable.repeat_on
-                            else -> throw IllegalStateException()
-                        },
-                    ).setSessionCommand(CommandToggleRepeatMode)
-                    .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(getString(if (player.shuffleModeEnabled) R.string.action_shuffle_off else R.string.action_shuffle_on))
-                    .setIconResId(if (player.shuffleModeEnabled) R.drawable.shuffle_on else R.drawable.shuffle)
-                    .setSessionCommand(CommandToggleShuffle)
-                    .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(getString(R.string.start_radio))
-                    .setIconResId(R.drawable.radio)
-                    .setSessionCommand(CommandToggleStartRadio)
-                    .setEnabled(currentSong.value != null)
-                    .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(getString(R.string.android_auto_target_playlist))
-                    .setIconResId(R.drawable.playlist_add)
-                    .setSessionCommand(CommandAddToTargetPlaylist)
-                    .setEnabled(currentSong.value != null)
-                    .build(),
-            ),
-        )
-    }
-
-    private suspend fun recoverSong(
-        mediaId: String,
-    ) {
-        val song = database.song(mediaId).first()
-        val mediaMetadata =
-            withContext(Dispatchers.Main) {
-                player.findNextMediaItemById(mediaId)?.metadata
-            } ?: return
-        val duration =
-            song?.song?.duration?.takeIf { it != -1 }
-                ?: mediaMetadata.duration.takeIf { it != -1 }
-                ?: -1
-        database.query {
-            if (song == null) {
-                insert(mediaMetadata.copy(duration = duration))
-            } else {
-                var updatedSong = song.song
-                if (song.song.duration == -1) {
-                    updatedSong = updatedSong.copy(duration = duration)
-                }
-                // Update isVideo flag if it's different from the current value
-                if (song.song.isVideo != mediaMetadata.isVideoSong) {
-                    updatedSong = updatedSong.copy(isVideo = mediaMetadata.isVideoSong)
-                }
-                if (updatedSong != song.song) {
-                    update(updatedSong)
-                }
-            }
-        }
-        if (!database.hasRelatedSongs(mediaId)) {
-            if (mediaId.startsWith("https://soundcloud.com/")) {
-                val token = dataStore.get(SoundCloudAuthTokenKey, "")
-                val relatedTracks = SoundCloudHomeFeedProvider.fetchRelatedTracks(mediaId, token)
-                if (relatedTracks.isNotEmpty()) {
-                    database.query {
-                        relatedTracks
-                            .map(SongItem::toMediaMetadata)
-                            .onEach { insert(it) }
-                            .map {
-                                RelatedSongMap(
-                                    songId = mediaId,
-                                    relatedSongId = it.id,
-                                )
-                            }.forEach { insert(it) }
-                    }
-                }
-                return
-            }
-            val relatedEndpoint =
-                YouTube.next(WatchEndpoint(videoId = mediaId)).getOrNull()?.relatedEndpoint
-                    ?: return
-            val relatedPage = YouTube.related(relatedEndpoint).getOrNull() ?: return
-            database.query {
-                relatedPage.songs
-                    .map(SongItem::toMediaMetadata)
-                    .onEach(::insert)
-                    .map {
-                        RelatedSongMap(
-                            songId = mediaId,
-                            relatedSongId = it.id,
-                        )
-                    }.forEach(::insert)
-            }
-        }
-    }
-
-    fun playQueue(
-        queue: Queue,
-        playWhenReady: Boolean = true,
-    ) {
-        // Safety Check : Ensuring player is initilized
-        if (!playerInitialized.value) {
-            Timber.tag(TAG).w("playQueue called before player initialization, queuing request")
-            scope.launch {
-                playerInitialized.first { it }
-                playQueue(queue, playWhenReady)
-            }
-            return
-        }
-
-        currentQueue = queue
-        queueTitle = null
-        spotifyAutoplayJob?.cancel()
-        spotifyAutoplayPreviewJob?.cancel()
-        spotifyAutoplaySeedKey = null
-        val persistShuffleAcrossQueues = dataStore.get(PersistentShuffleAcrossQueuesKey, false)
-        val previousShuffleEnabled = player.shuffleModeEnabled
-        if (!persistShuffleAcrossQueues) {
-            player.shuffleModeEnabled = false
-        }
-        // Reset original queue size when starting a new queue
-        originalQueueSize = 0
-        if (queue.preloadItem != null) {
-            player.setMediaItem(queue.preloadItem!!.toMediaItem())
-            player.prepare()
-            player.playWhenReady = playWhenReady
-        }
-        scope.launch(SilentHandler) {
-            val initialStatus =
-                withContext(Dispatchers.IO) {
-                    queue
-                        .getInitialStatus()
-                        .filterExplicit(dataStore.get(HideExplicitKey, false))
-                        .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
-                }
-            if (queue.preloadItem != null && player.playbackState == STATE_IDLE) return@launch
-            if (initialStatus.title != null) {
-                queueTitle = initialStatus.title
-            }
-            if (initialStatus.items.isEmpty()) return@launch
-            // Track original queue size for shuffle playlist first feature
-            originalQueueSize = initialStatus.items.size
-            if (queue.preloadItem != null) {
-                player.addMediaItems(
-                    0,
-                    initialStatus.items.subList(0, initialStatus.mediaItemIndex),
-                )
-                player.addMediaItems(
-                    initialStatus.items.subList(
-                        initialStatus.mediaItemIndex + 1,
-                        initialStatus.items.size,
-                    ),
-                )
-            } else {
-                player.setMediaItems(
-                    initialStatus.items,
-                    if (initialStatus.mediaItemIndex >
-                        0
-                    ) {
-                        initialStatus.mediaItemIndex
-                    } else {
-                        0
-                    },
-                    initialStatus.position,
-                )
-                player.prepare()
-                player.playWhenReady = playWhenReady
-            }
-
-            // Rebuild shuffle order if shuffle is enabled
-            if (player.shuffleModeEnabled) {
-                val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-            }
-        }
-    }
-
-    fun startRadioSeamlessly() {
-        // Safety Check: Ensure Player is initilized
-        if (!playerInitialized.value) {
-            Timber.tag(TAG).w("startRadioSeamlessly called before player initialization")
-            return
-        }
-
-        val currentMediaMetadata = player.currentMetadata ?: return
-
-        val currentIndex = player.currentMediaItemIndex
-        val currentMediaId = currentMediaMetadata.id
-
-        scope.launch(SilentHandler) {
-            // Use simple videoId to let YouTube personalize recommendations
-            val radioQueue =
-                YouTubeQueue(
-                    endpoint =
-                        WatchEndpoint(
-                            videoId = currentMediaId,
-                        ),
-                )
-
-            try {
-                val initialStatus =
-                    withContext(Dispatchers.IO) {
-                        radioQueue
-                            .getInitialStatus()
-                            .filterExplicit(dataStore.get(HideExplicitKey, false))
-                            .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
-                    }
-
-                if (initialStatus.title != null) {
-                    queueTitle = initialStatus.title
-                }
-
-                // Filter radio items to exclude current media item
-                val radioItems =
-                    initialStatus.items.filter { item ->
-                        item.mediaId != currentMediaId
-                    }
-
-                if (radioItems.isNotEmpty()) {
-                    val itemCount = player.mediaItemCount
-
-                    if (itemCount > currentIndex + 1) {
-                        player.removeMediaItems(currentIndex + 1, itemCount)
-                    }
-
-                    player.addMediaItems(currentIndex + 1, radioItems)
-                    if (player.shuffleModeEnabled) {
-                        val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-                    }
-                }
-
-                currentQueue = radioQueue
-            } catch (e: Exception) {
-                // Fallback: try with related endpoint
-                try {
-                    val nextResult =
-                        withContext(Dispatchers.IO) {
-                            YouTube.next(WatchEndpoint(videoId = currentMediaId)).getOrNull()
-                        }
-                    nextResult?.relatedEndpoint?.let { relatedEndpoint ->
-                        val relatedPage =
-                            withContext(Dispatchers.IO) {
-                                YouTube.related(relatedEndpoint).getOrNull()
-                            }
-                        relatedPage?.songs?.let { songs ->
-                            val radioItems =
-                                songs
-                                    .filter { it.id != currentMediaId }
-                                    .map { it.toMediaItem() }
-                                    .filterExplicit(cachedHideExplicit)
-                                    .filterVideoSongs(cachedHideVideoSongs)
-
-                            if (radioItems.isNotEmpty()) {
-                                val itemCount = player.mediaItemCount
-                                if (itemCount > currentIndex + 1) {
-                                    player.removeMediaItems(currentIndex + 1, itemCount)
-                                }
-                                player.addMediaItems(currentIndex + 1, radioItems)
-                                if (player.shuffleModeEnabled) {
-                                    applyShuffleOrder(
-                                        player.currentMediaItemIndex,
-                                        player.mediaItemCount,
-                                        cachedShufflePlaylistFirst,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } catch (_: Exception) {
-                    // Silent fail
-                }
-            }
-        }
-    }
-
-    fun getAutomixAlbum(albumId: String) {
-        scope.launch(SilentHandler) {
-            YouTube
-                .album(albumId)
-                .onSuccess {
-                    getAutomix(it.album.playlistId)
-                }
-        }
-    }
-
-    fun getAutomix(playlistId: String) {
-        if (dataStore.get(SimilarContent, true) &&
-            !(dataStore.get(DisableLoadMoreWhenRepeatAllKey, false) && player.repeatMode == REPEAT_MODE_ALL)
-        ) {
-            scope.launch(SilentHandler) {
-                try {
-                    // Try primary method
-                    YouTube
-                        .next(WatchEndpoint(playlistId = playlistId))
-                        .onSuccess { firstResult ->
-                            YouTube
-                                .next(WatchEndpoint(playlistId = firstResult.endpoint.playlistId))
-                                .onSuccess { secondResult ->
-                                    automixItems.value =
-                                        secondResult.items.map { song ->
-                                            song.toMediaItem()
-                                        }
-                                }.onFailure {
-                                    // Fallback: use first result items
-                                    if (firstResult.items.isNotEmpty()) {
-                                        automixItems.value =
-                                            firstResult.items.map { song ->
-                                                song.toMediaItem()
-                                            }
-                                    }
-                                }
-                        }.onFailure {
-                            // Fallback: try with radio format
-                            val currentSong = player.currentMetadata
-                            if (currentSong != null) {
-                                // Use simple videoId for better personalized recommendations
-                                YouTube
-                                    .next(
-                                        WatchEndpoint(
-                                            videoId = currentSong.id,
-                                        ),
-                                    ).onSuccess { radioResult ->
-                                        val filteredItems =
-                                            radioResult.items
-                                                .filter { it.id != currentSong.id }
-                                                .map { it.toMediaItem() }
-                                        if (filteredItems.isNotEmpty()) {
-                                            automixItems.value = filteredItems
-                                        }
-                                    }.onFailure {
-                                        // Final fallback: try related endpoint
-                                        YouTube
-                                            .next(WatchEndpoint(videoId = currentSong.id))
-                                            .getOrNull()
-                                            ?.relatedEndpoint
-                                            ?.let { relatedEndpoint ->
-                                                YouTube.related(relatedEndpoint).onSuccess { relatedPage ->
-                                                    val relatedItems =
-                                                        relatedPage.songs
-                                                            .filter { it.id != currentSong.id }
-                                                            .map { it.toMediaItem() }
-                                                    if (relatedItems.isNotEmpty()) {
-                                                        automixItems.value = relatedItems
-                                                    }
-                                                }
-                                            }
-                                    }
-                            }
-                        }
-                } catch (_: Exception) {
-                    // Silent fail
-                }
-            }
-        }
-    }
-
-    fun addToQueueAutomix(
-        item: MediaItem,
-        position: Int,
-    ) {
-        automixItems.value =
-            automixItems.value.toMutableList().apply {
-                removeAt(position)
-            }
-        addToQueue(listOf(item))
-    }
-
-    fun playNextAutomix(
-        item: MediaItem,
-        position: Int,
-    ) {
-        automixItems.value =
-            automixItems.value.toMutableList().apply {
-                removeAt(position)
-            }
-        playNext(listOf(item))
-    }
-
-    fun clearAutomix() {
-        automixItems.value = emptyList()
-    }
-
-    fun playNext(items: List<MediaItem>) {
-        // If queue is empty or player is idle, play immediately instead
-        if (player.mediaItemCount == 0 || player.playbackState == STATE_IDLE) {
-            player.setMediaItems(items)
-            player.prepare()
-            // Don't start local playback if casting
-            if (castConnectionHandler?.isCasting?.value != true) {
-                player.play()
-            }
-            return
-        }
-
-        // Remove duplicates if enabled
-        if (dataStore.get(PreventDuplicateTracksInQueueKey, false)) {
-            val itemIds = items.map { it.mediaId }.toSet()
-            val indicesToRemove = mutableListOf<Int>()
-            val currentIndex = player.currentMediaItemIndex
-
-            for (i in 0 until player.mediaItemCount) {
-                if (i != currentIndex && player.getMediaItemAt(i).mediaId in itemIds) {
-                    indicesToRemove.add(i)
-                }
-            }
-
-            // Remove from highest index to lowest to maintain index stability
-            indicesToRemove.sortedDescending().forEach { index ->
-                player.removeMediaItem(index)
-            }
-        }
-
-        val insertIndex = player.currentMediaItemIndex + 1
-        val shuffleEnabled = player.shuffleModeEnabled
-
-        // Insert items immediately after the current item in the window/index space
-        player.addMediaItems(insertIndex, items)
-        player.prepare()
-
-        if (shuffleEnabled) {
-            // Rebuild shuffle order so that newly inserted items are played next
-            val timeline = player.currentTimeline
-            if (!timeline.isEmpty) {
-                val size = timeline.windowCount
-                val currentIndex = player.currentMediaItemIndex
-
-                // Newly inserted indices are a contiguous range [insertIndex, insertIndex + items.size)
-                val newIndices = (insertIndex until (insertIndex + items.size)).toSet()
-
-                // Collect existing shuffle traversal order excluding current index
-                val orderAfter = mutableListOf<Int>()
-                var idx = currentIndex
-                while (true) {
-                    idx = timeline.getNextWindowIndex(idx, Player.REPEAT_MODE_OFF, /*shuffleModeEnabled=*/true)
-                    if (idx == C.INDEX_UNSET) break
-                    if (idx != currentIndex) orderAfter.add(idx)
-                }
-
-                val prevList = mutableListOf<Int>()
-                var pIdx = currentIndex
-                while (true) {
-                    pIdx = timeline.getPreviousWindowIndex(pIdx, Player.REPEAT_MODE_OFF, /*shuffleModeEnabled=*/true)
-                    if (pIdx == C.INDEX_UNSET) break
-                    if (pIdx != currentIndex) prevList.add(pIdx)
-                }
-                prevList.reverse() // preserve original forward order
-
-                val existingOrder = (prevList + orderAfter).filter { it != currentIndex && it !in newIndices }
-
-                // Build new shuffle order: current -> newly inserted (in insertion order) -> rest
-                val nextBlock = (insertIndex until (insertIndex + items.size)).toList()
-                val finalOrder = IntArray(size)
-                var pos = 0
-                prevList
-                    .filter { it !in newIndices }
-                    .forEach { if (it in 0 until size) finalOrder[pos++] = it }
-                finalOrder[pos++] = currentIndex
-                nextBlock.forEach { if (it in 0 until size) finalOrder[pos++] = it }
-                orderAfter
-                    .filter { it !in newIndices }
-                    .forEach { if (pos < size) finalOrder[pos++] = it }
-
-                // Fill any missing indices (safety) to ensure a full permutation
-                if (pos < size) {
-                    for (i in 0 until size) {
-                        if (!finalOrder.contains(i)) {
-                            finalOrder[pos++] = i
-                            if (pos == size) break
-                        }
-                    }
-                }
-
-                player.setShuffleOrder(DefaultShuffleOrder(finalOrder, System.currentTimeMillis()))
-            }
-        }
-    }
-
-    fun addToQueue(items: List<MediaItem>) {
-        // Remove duplicates if enabled
-        if (dataStore.get(PreventDuplicateTracksInQueueKey, false)) {
-            val itemIds = items.map { it.mediaId }.toSet()
-            val indicesToRemove = mutableListOf<Int>()
-            val currentIndex = player.currentMediaItemIndex
-
-            for (i in 0 until player.mediaItemCount) {
-                if (i != currentIndex && player.getMediaItemAt(i).mediaId in itemIds) {
-                    indicesToRemove.add(i)
-                }
-            }
-
-            // Remove from highest index to lowest to maintain index stability
-            indicesToRemove.sortedDescending().forEach { index ->
-                player.removeMediaItem(index)
-            }
-        }
-
-        player.addMediaItems(items)
-        if (player.shuffleModeEnabled) {
-            val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-            applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-        }
-        player.prepare()
-    }
-
-    private fun replaceCurrentMediaSubtitle(
-        mediaId: String,
-        subtitle: CharSequence?,
-    ) {
-        val index = player.currentMediaItemIndex
-        if (index == C.INDEX_UNSET || index !in 0 until player.mediaItemCount) return
-
-        val mediaItem = player.getMediaItemAt(index)
-        if (mediaItem.mediaId != mediaId || mediaItem.mediaMetadata.subtitle == subtitle) return
-
-        player.replaceMediaItem(
-            index,
-            mediaItem.buildUpon()
-                .setMediaMetadata(
-                    mediaItem.mediaMetadata.buildUpon()
-                        .setSubtitle(subtitle)
-                        .build(),
-                )
-                .build(),
-        )
-    }
-
-    fun toggleLibrary() {
-        scope.launch {
-            val songToToggle = currentSong.first()
-            songToToggle?.let {
-                val isInLibrary = it.song.inLibrary != null
-                val token = if (isInLibrary) it.song.libraryRemoveToken else it.song.libraryAddToken
-
-                // Call YouTube API with feedback token if available
-                token?.let { feedbackToken ->
-                    YouTube.feedback(listOf(feedbackToken))
-                }
-
-                // Update local database
-                database.query {
-                    update(it.song.toggleLibrary())
-                }
-                currentMediaMetadata.value = player.currentMetadata
-            }
-        }
-    }
-
-    fun toggleLike() {
-        scope.launch {
-            val songToToggle = currentSong.first()
-            val metadata = player.currentMetadata ?: currentMediaMetadata.value
-            val songEntity = songToToggle?.song ?: metadata?.toSongEntity()
-            songEntity?.let { baseSong ->
-
-                // For podcast episodes, toggle save for later instead of like
-                if (baseSong.isEpisode) {
-                    toggleEpisodeSaveForLater(baseSong)
-                    return@let
-                }
-
-                val song = baseSong.toggleLike()
-                database.query {
-                    if (songToToggle == null && metadata != null) {
-                        insert(metadata) { song }
-                    } else {
-                        update(song)
-                    }
-                    syncUtils.likeSong(song)
-
-                    // Check if auto-download on like is enabled and the song is now liked
-                    if (dataStore.get(AutoDownloadOnLikeKey, false) && song.liked) {
-                        // Trigger download for the liked song
-                        val downloadRequest =
-                            androidx.media3.exoplayer.offline.DownloadRequest
-                                .Builder(song.id, song.id.toUri())
-                                .setCustomCacheKey(song.id)
-                                .setData(song.title.toByteArray())
-                                .build()
-                        androidx.media3.exoplayer.offline.DownloadService.sendAddDownload(
-                            this@MusicService,
-                            ExoDownloadService::class.java,
-                            downloadRequest,
-                            false,
-                        )
-                    }
-                }
-                currentMediaMetadata.value = player.currentMetadata
-            }
-        }
-    }
-
-    fun addToTargetPlaylist() {
-        scope.launch {
-            val currentSong = currentSong.first() ?: return@launch
-            val targetPlaylistId = dataStore.get(AndroidAutoTargetPlaylistKey, MediaSessionConstants.TARGET_PLAYLIST_AUTO)
-
-            if (targetPlaylistId == MediaSessionConstants.TARGET_PLAYLIST_AUTO) {
-                Handler(Looper.getMainLooper()).post {
-                    Toast
-                        .makeText(
-                            this@MusicService,
-                            getString(R.string.android_auto_target_playlist_not_set),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                }
-                return@launch
-            }
-
-            val targetPlaylist = database.playlist(targetPlaylistId).first()
-            if (targetPlaylist != null) {
-                database.addSongsToPlaylist(targetPlaylist, listOf(currentSong.id to null), prepend = true)
-            }
-        }
-    }
-
-    private suspend fun toggleEpisodeSaveForLater(songEntity: com.metrolist.music.db.entities.SongEntity) {
-        val isCurrentlySaved = songEntity.inLibrary != null
-        val shouldBeSaved = !isCurrentlySaved
-
-        // Update database first (optimistic update)
-        // Also ensure isEpisode = true so it appears in saved episodes list
-        database.query {
-            update(
-                songEntity.copy(
-                    inLibrary = if (isCurrentlySaved) null else java.time.LocalDateTime.now(),
-                    isEpisode = true,
-                ),
-            )
-        }
-        currentMediaMetadata.value = player.currentMetadata
-
-        // Sync with YouTube (handles login check internally)
-        val setVideoId = if (isCurrentlySaved) database.getSetVideoId(songEntity.id)?.setVideoId else null
-        syncUtils.saveEpisode(songEntity.id, shouldBeSaved, setVideoId)
-    }
-
-    fun toggleStartRadio() {
-        startRadioSeamlessly()
-    }
-
-    private fun seedLoudnessCacheFromPrefs() {
-        normalizationEnabledCached = dataStore.get(AudioNormalizationKey, true)
-        loudnessLevelCached = dataStore[LoudnessLevelKey].toEnum(LoudnessLevel.BALANCED)
-
-        Timber.tag(TAG).d(
-            "Seeded loudness cache: normalization=$normalizationEnabledCached, level=$loudnessLevelCached"
-        )
-    }
-
-    private fun applyCachedLoudnessEnhancerNow() {
-        val enhancer = loudnessEnhancer ?: return
-
-        try {
-            val gain = cachedNormalizationGainMb
-
-            if (cachedNormalizationEnabled && gain != null) {
-                enhancer.setTargetGain(gain)
-                enhancer.enabled = true
-            } else {
-                enhancer.enabled = false
-            }
-        } catch (e: Exception) {
-            reportException(e)
-            releaseLoudnessEnhancer()
-        }
-    }
-
-    private fun createLoudnessEnhancerForSessionId(audioSessionId: Int): Boolean {
-        try {
-            loudnessEnhancer = LoudnessEnhancer(audioSessionId)
-            Timber.tag(TAG).d("LoudnessEnhancer created for sessionId=$audioSessionId")
-
-            return true
-        } catch (e: Exception) {
-            reportException(e)
-            loudnessEnhancer = null
-
-            return false
-        }
-    }
-
-    private fun setupLoudnessEnhancer() {
-        val audioSessionId = player.audioSessionId
-
-        if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) {
-            Timber
-                .tag(TAG)
-                .w("setupLoudnessEnhancer: invalid audioSessionId ($audioSessionId), cannot create effect yet")
-            return
-        }
-
-        // Create or recreate enhancer if needed
-        if (loudnessEnhancer == null && !createLoudnessEnhancerForSessionId(audioSessionId)) {
-            return
-        }
-
-        val requestGeneration = ++loudnessSetupGeneration
-        loudnessSetupJob?.cancel()
-
-        loudnessSetupJob = scope.launch {
-            try {
-                val currentMediaId =
-                    withContext(Dispatchers.Main) {
-                        player.currentMediaItem?.mediaId
-                    }
-
-                val normalizeAudio = normalizationEnabledCached
-
-                if (normalizeAudio && currentMediaId != null) {
-                    val format =
-                        withContext(Dispatchers.IO) {
-                            database.format(currentMediaId).first()
-                        }
-
-                    val targetLufs = loudnessLevelCached.targetLufs
-
-                    Timber.tag(TAG).d("Audio normalization enabled: $normalizeAudio")
-                    Timber
-                        .tag(TAG)
-                        .d("Format loudnessDb: ${format?.loudnessDb}, perceptualLoudnessDb: ${format?.perceptualLoudnessDb}")
-
-                    // Use perceptualLoudnessDb if available, otherwise fall back to loudnessDb + offset
-                    val measuredLufs: Double? = format?.perceptualLoudnessDb
-                        ?: format?.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs }
-
-                    withContext(Dispatchers.Main) {
-                        if (!isActive || requestGeneration != loudnessSetupGeneration) return@withContext
-                        if (player.audioSessionId != audioSessionId || player.currentMediaItem?.mediaId != currentMediaId) return@withContext
-
-                        when {
-                            measuredLufs != null -> {
-                                val loudnessDb = measuredLufs - targetLufs
-                                val targetGain = (-loudnessDb * 100.0).toInt()
-                                val clampedGain = targetGain.coerceIn(MIN_GAIN_MB, MAX_GAIN_MB)
-
-                                Timber.tag(TAG)
-                                    .d("Normalization Target LUFS: $targetLufs, Measured LUFS: $measuredLufs, Calculated gain: $targetGain mB, Clamped gain: $clampedGain mB")
-
-                                Timber.tag(TAG)
-                                    .d("Calculated raw normalization gain: $targetGain mB (from loudness: $loudnessDb)")
-
-                                cachedNormalizationGainMb = clampedGain
-                                cachedNormalizationEnabled = true
-                                loudnessEnhancer?.setTargetGain(clampedGain)
-                                loudnessEnhancer?.enabled = true
-                            }
-
-                            format == null -> {
-                                // Row not available yet for new track: keep carry-over gain to avoid a jump.
-                                Timber.tag(TAG).d("Loudness row not ready yet; keeping cached normalization state")
-                            }
-
-                            else -> {
-                                cachedNormalizationGainMb = null
-                                cachedNormalizationEnabled = false
-                                loudnessEnhancer?.enabled = false
-                                Timber.tag(TAG).w("No loudness data available for track - normalization disabled")
-                            }
-                        }
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        if (!isActive || requestGeneration != loudnessSetupGeneration) return@withContext
-                        cachedNormalizationGainMb = null
-                        cachedNormalizationEnabled = false
-                        loudnessEnhancer?.enabled = false
-                        Timber.tag(TAG).d("setupLoudnessEnhancer: normalization disabled or mediaId unavailable")
-                    }
-                }
-            } catch (e: CancellationException) {
-                Timber.tag(TAG).d("setupLoudnessEnhancer: job cancelled, likely due to new setup request or session change")
-                throw e
-            } catch (e: Exception) {
-                reportException(e)
-                releaseLoudnessEnhancer()
-            }
-        }
-    }
-
-    private fun releaseLoudnessEnhancer(clearNormalizationCache: Boolean = true) {
-        try {
-            loudnessEnhancer?.release()
-            Timber.tag(TAG).d("LoudnessEnhancer released")
-        } catch (e: Exception) {
-            reportException(e)
-            Timber.tag(TAG).e(e, "Error releasing LoudnessEnhancer: ${e.message}")
-        } finally {
-            if (clearNormalizationCache) {
-                cachedNormalizationGainMb = null
-                cachedNormalizationEnabled = false
-            }
-            loudnessEnhancer = null
-        }
-    }
-
-    private fun openAudioEffectSession() {
-        val audioSessionId = player.audioSessionId
-        if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) {
-            Timber.tag(TAG).w("openAudioEffectSession: invalid audioSessionId=$audioSessionId")
-            return
-        }
-
-        if (isAudioEffectSessionOpened &&
-            openedAudioEffectSessionId == audioSessionId &&
-            loudnessEnhancer != null
-        ) {
-            applyCachedLoudnessEnhancerNow()
-
-            if (!cachedNormalizationEnabled || cachedNormalizationGainMb == null) {
-                setupLoudnessEnhancer()
-            }
-
-            return
-        }
-
-        if (isAudioEffectSessionOpened && openedAudioEffectSessionId > 0) {
-            closeAudioEffectSession(sessionIdOverride = openedAudioEffectSessionId, clearNormalizationCache = false)
-        } else {
-            releaseLoudnessEnhancer(clearNormalizationCache = false)
-        }
-
-        val enhancerReady = loudnessEnhancer != null || createLoudnessEnhancerForSessionId(audioSessionId)
-
-        if (!enhancerReady) {
-            isAudioEffectSessionOpened = false
-            openedAudioEffectSessionId = C.AUDIO_SESSION_ID_UNSET
-            Timber.tag(TAG).w("openAudioEffectSession: failed to create LoudnessEnhancer for sessionId=$audioSessionId, audio effects will be unavailable")
-            return
-        }
-
-        isAudioEffectSessionOpened = true
-        openedAudioEffectSessionId = audioSessionId
-
-        applyCachedLoudnessEnhancerNow()
-
-        if (!cachedNormalizationEnabled || cachedNormalizationGainMb == null) {
-            setupLoudnessEnhancer()
-        }
-
-        sendBroadcast(
-            Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION).apply {
-                putExtra(AudioEffect.EXTRA_AUDIO_SESSION, audioSessionId)
-                putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
-                putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
-            },
-        )
-    }
-
-    private fun closeAudioEffectSession(sessionIdOverride: Int? = null, clearNormalizationCache: Boolean = true) {
-        val sessionIdToClose = sessionIdOverride ?: openedAudioEffectSessionId
-
-        loudnessSetupGeneration++
-        loudnessSetupJob?.cancel()
-        loudnessSetupJob = null
-
-        // Guard: only release/reset state if closing the currently active session
-        val isClosingCurrentSession =
-            isAudioEffectSessionOpened &&
-                    openedAudioEffectSessionId != C.AUDIO_SESSION_ID_UNSET &&
-                    sessionIdToClose == openedAudioEffectSessionId
-
-        if (isClosingCurrentSession) {
-            if (loudnessEnhancer != null) {
-                releaseLoudnessEnhancer(clearNormalizationCache = clearNormalizationCache)
-            }
-
-            isAudioEffectSessionOpened = false
-            openedAudioEffectSessionId = C.AUDIO_SESSION_ID_UNSET
-        }
-
-        // Broadcast close for the requested session (even if stale)
-        if (sessionIdToClose != C.AUDIO_SESSION_ID_UNSET && sessionIdToClose > 0) {
-            sendBroadcast(
-                Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION).apply {
-                    putExtra(AudioEffect.EXTRA_AUDIO_SESSION, sessionIdToClose)
-                    putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
-                },
-            )
-        }
-    }
-
-    private var previousMediaItemIndex = C.INDEX_UNSET
-    private var previousEpisodeId: String? = null
-    private var previousEpisodePosition: Long = 0L
-
-    /**
-     * Save podcast episode playback position to database.
-     * Only saves if the item is an episode and position is meaningful (> 3 seconds).
-     */
-    private fun saveEpisodePosition(
-        episodeId: String,
-        positionMs: Long,
-    ) {
-        if (positionMs < 3000) return // Don't save if less than 3 seconds played
-        scope.launch(Dispatchers.IO + SilentHandler) {
-            database.updatePlaybackPosition(episodeId, positionMs)
-            Timber.tag(TAG).d("Saved episode position: $episodeId at ${positionMs}ms")
-        }
-    }
-
-    /**
-     * Restore podcast episode playback position from database.
-     * Seeks to saved position if available.
-     */
-    private fun restoreEpisodePosition(episodeId: String) {
-        scope.launch(Dispatchers.IO + SilentHandler) {
-            val savedPosition = database.getPlaybackPosition(episodeId)
-            if (savedPosition != null && savedPosition > 0) {
-                withContext(Dispatchers.Main) {
-                    // Only seek if we're still on the same episode
-                    if (player.currentMediaItem?.mediaId == episodeId) {
-                        player.seekTo(savedPosition)
-                        Timber.tag(TAG).d("Restored episode position: $episodeId to ${savedPosition}ms")
-                    }
-                }
-            }
-        }
-    }
-
-    private fun maybeAppendSpotifyAutoplayRecommendations(playAfterAppend: Boolean): Boolean {
-        if (spotifyAutoplayJob?.isActive == true) return true
-
-        val seedMetadata = player.currentMetadata ?: currentMediaMetadata.value ?: return false
-        if (seedMetadata.isEpisode || seedMetadata.isVideoSong) return false
-
-        val seedKey = "${seedMetadata.id}:${player.mediaItemCount}:${if (playAfterAppend) "ended" else "preload"}"
-        if (spotifyAutoplaySeedKey == seedKey) return true
-        spotifyAutoplaySeedKey = seedKey
-
-        spotifyAutoplayJob =
-            scope.launch(SilentHandler) {
-                var startedAppendedPlayback = false
-                try {
-                    if (!dataStore.get(AutoplayKey, true)) return@launch
-                    if (dataStore.get(DisableLoadMoreWhenRepeatAllKey, false) && player.repeatMode == REPEAT_MODE_ALL) return@launch
-                    if (player.repeatMode == REPEAT_MODE_ONE) return@launch
-                    val cookie = dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() } ?: return@launch
-                    val webPlayerRecommendationsOnly = spotifyListeningHistoryAllowedFor(seedMetadata)
-                    val queueContext = player.mediaItems.mapNotNull { it.metadata }
-                    val existingIds = player.mediaItems.map { it.mediaId }.toSet()
-                    val existingFingerprints = player.mediaItems.mapNotNull { it.spotifyAutoplayFingerprint() }.toSet()
-                    val recommendations =
-                        withContext(Dispatchers.IO) {
-                            SpotifyCanvasClient.resolveAutoplayRecommendations(
-                                mediaMetadata = seedMetadata,
-                                cookie = cookie,
-                                context = queueContext,
-                                title = queueTitle,
-                                limit = 30,
-                                webPlayerOnly = webPlayerRecommendationsOnly,
-                                deviceName = getString(R.string.spotify_listening_history_device_name),
-                            )
-                        }
-                            .map(SongItem::toMediaItem)
-                            .filterExplicit(dataStore.get(HideExplicitKey, false))
-                            .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
-                            .filterNot { mediaItem ->
-                                mediaItem.mediaId in existingIds ||
-                                        mediaItem.spotifyAutoplayFingerprint()?.let { it in existingFingerprints } == true
-                            }
-
-                    if (recommendations.isEmpty() || player.playbackState == STATE_IDLE) return@launch
-
-                    val firstRecommendationIndex = player.mediaItemCount
-                    val shouldStartFirstRecommendation =
-                        playAfterAppend && player.playbackState == Player.STATE_ENDED && !player.hasNextMediaItem()
-                    player.addMediaItems(recommendations)
-                    if (player.shuffleModeEnabled) {
-                        val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-                    }
-
-                    if (shouldStartFirstRecommendation) {
-                        player.seekTo(firstRecommendationIndex, 0)
-                        player.prepare()
-                        if (castConnectionHandler?.isCasting?.value != true) {
-                            player.play()
-                        }
-                        startedAppendedPlayback = true
-                    }
-                } finally {
-                    if (
-                        playAfterAppend &&
-                        !startedAppendedPlayback &&
-                        player.playbackState == Player.STATE_ENDED &&
-                        !player.hasNextMediaItem()
-                    ) {
-                        spotifyListeningHistoryManager?.onSongStop()
-                    }
-                }
-            }
-        return true
-    }
-
-    private fun syncSpotifyAutoplayQueue(seedMetadata: MediaMetadata) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            scope.launch {
-                syncSpotifyAutoplayQueue(seedMetadata)
-            }
-            return
-        }
-        if (spotifyAutoplayJob?.isActive == true) return
-        if (seedMetadata.isEpisode || seedMetadata.isVideoSong) return
-
-        val seedKey = "${seedMetadata.id}:${player.currentMediaItemIndex}:web-player-queue"
-        if (spotifyAutoplaySeedKey == seedKey) return
-        spotifyAutoplaySeedKey = seedKey
-
-        spotifyAutoplayJob =
-            scope.launch(SilentHandler) {
-                if (!dataStore.get(AutoplayKey, true)) return@launch
-                if (!spotifyListeningHistoryAllowedFor(seedMetadata)) return@launch
-                if (player.playbackState == STATE_IDLE || player.mediaItemCount == 0) return@launch
-
-                val seedMediaId = seedMetadata.id
-                val currentIndex = player.currentMediaItemIndex
-                if (currentIndex !in 0 until player.mediaItemCount) return@launch
-
-                val activeMediaId =
-                    currentMediaMetadata.value?.id
-                        ?: player.currentMetadata?.id
-                        ?: player.currentMediaItem?.mediaId
-                if (activeMediaId != seedMediaId) return@launch
-
-                if (currentSpotifyPlaybackContextUri() != null && player.hasNextMediaItem()) {
-                    return@launch
-                }
-
-                val protectedItems =
-                    (0..currentIndex)
-                        .map { player.getMediaItemAt(it) }
-                val protectedIds = protectedItems.map { it.mediaId }.toSet()
-                val protectedFingerprints = protectedItems.mapNotNull { it.spotifyAutoplayFingerprint() }.toSet()
-                val cookie = dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() } ?: return@launch
-                val recommendations =
-                    withContext(Dispatchers.IO) {
-                        SpotifyCanvasClient.resolveAutoplayRecommendations(
-                            mediaMetadata = seedMetadata,
-                            cookie = cookie,
-                            context = protectedItems.mapNotNull { it.metadata },
-                            title = queueTitle,
-                            limit = 30,
-                            webPlayerOnly = true,
-                            deviceName = getString(R.string.spotify_listening_history_device_name),
-                        )
-                    }.map(SongItem::toMediaItem)
-                        .filterExplicit(dataStore.get(HideExplicitKey, false))
-                        .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
-                        .filterNot { mediaItem ->
-                            mediaItem.mediaId in protectedIds ||
-                                    mediaItem.spotifyAutoplayFingerprint()?.let { it in protectedFingerprints } == true
-                        }.distinctBy { it.spotifyAutoplayFingerprint() ?: it.mediaId }
-
-                if (recommendations.isEmpty() || player.playbackState == STATE_IDLE) return@launch
-
-                val stillActiveMediaId =
-                    currentMediaMetadata.value?.id
-                        ?: player.currentMetadata?.id
-                        ?: player.currentMediaItem?.mediaId
-                val stillCurrentIndex = player.currentMediaItemIndex
-                if (
-                    stillActiveMediaId != seedMediaId ||
-                    stillCurrentIndex !in 0 until player.mediaItemCount
-                ) {
-                    return@launch
-                }
-
-                val insertIndex = stillCurrentIndex + 1
-                if (insertIndex < player.mediaItemCount) {
-                    player.removeMediaItems(insertIndex, player.mediaItemCount)
-                }
-                player.addMediaItems(insertIndex, recommendations)
-                player.prepare()
-                if (player.shuffleModeEnabled) {
-                    val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                    applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-                }
-                automixItems.value = emptyList()
-            }
-    }
-
-    private fun refreshSpotifyAutoplayPreview(seedMetadata: MediaMetadata) {
-        if (seedMetadata.isEpisode || seedMetadata.isVideoSong) return
-        val seedMediaId = seedMetadata.id
-        spotifyAutoplayPreviewJob?.cancel()
-        spotifyAutoplayPreviewJob =
-            scope.launch(SilentHandler) {
-                if (!dataStore.get(SimilarContent, true)) return@launch
-                if (!dataStore.get(AutoplayKey, true)) return@launch
-                val cookie = dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() } ?: return@launch
-                val webPlayerRecommendationsOnly = spotifyListeningHistoryAllowedFor(seedMetadata)
-                val recommendations =
-                    withContext(Dispatchers.IO) {
-                        SpotifyCanvasClient.resolveAutoplayRecommendations(
-                            mediaMetadata = seedMetadata,
-                            cookie = cookie,
-                            context = listOf(seedMetadata),
-                            title = queueTitle,
-                            limit = 30,
-                            webPlayerOnly = webPlayerRecommendationsOnly,
-                            deviceName = getString(R.string.spotify_listening_history_device_name),
-                        )
-                    }.map(SongItem::toMediaItem)
-                        .filterExplicit(dataStore.get(HideExplicitKey, false))
-                        .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
-                        .filterNot { it.mediaId == seedMediaId }
-                        .distinctBy { it.spotifyAutoplayFingerprint() ?: it.mediaId }
-
-                val activeMediaId =
-                    currentMediaMetadata.value?.id
-                        ?: player.currentMetadata?.id
-                        ?: player.currentMediaItem?.mediaId
-                if (
-                    activeMediaId == seedMediaId &&
-                    (recommendations.isNotEmpty() || webPlayerRecommendationsOnly)
-                ) {
-                    automixItems.value = recommendations
-                }
-            }
-    }
-
-    private fun MediaItem.spotifyAutoplayFingerprint(): String? {
-        val metadata = metadata ?: return null
-        val title = metadata.title.spotifyAutoplayNormalize()
-        if (title.isBlank()) return null
-        val artist = metadata.artists.firstOrNull()?.name.orEmpty().spotifyAutoplayNormalize()
-        return "$title::$artist"
-    }
-
-    private fun String.spotifyAutoplayNormalize(): String =
-        lowercase()
-            .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
-            .replace(Regex("\\b(feat\\.?|ft\\.?|with)\\b"), " ")
-            .replace(Regex("[^a-z0-9]+"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-
-    private suspend fun reportYouTubeMusicHistoryPlayback(
-        videoId: String,
-        playedSeconds: Double,
-    ): Boolean =
-        withContext(Dispatchers.IO) {
-            val trackingClients = configuredYouTubeMusicHistoryTrackingClients()
-            val registrationResolution =
-                resolveWithYouTubeClientFallback(trackingClients) { client ->
-                    val playerResponse =
-                        YouTube
-                            .player(videoId, client = client)
-                            .onFailure { error ->
-                                Timber.tag(TAG).w(
-                                    error,
-                                    "YouTube Music player request failed for %s with %s",
-                                    videoId,
-                                    client.clientName,
-                                )
-                            }.getOrNull()
-                    val tracking =
-                        playerResponse
-                            ?.playbackTracking
-                            ?.takeIf {
-                                !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() &&
-                                    !it.videostatsWatchtimeUrl?.baseUrl.isNullOrBlank()
-                            }
-                    if (tracking == null) {
-                        Timber.tag(TAG).d(
-                            "YouTube Music player returned no usable tracking for %s with %s",
-                            videoId,
-                            client.clientName,
-                        )
-                        return@resolveWithYouTubeClientFallback null
-                    }
-                    Timber.tag(TAG).d(
-                        "YouTube Music tracking resolved for %s with %s",
-                        videoId,
-                        client.clientName,
-                    )
-                    YouTube
-                        .registerPlaybackTracking(
-                            playbackTracking = tracking,
-                            playedSeconds = playedSeconds,
-                            client = client,
-                        ).onFailure { error ->
-                            Timber.tag(TAG).w(
-                                error,
-                                "YouTube Music tracking request failed for %s with %s",
-                                videoId,
-                                client.clientName,
-                            )
-                        }.getOrNull()
-                }
-
-            if (registrationResolution != null) {
-                youtubeMusicHistoryFailureNotified = false
-                Timber.tag(TAG).d(
-                    "YouTube Music history tracking accepted for %s with %s: playback=%d watchtime=%d",
-                    videoId,
-                    registrationResolution.client.clientName,
-                    registrationResolution.value.playbackStatus,
-                    registrationResolution.value.watchtimeStatus,
-                )
-                return@withContext true
-            }
-
-            Timber.tag(TAG).w("All authenticated clients failed YouTube Music history tracking for %s", videoId)
-            if (!youtubeMusicHistoryFailureNotified) {
-                youtubeMusicHistoryFailureNotified = true
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@MusicService,
-                        getString(R.string.youtube_music_history_sync_failed),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-            }
-            false
-        }
-
-    private suspend fun startYouTubeMusicProgressiveHistorySession(
-        videoId: String,
-    ): YouTube.ProgressivePlaybackTrackingSession? =
-        withContext(Dispatchers.IO) {
-            val trackingClients = configuredYouTubeMusicHistoryTrackingClients()
-            val sessionResolution =
-                resolveWithYouTubeClientFallback(trackingClients) { client ->
-                    val tracking =
-                        YouTube
-                            .player(videoId, client = client)
-                            .onFailure { error ->
-                                Timber.tag(TAG).w(
-                                    error,
-                                    "Progressive YouTube Music player request failed for %s with %s",
-                                    videoId,
-                                    client.clientName,
-                                )
-                            }.getOrNull()
-                            ?.playbackTracking
-                            ?.takeIf {
-                                !it.videostatsPlaybackUrl?.baseUrl.isNullOrBlank() &&
-                                    !it.videostatsWatchtimeUrl?.baseUrl.isNullOrBlank()
-                            }
-                            ?: return@resolveWithYouTubeClientFallback null
-
-                    YouTube
-                        .startProgressivePlaybackTracking(
-                            playbackTracking = tracking,
-                            client = client,
-                        ).onFailure { error ->
-                            Timber.tag(TAG).w(
-                                error,
-                                "Progressive YouTube Music session failed for %s with %s",
-                                videoId,
-                                client.clientName,
-                            )
-                        }.getOrNull()
-                }
-
-            sessionResolution?.let { resolution ->
-                resolution.value.also {
-                    youtubeMusicHistoryFailureNotified = false
-                    Timber.tag(TAG).d(
-                        "Progressive YouTube Music session started for %s with %s",
-                        videoId,
-                        resolution.client.clientName,
-                    )
-                }
-            }
-        }
-
-    private fun configuredYouTubeMusicHistoryTrackingClients(): List<YouTubeClient> =
-        youTubeMusicHistoryTrackingClients(
-            useWebRemix = dataStore.get(ExperimentalYouTubeMusicHistoryWebRemixKey, false),
-            useAndroidMusic = dataStore.get(ExperimentalYouTubeMusicHistoryAndroidMusicKey, false),
-            useWeb = dataStore.get(ExperimentalYouTubeMusicHistoryWebKey, false),
-        )
-
-    private suspend fun reportYouTubeMusicProgressiveHistoryProgress(
-        session: YouTube.ProgressivePlaybackTrackingSession,
-        fromSeconds: Double,
-        toSeconds: Double,
-        state: String,
-    ): Boolean =
-        withContext(Dispatchers.IO) {
-            YouTube
-                .reportProgressivePlaybackTracking(
-                    session = session,
-                    fromSeconds = fromSeconds,
-                    toSeconds = toSeconds,
-                    state = state,
-                ).onFailure { error ->
-                    Timber.tag(TAG).w(
-                        error,
-                        "Progressive YouTube Music heartbeat failed at %.2f seconds (%s)",
-                        toSeconds,
-                        state,
-                    )
-                }.getOrNull()
-                ?.also { status ->
-                    Timber.tag(TAG).d(
-                        "Progressive YouTube Music heartbeat accepted: status=%d position=%.2f state=%s",
-                        status,
-                        toSeconds,
-                        state,
-                    )
-                } != null
-        }
-
-    override fun onMediaItemTransition(
-        mediaItem: MediaItem?,
-        reason: Int,
-    ) {
-        if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-            skipTidalLiveManifestOnceMediaIds.clear()
-        }
-
-        // Save previous episode position if it was an episode
-        previousEpisodeId?.let { episodeId ->
-            if (previousEpisodePosition > 0) {
-                saveEpisodePosition(episodeId, previousEpisodePosition)
-            }
-        }
-        previousEpisodeId = null
-        previousEpisodePosition = 0L
-
-        // Check if new item is an episode and restore its position
-        val newMetadata = mediaItem?.metadata
-        val transitionedMetadata = newMetadata ?: player.currentMetadata
-        currentMediaMetadata.value = transitionedMetadata
-        val transitionedMediaId = newMetadata?.id ?: mediaItem?.mediaId
-        currentPlaybackFormat.value = null
-        currentLivePlaybackBitrate.value = null
-        lastLivePlaybackBitrateUpdateMs = 0L
-        refreshCurrentPlaybackFormatFromDatabase(transitionedMediaId)
-        updateCurrentAudioFormatFromTracks(player.currentTracks)
-        transitionedMediaId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { mediaId ->
-                scheduleAudioFormatRetry(mediaId)
-                scheduleAudioFormatRefresh(mediaId)
-            }
-        if (newMetadata?.isEpisode == true) {
-            previousEpisodeId = newMetadata.id
-            // Delay restoration to let playback start
-            scope.launch {
-                delay(100)
-                restoreEpisodePosition(newMetadata.id)
-            }
-        }
-
-        // Force Repeat One if the player ignored it and auto-advanced
-        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-            if (player.repeatMode == REPEAT_MODE_ONE &&
-                previousMediaItemIndex != C.INDEX_UNSET &&
-                previousMediaItemIndex != player.currentMediaItemIndex
-            ) {
-                player.seekTo(previousMediaItemIndex, 0)
-            }
-        }
-        previousMediaItemIndex = player.currentMediaItemIndex
-
-        lastPlaybackSpeed = -1.0f
-        discordUpdateJob?.cancel()
-        setupLoudnessEnhancer()
-
-        val transitionDuration = currentPlaybackDurationIfReady()
-        scrobbleManager?.onSongStop()
-        youtubeMusicHistorySyncManager.onSongStop()
-        youtubeMusicProgressiveHistorySyncManager.onSongStop()
-        if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
-            scrobbleManager?.onSongStart(transitionedMetadata, duration = transitionDuration)
-            youtubeMusicHistorySyncManager.onSongStart(transitionedMetadata, durationMs = transitionDuration)
-            youtubeMusicProgressiveHistorySyncManager.onSongStart(
-                transitionedMetadata,
-                durationMs = transitionDuration,
-            )
-        }
-        if (player.playWhenReady && player.playbackState == Player.STATE_READY && transitionedMetadata != null) {
-            scope.launch {
-                database.song(transitionedMetadata.id).first()?.let { song ->
-                    updateDiscordRPC(song)
-                }
-            }
-        }
-        startSpotifyListeningHistoryIfAllowed(
-            metadata = transitionedMetadata,
-            duration = transitionDuration,
-        )
-
-        // Sync Cast when media changes and Cast is connected
-        // Skip if this change was triggered by Cast sync (to prevent loops)
-        if (castConnectionHandler?.isCasting?.value == true &&
-            castConnectionHandler?.isSyncingFromCast != true &&
-            mediaItem != null
-        ) {
-            val metadata = mediaItem.metadata
-            if (metadata != null) {
-                // Try to navigate to the item if it's already in Cast queue
-                // This avoids a full reload which causes the widget to refresh
-                val navigated = castConnectionHandler?.navigateToMediaIfInQueue(metadata.id) ?: false
-                if (!navigated) {
-                    // Item not in Cast queue, need to reload
-                    castConnectionHandler?.loadMedia(metadata)
-                }
-            }
-        }
-
-        // Auto load more songs from queue
-        if (cachedAutoLoadMore &&
-            reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
-            player.mediaItemCount - player.currentMediaItemIndex <= 5 &&
-            currentQueue.hasNextPage() &&
-            !(cachedDisableLoadMoreWhenRepeatAll && player.repeatMode == REPEAT_MODE_ALL)
-        ) {
-            scope.launch(SilentHandler) {
-                val mediaItems =
-                    withContext(Dispatchers.IO) {
-                        currentQueue
-                            .nextPage()
-                            .filterExplicit(cachedHideExplicit)
-                            .filterVideoSongs(cachedHideVideoSongs)
-                    }
-                if (player.playbackState != STATE_IDLE && mediaItems.isNotEmpty()) {
-                    player.addMediaItems(mediaItems)
-                    if (player.shuffleModeEnabled) {
-                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, cachedShufflePlaylistFirst)
-                    }
-                }
-            }
-        }
-
-        if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
-            player.mediaItemCount > 0 &&
-            player.currentMediaItemIndex >= player.mediaItemCount - 1 &&
-            !currentQueue.hasNextPage()
-        ) {
-            maybeAppendSpotifyAutoplayRecommendations(playAfterAppend = false)
-        }
-
-        // Save state when media item changes
-        if (cachedPersistentQueue) {
-            saveQueueToDisk()
-        }
-    }
-
-    override fun onPlaybackStateChanged(
-        @Player.State playbackState: Int,
-    ) {
-        var advancedFromEnded = false
-
-        // Handle autoplay - skip to next song when playback ends
-        if (playbackState == Player.STATE_ENDED) {
-            // Check sleep timer guard - don't autoplay/repeat if sleep timer will pause
-            if (sleepTimer.isActive && sleepTimer.pauseWhenSongEnd) {
-                return
-            }
-
-            val repeatMode = player.repeatMode
-
-            // Handle Repeat All mode
-            if (repeatMode == REPEAT_MODE_ALL && player.mediaItemCount > 0) {
-                player.seekTo(0, 0)
-                player.prepare()
-                player.play()
-                return
-            }
-
-            // Handle Repeat One mode - restart current song
-            if (repeatMode == REPEAT_MODE_ONE) {
-                player.seekTo(player.currentMediaItemIndex, 0)
-                player.prepare()
-                player.play()
-                return
-            }
-
-            // Handle autoplay - check if there's a next item to play
-            if (cachedAutoplay && player.hasNextMediaItem()) {
-                player.seekToNextMediaItem()
-                player.prepare()
-                advancedFromEnded = true
-                if (castConnectionHandler?.isCasting?.value != true) {
-                    player.play()
-                }
-            } else if (cachedAutoplay) {
-                advancedFromEnded = maybeAppendSpotifyAutoplayRecommendations(playAfterAppend = true)
-            }
-        }
-
-        // Save state when playback state changes (but not during silence skipping)
-        if (cachedPersistentQueue && !isSilenceSkipping) {
-            saveQueueToDisk()
-        }
-
-        if (playbackState == Player.STATE_READY) {
-            consecutivePlaybackErr = 0
-            retryCount = 0
-            waitingForNetworkConnection.value = false
-            retryJob?.cancel()
-            currentMediaMetadata.value = player.currentMetadata
-            updateCurrentAudioFormatFromTracks(player.currentTracks)
-            player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let { mediaId ->
-                refreshCurrentPlaybackFormatFromDatabase(mediaId)
-                scheduleAudioFormatRetry(mediaId)
-                scheduleAudioFormatRefresh(mediaId)
-            }
-
-            // Reset retry count for current song on successful playback
-            player.currentMediaItem?.mediaId?.let { mediaId ->
-                resetRetryCount(mediaId)
-                Timber.tag(TAG).d("Playback successful for $mediaId, reset retry count")
-            }
-            startSpotifyListeningHistoryIfAllowed(
-                metadata = player.currentMetadata,
-                duration = currentPlaybackDurationIfReady(),
-            )
-            if (player.playWhenReady) {
-                youtubeMusicHistorySyncManager.onSongStart(
-                    metadata = player.currentMetadata,
-                    durationMs = currentPlaybackDurationIfReady(),
-                )
-                youtubeMusicProgressiveHistorySyncManager.onSongStart(
-                    metadata = player.currentMetadata,
-                    durationMs = currentPlaybackDurationIfReady(),
-                )
-            }
-            if (player.playWhenReady) {
-                currentSong.value?.let { song ->
-                    updateDiscordRPC(song)
-                }
-            }
-            scheduleCrossfade()
-        }
-
-        if (playbackState == Player.STATE_IDLE || (playbackState == Player.STATE_ENDED && !advancedFromEnded)) {
-            currentLivePlaybackBitrate.value = null
-            lastLivePlaybackBitrateUpdateMs = 0L
-            scrobbleManager?.onSongStop()
-            youtubeMusicHistorySyncManager.onSongStop()
-            youtubeMusicProgressiveHistorySyncManager.onSongStop()
-            discordUpdateJob?.cancel()
-            stopSpotifyListeningHistory()
-        }
-    }
-
-    override fun onPlayWhenReadyChanged(
-        playWhenReady: Boolean,
-        reason: Int,
-    ) {
-        // Safety net: if local player tries to start while casting, immediately pause it
-        if (playWhenReady && castConnectionHandler?.isCasting?.value == true) {
-            player.pause()
-            return
-        }
-
-        if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
-            if (playWhenReady) {
-                isPausedByVolumeMute = false
-            }
-
-            if (!playWhenReady && !isPausedByVolumeMute) {
-                wasPlayingBeforeVolumeMute = false
-            }
-        }
-
-        // Save episode position when pausing
-        if (!playWhenReady) {
-            val currentMetadata = player.currentMediaItem?.metadata
-            if (currentMetadata?.isEpisode == true && player.currentPosition > 0) {
-                saveEpisodePosition(currentMetadata.id, player.currentPosition)
-                previousEpisodePosition = player.currentPosition
-            }
-        }
-
-        if (playWhenReady) {
-            applyCachedLoudnessEnhancerNow()
-        }
-    }
-
-    override fun onEvents(
-        player: Player,
-        events: Player.Events,
-    ) {
-        if (events.containsAny(
-                Player.EVENT_PLAYBACK_STATE_CHANGED,
-                Player.EVENT_PLAY_WHEN_READY_CHANGED,
-            )
-        ) {
-            scheduleCrossfade()
-            val isBufferingOrReady =
-                player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_READY
-            if (isBufferingOrReady && player.playWhenReady) {
-                val focusGranted = requestAudioFocus()
-                if (focusGranted) {
-                    openAudioEffectSession()
-                }
-            } else if (player.playbackState == Player.STATE_IDLE) {
-                closeAudioEffectSession()
-            }
-        }
-        if (events.containsAny(
-                EVENT_TIMELINE_CHANGED,
-                EVENT_POSITION_DISCONTINUITY,
-                Player.EVENT_MEDIA_ITEM_TRANSITION,
-            )
-        ) {
-            currentMediaMetadata.value = player.currentMediaItem?.metadata ?: player.currentMetadata
-        }
-        if (events.containsAny(
-                Player.EVENT_TRACKS_CHANGED,
-                Player.EVENT_MEDIA_ITEM_TRANSITION,
-                Player.EVENT_PLAYBACK_STATE_CHANGED,
-            )
-        ) {
-            updateCurrentAudioFormatFromTracks(player.currentTracks)
-        }
-
-        // Widget updates
-        if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
-            updateWidgetUI(player.isPlaying)
-            if (player.isPlaying) {
-                startWidgetUpdates()
-            } else {
-                stopWidgetUpdates()
-            }
-            if (!player.isPlaying &&
-                !events.containsAny(
-                    Player.EVENT_POSITION_DISCONTINUITY,
-                    Player.EVENT_MEDIA_ITEM_TRANSITION,
-                )
-            ) {
-                scope.launch {
-                    DiscordRpcManager.clear()
-                }
-            }
-        }
-
-        if (events.containsAny(
-                Player.EVENT_MEDIA_ITEM_TRANSITION,
-                Player.EVENT_IS_PLAYING_CHANGED,
-            ) && player.isPlaying
-        ) {
-            val mediaId = player.currentMediaItem?.metadata?.id ?: currentMediaMetadata.value?.id ?: player.currentMetadata?.id
-            if (mediaId != null) {
-                scope.launch {
-                    database.song(mediaId).first()?.let { song ->
-                        updateDiscordRPC(song)
-                    }
-                }
-            }
-        }
-
-        // Scrobbling
-        if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
-            scrobbleManager?.onPlayerStateChanged(
-                player.isPlaying,
-                player.currentMetadata,
-                duration = currentPlaybackDurationIfReady(),
-            )
-            if (player.isPlaying) {
-                youtubeMusicHistorySyncManager.onSongStart(
-                    metadata = player.currentMetadata,
-                    durationMs = currentPlaybackDurationIfReady(),
-                )
-                youtubeMusicProgressiveHistorySyncManager.onSongStart(
-                    metadata = player.currentMetadata,
-                    durationMs = currentPlaybackDurationIfReady(),
-                )
-            } else {
-                youtubeMusicHistorySyncManager.onSongPause()
-                youtubeMusicProgressiveHistorySyncManager.onSongPause()
-            }
-        }
-        if (
-            events.containsAny(
-                Player.EVENT_IS_PLAYING_CHANGED,
-                Player.EVENT_PLAY_WHEN_READY_CHANGED,
-                Player.EVENT_PLAYBACK_STATE_CHANGED,
-                Player.EVENT_MEDIA_ITEM_TRANSITION,
-            )
-        ) {
-            val spotifyMetadata = player.currentMediaItem?.metadata ?: currentMediaMetadata.value ?: player.currentMetadata
-            updateSpotifyListeningHistoryPlaybackState(
-                metadata = spotifyMetadata,
-                duration = currentPlaybackDurationIfReady(),
-            )
-        }
-    }
-
-    override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-        super<Player.Listener>.onPlaybackParametersChanged(playbackParameters)
-        if (playbackParameters.speed != lastPlaybackSpeed) {
-            lastPlaybackSpeed = playbackParameters.speed
-            discordUpdateJob?.cancel()
-            discordUpdateJob =
-                scope.launch {
-                    delay(1000)
-                    if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
-                        currentSong.value?.let { song ->
-                            updateDiscordRPC(song)
-                        }
-                    }
-                }
-        }
-    }
-
-    private fun currentPlaybackDurationIfReady(): Long? =
-        player.duration
-            .takeIf {
-                player.playbackState == Player.STATE_READY &&
-                        it != C.TIME_UNSET &&
-                        it > 0L
-            }
-
-    private fun spotifyHistoryPlaybackActive(): Boolean =
-        player.playWhenReady &&
-                player.playbackState != Player.STATE_IDLE &&
-                player.playbackState != Player.STATE_ENDED
-
-    private fun currentSpotifyPlaybackContextUri(): String? = currentQueue.playbackContextUri
-
-    private fun spotifyListeningHistoryAllowedFor(metadata: MediaMetadata?): Boolean {
-        if (!spotifyListeningHistoryEnabledValue) return false
-        if (spotifyListeningHistoryGlobalValue) return true
-        return currentSpotifyPlaybackContextUri()?.startsWith("spotify:", ignoreCase = true) == true ||
-                metadata?.id?.isSpotifyTrackPlaybackId() == true ||
-                player.currentMediaItem?.mediaId?.isSpotifyTrackPlaybackId() == true
-    }
-
-    private fun String.isSpotifyTrackPlaybackId(): Boolean =
-        startsWith("spotify:track:", ignoreCase = true)
-
-    private fun startSpotifyListeningHistoryIfAllowed(
-        metadata: MediaMetadata?,
-        duration: Long?,
-    ) {
-        val manager = spotifyListeningHistoryManager ?: return
-        if (!player.playWhenReady) {
-            stopSpotifyListeningHistory()
-            return
-        }
-        if (!spotifyListeningHistoryAllowedFor(metadata)) {
-            stopSpotifyListeningHistory()
-            return
-        }
-        spotifyListeningHistorySourceAllowed = true
-        manager.onSongStart(
-            metadata = metadata,
-            duration = duration,
-            playbackContextUri = currentSpotifyPlaybackContextUri(),
-        )
-    }
-
-    private fun updateSpotifyListeningHistoryPlaybackState(
-        metadata: MediaMetadata?,
-        duration: Long?,
-    ) {
-        val manager = spotifyListeningHistoryManager ?: return
-        val allowed = spotifyListeningHistoryAllowedFor(metadata)
-        if (!allowed) {
-            stopSpotifyListeningHistory()
-            return
-        }
-        spotifyListeningHistorySourceAllowed = true
-        manager.onPlayerStateChanged(
-            isPlaying = spotifyHistoryPlaybackActive(),
-            metadata = metadata,
-            duration = duration,
-            playbackContextUri = currentSpotifyPlaybackContextUri(),
-        )
-    }
-
-    private fun stopSpotifyListeningHistory() {
-        spotifyListeningHistoryManager?.onSongStop()
-        spotifyListeningHistorySourceAllowed = false
-    }
-
-    private fun seekSpotifyListeningHistoryIfAllowed(
-        positionMs: Long,
-        isPlaying: Boolean,
-        metadata: MediaMetadata?,
-        duration: Long?,
-    ) {
-        if (!spotifyListeningHistoryAllowedFor(metadata)) {
-            stopSpotifyListeningHistory()
-            return
-        }
-        spotifyListeningHistorySourceAllowed = true
-        spotifyListeningHistoryManager?.onSeek(
-            positionMs = positionMs,
-            isPlaying = isPlaying,
-            metadata = metadata,
-            duration = duration,
-            playbackContextUri = currentSpotifyPlaybackContextUri(),
-        )
-    }
-
-    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
-        updateNotification()
-        if (shuffleModeEnabled) {
-            // If queue is empty, don't shuffle
-            if (player.mediaItemCount == 0) return
-
-            val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-            val currentIndex = player.currentMediaItemIndex
-            val totalCount = player.mediaItemCount
-
-            applyShuffleOrder(currentIndex, totalCount, shufflePlaylistFirst)
-        }
-
-        // Save shuffle mode to preferences
-        if (dataStore.get(RememberShuffleAndRepeatKey, true)) {
-            scope.launch {
-                dataStore.edit { settings ->
-                    settings[ShuffleModeKey] = shuffleModeEnabled
-                }
-            }
-        }
-
-        // Save state when shuffle mode changes
-        if (cachedPersistentQueue) {
-            saveQueueToDisk()
-        }
-    }
-
-    override fun onRepeatModeChanged(repeatMode: Int) {
-        updateNotification()
-        scope.launch {
-            dataStore.edit { settings ->
-                settings[RepeatModeKey] = repeatMode
-            }
-        }
-
-        // Save state when repeat mode changes
-        if (cachedPersistentQueue) {
-            saveQueueToDisk()
-        }
-    }
-
-    /**
-     * Applies a new shuffle order to the player, maintaining the current item's position.
-     * If `shufflePlaylistFirst` is true, it attempts to shuffle original items separately from added items.
-     */
-    private fun applyShuffleOrder(
-        currentIndex: Int,
-        totalCount: Int,
-        shufflePlaylistFirst: Boolean,
-    ) {
-        if (totalCount == 0) return
-
-        if (shufflePlaylistFirst && originalQueueSize > 0 && originalQueueSize < totalCount) {
-            // Shuffle original items and added items separately
-            val originalIndices = (0 until originalQueueSize).filter { it != currentIndex }.toMutableList()
-            val addedIndices = (originalQueueSize until totalCount).filter { it != currentIndex }.toMutableList()
-
-            originalIndices.shuffle()
-            addedIndices.shuffle()
-
-            val shuffledIndices = IntArray(totalCount)
-            var pos = 0
-            shuffledIndices[pos++] = currentIndex
-
-            if (currentIndex < originalQueueSize) {
-                originalIndices.forEach { shuffledIndices[pos++] = it }
-                addedIndices.forEach { shuffledIndices[pos++] = it }
-            } else {
-                (0 until originalQueueSize).shuffled().forEach { shuffledIndices[pos++] = it }
-                addedIndices.forEach { shuffledIndices[pos++] = it }
-            }
-            player.setShuffleOrder(DefaultShuffleOrder(shuffledIndices, System.currentTimeMillis()))
-        } else {
-            val shuffledIndices = IntArray(totalCount) { it }
-            shuffledIndices.shuffle()
-            // Ensure current item is first in the shuffle order
-            val currentItemIndexInShuffled = shuffledIndices.indexOf(currentIndex)
-            if (currentItemIndexInShuffled != -1) { // Should always be true if totalCount > 0
-                val temp = shuffledIndices[0]
-                shuffledIndices[0] = shuffledIndices[currentItemIndexInShuffled]
-                shuffledIndices[currentItemIndexInShuffled] = temp
-            }
-            player.setShuffleOrder(DefaultShuffleOrder(shuffledIndices, System.currentTimeMillis()))
-        }
-    }
-
-    /**
-     * Extracts the HTTP response code from an error's cause chain.
-     * Returns null if no HTTP response code is found.
-     */
-    private fun getHttpResponseCode(error: PlaybackException): Int? {
-        var cause: Throwable? = error.cause
-        while (cause != null) {
-            if (cause is HttpDataSource.InvalidResponseCodeException) {
-                return cause.responseCode
-            }
-            cause = cause.cause
-        }
-        return null
-    }
-
-    /**
-     * Checks if the error is caused by an expired/forbidden URL (HTTP 403).
-     * This typically happens when a YouTube stream URL expires.
-     */
-    private fun isExpiredUrlError(error: PlaybackException): Boolean {
-        val responseCode = getHttpResponseCode(error)
-        return responseCode == 403
-    }
-
-    private fun isGoneUrlError(error: PlaybackException): Boolean {
-        val responseCode = getHttpResponseCode(error)
-        return responseCode == 410
-    }
-
-    /**
-     * Checks if the error is a Range Not Satisfiable error (HTTP 416).
-     * This happens when cached data doesn't match the actual stream size.
-     */
-    private fun isRangeNotSatisfiableError(error: PlaybackException): Boolean {
-        val responseCode = getHttpResponseCode(error)
-        return responseCode == 416
-    }
-
-    /**
-     * Checks if the error is a "page needs to be reloaded" error.
-     * This is a YouTube-specific error that requires refreshing the stream.
-     */
-    private fun isPageReloadError(error: PlaybackException): Boolean {
-        val errorMessage = error.message?.lowercase() ?: ""
-        val causeMessage = error.cause?.message?.lowercase() ?: ""
-        val innerCauseMessage =
-            error.cause
-                ?.cause
-                ?.message
-                ?.lowercase() ?: ""
-
-        val reloadKeywords =
-            listOf(
-                "page needs to be reloaded",
-                "pagina deve essere ricaricata",
-                "la pagina deve essere ricaricata",
-                "page must be reloaded",
-                "reload",
-                "ricaricata",
-            )
-
-        return reloadKeywords.any { keyword ->
-            errorMessage.contains(keyword) ||
-                    causeMessage.contains(keyword) ||
-                    innerCauseMessage.contains(keyword)
-        }
-    }
-
-    private fun isNetworkRelatedError(error: PlaybackException): Boolean {
-        // Don't treat specific errors as network errors - they need special handling
-        if (isExpiredUrlError(error) || isGoneUrlError(error) || isRangeNotSatisfiableError(error) || isPageReloadError(error)) {
-            return false
-        }
-        return error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
-                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
-                error.errorCode == PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE ||
-                error.cause is java.net.ConnectException ||
-                error.cause is java.net.UnknownHostException ||
-                (error.cause as? PlaybackException)?.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
-    }
-
-    /**
-     * Checks if the error is caused by AudioTrack write or initialization failures.
-     * These errors indicate the audio renderer is in a corrupted/invalid state.
-     */
-    private fun isAudioRendererError(error: PlaybackException): Boolean =
-        error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
-                error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
-                (error.cause as? PlaybackException)?.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
-                (error.cause as? PlaybackException)?.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED
-
-    private fun isTidalSourceRoutingError(error: PlaybackException): Boolean =
-        error.containsInCauseChain("TIDAL stream was resolved after Media3 selected a DASH source") ||
-                error.containsInCauseChain("403 Forbidden") ||
-                error.containsInCauseChain("410 Gone") ||
-                error.containsInCauseChain("416 Range Not Satisfiable") ||
-                (
-                        isCurrentTidalLiveManifestPlayback() &&
-                                error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED &&
-                                (
-                                        error.containsInCauseChain("ftypisom") ||
-                                                error.containsInCauseChain("Unexpected token")
-                                        )
-                        )
-
-    private fun CachedSongStream.isFallbackStream(mediaId: String): Boolean =
-        cacheKey == qobuzFallbackCacheKey(mediaId) ||
-                isTidalFallbackCacheKey(cacheKey) ||
-                cacheKey == deezerFallbackCacheKey(mediaId) ||
-                cacheKey == soundCloudFallbackCacheKey(mediaId) ||
-                cacheKey == instagramFallbackCacheKey(mediaId) ||
-                cacheKey == directHttpAudioCacheKey(mediaId) ||
-                cacheKey == youtubeFallbackCacheKey(mediaId)
-
-    private fun Throwable.containsInCauseChain(fragment: String): Boolean {
-        var current: Throwable? = this
-        while (current != null) {
-            if (current.message?.contains(fragment, ignoreCase = true) == true) return true
-            current = current.cause
-        }
-        return false
-    }
-
-    /**
-     * Checks if the error is an IO_FILE_NOT_FOUND (ENOENT).
-     *
-     * In practice this surfaces when the player cache reports a chunk as cached
-     * but the backing file has been evicted/removed (e.g. LRU eviction racing
-     * with a buffer read, an external cache wipe, or partial corruption).
-     * CacheDataSource then falls back to the upstream DefaultDataSource with a
-     * URI that is just the bare mediaId (no scheme), which is interpreted as a
-     * local file path and fails to open.
-     */
-    private fun isFileNotFoundError(error: PlaybackException): Boolean =
-        error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
-                (error.cause as? PlaybackException)?.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND
-
-    private fun isPrematureStreamEndError(error: PlaybackException): Boolean =
-        error.containsInCauseChain("unexpected end of stream") ||
-                error.hasCauseOfType(java.net.ProtocolException::class.java)
-
-    private fun Throwable.hasCauseOfType(type: Class<out Throwable>): Boolean {
-        var current: Throwable? = this
-        while (current != null) {
-            if (type.isInstance(current)) return true
-            current = current.cause
-        }
-        return false
-    }
-
-    override fun onPlayerError(error: PlaybackException) {
-        super<Player.Listener>.onPlayerError(error)
-
-        // Safety check : ensuring player is still initialized
-        if (!playerInitialized.value) {
-            Timber.tag(TAG).e(error, "Player error occurred but player not initialized")
-            return
-        }
-
-        val mediaId = player.currentMediaItem?.mediaId
-        Timber
-            .tag(TAG)
-            .w(error, "Player error occurred for $mediaId: errorCode=${error.errorCode}, message=${error.message}")
-
-        if (!isNetworkConnected.value) {
-            Timber.tag(TAG).d("Playback failed while offline; preserving cached audio for $mediaId")
-            reportException(error)
-            waitOnNetworkError()
-            return
-        }
-
-        if (isTidalSourceRoutingError(error)) {
-            Timber.tag(TAG).d("TIDAL source routing retry needed for $mediaId")
-            handleTidalSourceRoutingRetry(mediaId)
-            return
-        }
-
-        if (dataStore.get(StopOnProviderErrorKey, false)) {
-            Timber.tag(TAG).w("Stop-on-provider-error is enabled; surfacing playback error without retry/fallback")
-            reportException(error)
-            stopOnError()
-            return
-        }
-
-        // Check if this song has failed too many times
-        if (mediaId != null && hasExceededRetryLimit(mediaId)) {
-            Timber.tag(TAG).w("Song $mediaId has exceeded retry limit, skipping")
-            markSongAsFailed(mediaId)
-            handleFinalFailure()
-            return
-        }
-
-        reportException(error)
-
-        if (isCurrentTidalLiveManifestPlayback()) {
-            Timber.tag(TAG).d("TIDAL live manifest playback failed; retrying as progressive stream")
-            handleTidalLiveManifestFailure(mediaId)
-            return
-        }
-
-        // Handle specific error types with strict strategies
-        when {
-            isAudioRendererError(error) -> {
-                Timber.tag(TAG).d("AudioTrack error detected (${error.errorCode}), performing safe recovery")
-                handleAudioRendererError(mediaId)
-                return
-            }
-
-            isRangeNotSatisfiableError(error) -> {
-                Timber.tag(TAG).d("Range Not Satisfiable (416) detected, performing strict recovery")
-                handleRangeNotSatisfiableError(mediaId)
-                return
-            }
-
-            isPageReloadError(error) -> {
-                Timber.tag(TAG).d("Page reload error detected, performing strict recovery")
-                handlePageReloadError(mediaId)
-                return
-            }
-
-            isExpiredUrlError(error) -> {
-                Timber.tag(TAG).d("Expired URL (403) detected, refreshing stream URL")
-                handleExpiredUrlError(mediaId)
-                return
-            }
-
-            isGoneUrlError(error) -> {
-                Timber.tag(TAG).d("Gone URL (410) detected, refreshing stream URL")
-                handleExpiredUrlError(mediaId)
-                return
-            }
-
-            isFileNotFoundError(error) -> {
-                Timber.tag(TAG).d("Cache file missing (ENOENT) detected, refreshing stream")
-                handleFileNotFoundError(mediaId)
-                return
-            }
-
-            isPrematureStreamEndError(error) -> {
-                Timber.tag(TAG).d("Premature stream EOF detected, refreshing stream")
-                handlePrematureStreamEndError(mediaId)
-                return
-            }
-
-            isNetworkRelatedError(error) -> {
-                Timber.tag(TAG).d("Network-related error detected, waiting for connection")
-                waitOnNetworkError()
-                return
-            }
-        }
-
-        // For IO_UNSPECIFIED and IO_BAD_HTTP_STATUS, try recovery first
-        if (error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
-            error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
-        ) {
-            Timber.tag(TAG).d("IO error detected (${error.errorCode}), attempting recovery")
-            handleGenericIOError(mediaId)
-            return
-        }
-
-        // Final fallback
-        if (dataStore.get(AutoSkipNextOnErrorKey, false)) {
-            Timber.tag(TAG).d("Auto-skipping to next track due to unrecoverable error")
-            skipOnError()
-        } else {
-            Timber.tag(TAG).d("Stopping playback due to unrecoverable error")
-            stopOnError()
-        }
-    }
-
-    /**
-     * Performs aggressive cache clearing for a media item.
-     * Clears both player cache and download cache, plus URL cache.
-     */
-    private fun performAggressiveCacheClear(mediaId: String) {
-        Timber.tag(TAG).d("Performing aggressive cache clear for $mediaId")
-
-        invalidateResolvedProviderStream(mediaId)
-
-        try {
-            removeCachedAudio(mediaId)
-            Timber.tag(TAG).d("Cleared cached audio for $mediaId")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to clear cached audio for $mediaId")
-        }
-
-        Timber.tag(TAG).d("Cleared provider resolver caches for $mediaId")
-    }
-
-    private fun showPlaybackToast(message: String) {
-        Handler(Looper.getMainLooper()).post {
-            Toast
-                .makeText(this@MusicService, message, Toast.LENGTH_LONG)
-                .show()
-        }
-    }
-
-    /**
-     * Checks if a song has exceeded the retry limit.
-     */
-    private fun hasExceededRetryLimit(mediaId: String): Boolean {
-        val currentRetries = currentMediaIdRetryCount[mediaId] ?: 0
-        return currentRetries >= MAX_RETRY_PER_SONG
-    }
-
-    /**
-     * Increments the retry count for a song.
-     */
-    private fun incrementRetryCount(mediaId: String) {
-        val currentRetries = currentMediaIdRetryCount[mediaId] ?: 0
-        currentMediaIdRetryCount[mediaId] = currentRetries + 1
-        Timber.tag(TAG).d("Retry count for $mediaId: ${currentRetries + 1}/$MAX_RETRY_PER_SONG")
-    }
-
-    /**
-     * Resets the retry count for a song (called on successful playback).
-     */
-    private fun resetRetryCount(mediaId: String) {
-        currentMediaIdRetryCount.remove(mediaId)
-        recentlyFailedSongs.remove(mediaId)
-        skipTidalLiveManifestOnceMediaIds.remove(mediaId)
-    }
-
-    /**
-     * Marks a song as failed to prevent further retry attempts.
-     */
-    private fun markSongAsFailed(mediaId: String) {
-        recentlyFailedSongs.add(mediaId)
-        currentMediaIdRetryCount.remove(mediaId)
-
-        // Schedule cleanup of failed songs list after 5 minutes
-        failedSongsClearJob?.cancel()
-        failedSongsClearJob =
-            scope.launch {
-                delay(5 * 60 * 1000L) // 5 minutes
-                recentlyFailedSongs.clear()
-                Timber.tag(TAG).d("Cleared recently failed songs list")
-            }
-    }
-
-    /**
-     * Handles AudioTrack errors (write failed, init failed) with safe recovery.
-     * These errors indicate the audio renderer is corrupted and needs careful reset.
-     */
-    private fun handleAudioRendererError(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                try {
-                    // Pause playback immediately to stop the renderer
-                    player.pause()
-                    Timber.tag(TAG).d("Paused playback due to AudioTrack error")
-
-                    // Wait longer for audio renderer to settle before retry
-                    // This prevents the renderer from continuing to fail in a loop
-                    delay(RETRY_DELAY_MS * 3) // 3 seconds instead of 1 second
-
-                    // Check if player is still initialized before attempting recovery
-                    if (!playerInitialized.value) {
-                        Timber.tag(TAG).w("Player no longer initialized, aborting AudioTrack recovery")
-                        return@launch
-                    }
-
-                    val currentIndex = player.currentMediaItemIndex
-                    if (currentIndex != C.INDEX_UNSET) {
-                        // Seek to current position to force a clean audio renderer reinit
-                        val currentPosition = player.currentPosition
-                        player.seekTo(currentIndex, currentPosition)
-                        player.prepare()
-
-                        Timber.tag(TAG).d("Retrying playback for $mediaId after AudioTrack error")
-
-                        // Resume playback if it wasn't paused by user
-                        if (wasPlayingBeforeAudioFocusLoss) {
-                            delay(500) // Brief delay to allow renderer to be ready
-                            if (hasAudioFocus && playerInitialized.value) {
-                                if (castConnectionHandler?.isCasting?.value != true) {
-                                    player.play()
-                                }
-                            }
-                        }
-                    } else {
-                        Timber.tag(TAG).w("Invalid media item index during AudioTrack recovery")
-                        handleFinalFailure()
-                    }
-                } catch (e: Exception) {
-                    Timber.tag(TAG).e(e, "Error during AudioTrack error recovery")
-                    handleFinalFailure()
-                }
-            }
-    }
-
-    /**
-     * Handles Range Not Satisfiable (416) errors with strict recovery.
-     * This error occurs when cached data doesn't match the actual stream size.
-     */
-    private fun handleRangeNotSatisfiableError(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                // Clear all caches aggressively
-                performAggressiveCacheClear(mediaId)
-
-                // Wait before retry
-                delay(RETRY_DELAY_MS)
-
-                // Force re-prepare from position 0 to avoid range issues
-                val currentIndex = player.currentMediaItemIndex
-                player.seekTo(currentIndex, 0)
-                player.prepare()
-
-                Timber.tag(TAG).d("Retrying playback for $mediaId after 416 error (from position 0)")
-            }
-    }
-
-    /**
-     * Handles "page needs to be reloaded" errors with strict recovery.
-     * This requires clearing decryption caches and getting fresh stream URLs.
-     */
-    private fun handlePageReloadError(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                Timber.tag(TAG).d("Handling page reload error for $mediaId")
-
-                invalidateResolvedProviderStream(mediaId)
-
-                // Additional delay for page reload errors as they may be rate-limited
-                delay(RETRY_DELAY_MS * 2)
-
-                // Re-prepare the player
-                val currentPosition = player.currentPosition
-                val currentIndex = player.currentMediaItemIndex
-                player.seekTo(currentIndex, currentPosition)
-                player.prepare()
-
-                Timber.tag(TAG).d("Retrying playback for $mediaId after page reload error")
-            }
-    }
-
-    /**
-     * Handles expired/gone URL (403/410) errors by clearing caches and retrying.
-     */
-    private fun handleExpiredUrlError(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-
-        invalidateResolvedProviderStream(mediaId)
-        Timber.tag(TAG).d("Cleared cached URL for $mediaId")
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                delay(RETRY_DELAY_MS)
-
-                // Seek to current position to force URL re-resolution
-                val currentPosition = player.currentPosition
-                val currentIndex = player.currentMediaItemIndex
-                player.seekTo(currentIndex, currentPosition)
-                player.prepare()
-
-                Timber.tag(TAG).d("Retrying playback for $mediaId after expired/gone URL error")
-            }
-    }
-
-    /**
-     * Handles IO_FILE_NOT_FOUND (ENOENT) by removing the corrupt resource and
-     * forcing the resolver to fetch a fresh stream URL.
-     */
-    private fun handleFileNotFoundError(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-        performAggressiveCacheClear(mediaId)
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                delay(RETRY_DELAY_MS)
-
-                val currentPosition = player.currentPosition
-                val currentIndex = player.currentMediaItemIndex
-                if (currentIndex == C.INDEX_UNSET) {
-                    Timber.tag(TAG).w("Invalid media item index during file-not-found recovery")
-                    handleFinalFailure()
-                    return@launch
-                }
-                player.seekTo(currentIndex, currentPosition)
-                player.prepare()
-
-                Timber.tag(TAG).d("Retrying playback for $mediaId after IO_FILE_NOT_FOUND")
-            }
-    }
-
-    private fun handlePrematureStreamEndError(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                val currentIndex = player.currentMediaItemIndex
-                val currentPosition = player.currentPosition.coerceAtLeast(0L)
-                val shouldResume = player.playWhenReady
-                if (currentIndex == C.INDEX_UNSET) {
-                    handleFinalFailure()
-                    return@launch
-                }
-
-                invalidateResolvedProviderStream(mediaId)
-                delay(250L)
-                player.seekTo(currentIndex, currentPosition)
-                player.prepare()
-                if (shouldResume && castConnectionHandler?.isCasting?.value != true) {
-                    player.play()
-                }
-
-                Timber.tag(TAG).d("Retrying playback for $mediaId after premature stream EOF")
-            }
-    }
-
-    /**
-     * Handles generic IO errors with recovery attempt.
-     */
-    private fun handleGenericIOError(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                invalidateResolvedProviderStream(mediaId)
-                delay(RETRY_DELAY_MS)
-
-                val currentIndex = player.currentMediaItemIndex
-                player.stop()
-                player.prepare()
-
-                Timber.tag(TAG).d("Retrying playback for $mediaId after generic IO error")
-            }
-    }
-
-    private fun isCurrentTidalLiveManifestPlayback(): Boolean {
-        val localConfiguration = player.currentMediaItem?.localConfiguration ?: return false
-        return localConfiguration.mimeType == MimeTypes.APPLICATION_MPD &&
-                (
-                        TidalAudioProvider.isLiveManifestUri(localConfiguration.uri.toString()) ||
-                                localConfiguration.uri.isPendingTidalManifestUri()
-                        )
-    }
-
-    private fun handleTidalLiveManifestFailure(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                val currentIndex = player.currentMediaItemIndex
-                val currentPosition = player.currentPosition.coerceAtLeast(0L)
-                if (currentIndex == C.INDEX_UNSET) {
-                    handleFinalFailure()
-                    return@launch
-                }
-                skipTidalLiveManifestOnceMediaIds.add(mediaId)
-                tidalProgressivePreferredMediaIds.add(mediaId)
-                performAggressiveCacheClear(mediaId)
-                delay(300L)
-                player.seekTo(currentIndex, currentPosition)
-                player.prepare()
-                Timber.tag(TAG).d("Retrying $mediaId as progressive TIDAL stream after live manifest failure")
-            }
-    }
-
-    private fun handleTidalSourceRoutingRetry(mediaId: String?) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        incrementRetryCount(mediaId)
-        skipTidalLiveManifestOnceMediaIds.add(mediaId)
-        tidalProgressivePreferredMediaIds.add(mediaId)
-        clearResolvedStreamCache(mediaId)
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                val currentIndex = player.currentMediaItemIndex
-                val currentPosition = player.currentPosition.coerceAtLeast(0L)
-                if (currentIndex == C.INDEX_UNSET) {
-                    handleFinalFailure()
-                    return@launch
-                }
-                delay(120L)
-                player.seekTo(currentIndex, currentPosition)
-                player.prepare()
-                Timber.tag(TAG).d("Retrying $mediaId as progressive TIDAL stream")
-            }
-    }
-
-    /**
-     * Handles final failure when all recovery attempts have been exhausted.
-     */
-    private fun handleFinalFailure() {
-        if (dataStore.get(ExperimentalConfirmBeforeSkipKey, false)) {
-            Timber.tag(TAG).d("All recovery attempts exhausted; waiting for explicit retry or skip")
-            stopOnError()
-            return
-        }
-        val autoSkipOnError = dataStore.get(AutoSkipNextOnErrorKey, false)
-        val autoplay = dataStore.get(AutoplayKey, true)
-        val canAdvance = player.hasNextMediaItem()
-
-        if (autoSkipOnError || (autoplay && canAdvance)) {
-            Timber.tag(TAG).d("All recovery attempts exhausted, auto-skipping to next track")
-            skipOnError()
-        } else {
-            Timber.tag(TAG).d("All recovery attempts exhausted, stopping playback")
-            stopOnError()
-        }
-    }
-
-    override fun onDeviceVolumeChanged(
-        volume: Int,
-        muted: Boolean,
-    ) {
-        super<Player.Listener>.onDeviceVolumeChanged(volume, muted)
-        val pauseOnMute = dataStore.get(PauseOnMute, false)
-
-        if ((volume == 0 || muted) && pauseOnMute) {
-            if (player.isPlaying) {
-                wasPlayingBeforeVolumeMute = true
-                isPausedByVolumeMute = true
-                player.pause()
-            }
-        } else if (volume > 0 && !muted && pauseOnMute) {
-            if (wasPlayingBeforeVolumeMute && !player.isPlaying && castConnectionHandler?.isCasting?.value != true) {
-                wasPlayingBeforeVolumeMute = false
-                isPausedByVolumeMute = false
-                player.play()
-            }
-        }
-    }
-
-    private fun updateDiscordRPC(
-        song: Song,
-        showFeedback: Boolean = false,
-    ) {
-        if (!discordRpcEnabled) return
-        if (shouldSuppressDiscordRpcForSpotifyHistory()) {
-            suppressDiscordRpcForSpotifyHistory()
-            return
-        }
-        if (!DiscordRpcManager.isInitialized()) {
-            DiscordRpcManager.init()
-        }
-
-        val accessToken = dataStore.get(DiscordAccessTokenKey, "")
-        if (accessToken.isBlank()) {
-            DiscordRpcManager.disconnect()
-            return
-        }
-        if (!DiscordRpcManager.isReady()) {
-            DiscordRpcManager.reconnectWithToken(accessToken)
-        }
-
-        val useDetails = dataStore.get(DiscordUseDetailsKey, false)
-        val showProvider = dataStore.get(DiscordShowProviderKey, true)
-        val showPlaybackDetails = dataStore.get(DiscordShowPlaybackDetailsKey, false)
-        val advancedMode = dataStore.get(DiscordAdvancedModeKey, false)
-
-        val b1Text = if (advancedMode) dataStore.get(DiscordButton1TextKey, "") else ""
-        val b1Visible = if (advancedMode) dataStore.get(DiscordButton1VisibleKey, true) else true
-        val b2Text = if (advancedMode) dataStore.get(DiscordButton2TextKey, "") else ""
-        val b2Visible = if (advancedMode) dataStore.get(DiscordButton2VisibleKey, true) else true
-        val activityName = if (advancedMode) dataStore.get(DiscordActivityNameKey, "") else ""
-        val mediaId = song.song.id
-        val updateGeneration = discordUpdateGeneration.incrementAndGet()
-
-        discordUpdateJob?.cancel()
-        discordUpdateJob =
-            scope.launch(Dispatchers.Main.immediate) {
-                if (discordUpdateGeneration.get() != updateGeneration || currentSong.value?.song?.id != mediaId) {
-                    return@launch
-                }
-                runCatching {
-                    val currentTime = System.currentTimeMillis()
-                    val safePlaybackSpeed = player.playbackParameters.speed.takeIf { it > 0f } ?: 1.0f
-                    val safePlaybackPosition = player.currentPosition.coerceAtLeast(0L)
-                    val adjustedPlaybackTime = (safePlaybackPosition / safePlaybackSpeed).toLong()
-                    val calculatedStartTime = (currentTime - adjustedPlaybackTime) / 1000
-                    val durationMillis =
-                        player.duration
-                            .takeIf { it != C.TIME_UNSET && it > 0L }
-                            ?: song.song.duration
-                                .takeIf { it > 0 }
-                                ?.times(1000L)
-                    val calculatedEndTime =
-                        durationMillis
-                            ?.let { remainingDuration ->
-                                ((remainingDuration - safePlaybackPosition).coerceAtLeast(1000L) / safePlaybackSpeed)
-                                    .toLong()
-                            }?.let { adjustedRemainingDuration ->
-                                (currentTime + adjustedRemainingDuration) / 1000
-                            }
-
-                    val songTitle =
-                        if (safePlaybackSpeed != 1.0f) {
-                            "${song.song.title} [${String.format("%.2fx", safePlaybackSpeed)}]"
-                        } else {
-                            song.song.title
-                        }
-                    val artistNames =
-                        song.orderedArtists
-                            .joinToString { it.name }
-                            .ifBlank { "Unknown Artist" }
-                    val baseName =
-                        activityName
-                            .takeIf { it.isNotBlank() }
-                            ?.let { resolveDiscordRpcVariables(it, song) }
-                            ?: getString(R.string.app_name).removeSuffix(" Debug")
-                    val providerSuffix =
-                        currentDiscordRpcAudioProviderLabel(mediaId)
-                            .takeIf { showProvider }
-                            ?.trim()
-                            ?.takeIf { it.isNotBlank() }
-                            ?.lowercase(Locale.US)
-                            ?.let { " [$it]" }
-                            .orEmpty()
-
-                    val playbackDetails =
-                        if (showPlaybackDetails) {
-                            currentPlaybackFormat.value?.takeIf { it.id == mediaId }?.let { format ->
-                                val bitrateStr =
-                                    if (format.bitrate > 0) {
-                                        "${format.bitrate / 1000} kbps"
-                                    } else {
-                                        null
-                                    }
-                                val sampleRateStr =
-                                    format.sampleRate?.let { "${it / 1000f} kHz" }
-                                listOfNotNull(bitrateStr, sampleRateStr).joinToString(" â€¢ ")
-                            }
-                        } else {
-                            null
-                        }
-
-                    val largeImage = discordRpcLargeImageUrl(song, mediaId)
-                    val firstArtist = song.orderedArtists.firstOrNull()
-                    val activity =
-                        DiscordActivity(
-                            name = "$baseName$providerSuffix",
-                            type = "listening",
-                            details = if (!useDetails) songTitle else artistNames,
-                            state =
-                                if (playbackDetails != null) {
-                                    "$artistNames | $playbackDetails"
-                                } else {
-                                    if (!useDetails) artistNames else songTitle
-                                },
-                            startTimestamp = calculatedStartTime,
-                            endTimestamp = calculatedEndTime,
-                            largeImage = largeImage,
-                            largeText = song.album?.title ?: song.song.albumName,
-                            smallImage = firstArtist?.thumbnailUrl?.discordRpcImageUrl(),
-                            smallText = firstArtist?.name,
-                            button1Label =
-                                if (b1Visible) {
-                                    resolveDiscordRpcVariables(
-                                        b1Text.ifEmpty { getString(R.string.discord_default_button_1) },
-                                        song,
-                                    )
-                                } else {
-                                    null
-                                },
-                            button1Url = "https://music.youtube.com/watch?v=${song.song.id}".takeIf { b1Visible },
-                            button2Label =
-                                if (b2Visible) {
-                                    resolveDiscordRpcVariables(
-                                        b2Text.ifEmpty { getString(R.string.discord_default_button_2) },
-                                        song,
-                                    )
-                                } else {
-                                    null
-                                },
-                            button2Url = getString(R.string.discord_default_button_2_url).takeIf { b2Visible },
-                        )
-                    DiscordRpcManager.setActivity(activity)
-                }.onFailure {
-                    if (showFeedback) {
-                        Handler(Looper.getMainLooper()).post {
-                            Toast
-                                .makeText(
-                                    this@MusicService,
-                                    "Discord RPC update failed: ${it.message}",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                        }
-                    }
-                }
-            }
-    }
-
-    private fun discordRpcLargeImageUrl(
-        song: Song,
-        mediaId: String,
-    ): String? {
-        val staticArtwork =
-            (
-                    currentPreferredArtworkUrl.value
-                        ?: song.album?.thumbnailUrl
-                        ?: song.song.thumbnailUrl
-                    ).discordRpcImageUrl()
-
-        if (!dataStore.get(DiscordAnimatedCanvasKey, false)) {
-            return staticArtwork
-        }
-
-        val canvasUrl =
-            currentAppleCanvasUrl.value
-                ?: return staticArtwork
-        val quality =
-            dataStore
-                .get(DiscordAnimatedCanvasQualityKey, DiscordAnimatedCanvasQuality.NORMAL.name)
-                .toEnum(DiscordAnimatedCanvasQuality.NORMAL)
-
-        DiscordCanvasRemoteRenderer.cachedUrl(canvasUrl, quality)
-            ?.discordRpcImageUrl()
-            ?.let { return it }
-
-        requestDiscordAnimatedArtworkRender(
-            mediaId = mediaId,
-            canvasUrl = canvasUrl,
-            quality = quality,
-        )
-        return staticArtwork
-    }
-
-    private fun requestDiscordAnimatedArtworkRender(
-        mediaId: String,
-        canvasUrl: String,
-        quality: DiscordAnimatedCanvasQuality,
-    ) {
-        val jobKey = "$mediaId|${quality.name}|$canvasUrl"
-        if (discordAnimatedArtworkRefreshJobs[jobKey]?.isActive == true) return
-
-        discordAnimatedArtworkRefreshJobs[jobKey] =
-            scope.launch(Dispatchers.IO + SilentHandler) {
-                try {
-                    val renderedUrl = DiscordCanvasRemoteRenderer.render(canvasUrl, quality)
-                    withContext(Dispatchers.Main.immediate) {
-                        if (
-                            renderedUrl?.discordRpcImageUrl() != null &&
-                            currentSong.value?.song?.id == mediaId &&
-                            player.isPlaying
-                        ) {
-                            currentSong.value?.let { song ->
-                                updateDiscordRPC(song)
-                            }
-                        }
-                    }
-                } finally {
-                    discordAnimatedArtworkRefreshJobs.remove(jobKey)
-                }
-            }
-    }
-
-    private fun String?.discordRpcImageUrl(): String? {
-        val raw = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        if (!raw.startsWith("https://", ignoreCase = true) && !raw.startsWith("http://", ignoreCase = true)) {
-            return null
-        }
-
-        return listOf(
-            raw,
-            raw.resize(512, 512),
-            raw.resize(544, 544),
-        ).distinct()
-            .firstOrNull { it.length <= DISCORD_RPC_MAX_IMAGE_URL_LENGTH }
-    }
-
-    private fun resolveDiscordRpcVariables(text: String, song: Song): String =
-        text
-            .replace("{song_name}", song.song.title)
-            .replace("{artist_name}", song.orderedArtists.joinToString { it.name })
-            .replace("{album_name}", song.album?.title ?: song.song.albumName.orEmpty())
-
-    private fun currentDiscordRpcAudioProviderLabel(mediaId: String): String? {
-        val format =
-            currentPlaybackFormat.value?.takeIf { it.id == mediaId }
-                ?: songUrlCache[mediaId]?.format
-        return format?.discordRpcAudioProviderLabel()
-            ?: player.currentMediaItem?.localConfiguration?.uri?.discordRpcAudioProviderLabel()
-    }
-
-    private fun FormatEntity.discordRpcAudioProviderLabel(): String? =
-        when (itag) {
-            QOBUZ_FALLBACK_ITAG -> "qobuz"
-            TIDAL_FALLBACK_ITAG -> "tidal"
-            DEEZER_FALLBACK_ITAG -> "deezer"
-            SOUNDCLOUD_FALLBACK_ITAG -> "soundcloud"
-            INSTAGRAM_FALLBACK_ITAG -> "instagram"
-            APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_FALLBACK_ITAG -> "apple music"
-            AMAZON_FALLBACK_ITAG, AMAZON_FLAC_ITAG -> "amazon music"
-            DIRECT_HTTP_AUDIO_ITAG -> "direct audio"
-            else -> "youtube music".takeIf { itag > 0 }
-        }
-
-    private fun Uri.discordRpcAudioProviderLabel(): String? {
-        val value = toString()
-        return when {
-            value.startsWith(qobuzFallbackCacheKey(""), ignoreCase = true) -> "qobuz"
-            value.startsWith(tidalFallbackCacheKey(""), ignoreCase = true) -> "tidal"
-            value.startsWith(deezerFallbackCacheKey(""), ignoreCase = true) -> "deezer"
-            value.startsWith(soundCloudFallbackCacheKey(""), ignoreCase = true) -> "soundcloud"
-            value.startsWith(instagramFallbackCacheKey(""), ignoreCase = true) -> "instagram"
-            value.startsWith(appleMusicFallbackCacheKey(""), ignoreCase = true) -> "apple music"
-            value.contains("amazon") && (value.contains(".com") || value.contains(".co")) -> "amazon music"
-            value.startsWith(directHttpAudioCacheKey(""), ignoreCase = true) -> "direct audio"
-            value.startsWith(youtubeFallbackCacheKey(""), ignoreCase = true) -> "youtube music"
-            else -> null
-        }
-    }
-
-    private fun createCacheDataSource(): CacheDataSource.Factory =
-        CacheDataSource
-            .Factory()
-            .setCache(downloadCache)
-            .setUpstreamDataSourceFactory(
-                CacheDataSource
-                    .Factory()
-                    .setCache(playerCache)
-                    .setUpstreamDataSourceFactory(
-                        DeezerAudioAwareDataSourceFactory(
-                            DefaultDataSource.Factory(
-                                this,
-                                OkHttpDataSource.Factory(
-                                    OkHttpClient
-                                        .Builder()
-                                        .proxy(YouTube.proxy)
-                                        .proxyAuthenticator { _, response ->
-                                        YouTube.proxyAuth?.let { auth ->
-                                            response.request
-                                                .newBuilder()
-                                                .header("Proxy-Authorization", auth)
-                                                .build()
-                                        } ?: response.request
-                                        }.addInterceptor { chain ->
-                                        var request = chain.request()
-                                        if (request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY) != null) {
-                                            val clientName = request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY)
-                                            val cleanUrl =
-                                                request.url
-                                                    .newBuilder()
-                                                    .removeAllQueryParameters(YouTubeAudioProvider.STREAM_MARKER_QUERY)
-                                                    .build()
-                                            request =
-                                                YouTubeAudioProvider.addYouTubePlaybackHeaders(
-                                                    request.newBuilder().url(cleanUrl),
-                                                    clientName,
-                                                    request.header("Range") != null,
-                                                ).build()
-                                        }
-                                        if (request.url.queryParameter(SoundCloudAudioProvider.STREAM_MARKER_QUERY) != null) {
-                                            val isApiStream =
-                                                request.url.queryParameter(SoundCloudAudioProvider.STREAM_SOURCE_QUERY) ==
-                                                        SoundCloudAudioProvider.STREAM_SOURCE_API
-                                            val isHlsStream =
-                                                request.url.queryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) == "1"
-                                            val cleanUrl =
-                                                request.url
-                                                    .newBuilder()
-                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_MARKER_QUERY)
-                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY)
-                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_SOURCE_QUERY)
-                                                    .build()
-                                            request =
-                                                SoundCloudAudioProvider.addPlaybackHeaders(
-                                                    request.newBuilder().url(cleanUrl),
-                                                    request.header("Range") != null,
-                                                    isApiStream,
-                                                    isHlsStream,
-                                                ).build()
-                                        } else if (SoundCloudAudioProvider.isSoundCloudPlaybackUrl(request.url)) {
-                                            request = SoundCloudAudioProvider.addPlaybackHeaders(
-                                                request.newBuilder(),
-                                                request.header("Range") != null,
-                                                isApiStream = false,
-                                                isHlsStream = request.url.encodedPath.endsWith(".m3u8") || request.url.encodedPath.endsWith(".m4s")
-                                            ).build()
-                                        }
-                                        if (InstagramAudioProvider.isInstagramPlaybackUrl(request.url)) {
-                                            val instagramClient =
-                                                InstagramAudioProvider.playbackClientProfile(request.url)
-                                            val instagramUserAgent =
-                                                InstagramAudioProvider.playbackUserAgent(request.url)
-                                                    ?: cachedInstagramUserAgent
-                                            val cleanUrl = InstagramAudioProvider.cleanPlaybackUrl(request.url)
-                                            request =
-                                                InstagramAudioProvider.addPlaybackHeaders(
-                                                    request.newBuilder().url(cleanUrl),
-                                                    cachedInstagramCookie,
-                                                    request.header("Range") != null,
-                                                    instagramClient,
-                                                    instagramUserAgent,
-                                                ).build()
-                                        }
-                                        if (request.url.queryParameter(PRIVATE_STREAM_MARKER) != null) {
-                                            val cleanUrl =
-                                                request.url
-                                                    .newBuilder()
-                                                    .removeAllQueryParameters(PRIVATE_STREAM_MARKER)
-                                                    .build()
-                                            val builder = request.newBuilder().url(cleanUrl)
-                                            val host = cleanUrl.host
-                                            if (host == "youtube.com" || host.endsWith(".youtube.com") ||
-                                                host.endsWith(".googlevideo.com")
-                                            ) {
-                                                YouTube.cookie?.let { builder.header("Cookie", it) }
-                                            }
-                                            request = builder.build()
-                                        }
-                                        chain.proceed(request)
-                                        }.build(),
-                                ),
-                            ),
-                        ),
-                    ),
-            ).setCacheWriteDataSinkFactory(null)
-            .setFlags(FLAG_IGNORE_CACHE_ON_ERROR)
-
-    // Flag to prevent queue saving during silence skip operations
-    private var isSilenceSkipping = false
-
-    private fun handleLongSilenceDetected() {
-        if (!instantSilenceSkipEnabled.value) return
-        if (silenceSkipJob?.isActive == true) return
-
-        silenceSkipJob =
-            scope.launch {
-                // Debounce so short fades or transitions do not trigger a jump.
-                delay(200)
-                performInstantSilenceSkip()
-            }
-    }
-
-    private suspend fun performInstantSilenceSkip() {
-        val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
-        if (duration <= INSTANT_SILENCE_SKIP_STEP_MS) return
-
-        isSilenceSkipping = true
-        try {
-            var hops = 0
-            val silenceProcessor = playerSilenceProcessors[player] ?: return
-            while (coroutineContext.isActive && instantSilenceSkipEnabled.value && silenceProcessor.isCurrentlySilent()) {
-                val current = player.currentPosition
-                val target = (current + INSTANT_SILENCE_SKIP_STEP_MS).coerceAtMost(duration - 500)
-
-                if (target <= current) break
-
-                // Reset silence tracking before seeking to prevent immediate re-trigger
-                silenceProcessor.resetTracking()
-                player.seekTo(target)
-                hops++
-
-                if (hops >= 80 || target >= duration - 500) break
-
-                delay(INSTANT_SILENCE_SKIP_SETTLE_MS)
-            }
-            if (hops > 0) {
-                Timber.tag(TAG).d("Silence skip: jumped $hops times")
-            }
-        } finally {
-            isSilenceSkipping = false
-        }
-    }
-
-    private fun setSpotifyHistoryPresenceActive(active: Boolean) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            scope.launch {
-                setSpotifyHistoryPresenceActive(active)
-            }
-            return
-        }
-        if (spotifyHistoryPresenceActiveValue == active) return
-        spotifyHistoryPresenceActiveValue = active
-        _spotifyHistoryPresenceActive.value = active
-        if (shouldSuppressDiscordRpcForSpotifyHistory()) {
-            suppressDiscordRpcForSpotifyHistory()
-        } else if (player.playbackState == Player.STATE_READY && player.isPlaying) {
-            currentSong.value?.let { song ->
-                updateDiscordRPC(song)
-            }
-        }
-    }
-
-    private fun shouldSuppressDiscordRpcForSpotifyHistory(): Boolean =
-        discordHideWhenSpotifyHistory && spotifyHistoryPresenceActiveValue
-
-    private fun suppressDiscordRpcForSpotifyHistory() {
-        discordUpdateGeneration.incrementAndGet()
-        discordUpdateJob?.cancel()
-        discordUpdateJob = null
-        DiscordRpcManager.clear()
-    }
-
-    private fun currentStreamSelectionKey(): String {
-        val tidalQuality = dataStore.get(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
-        val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "https://igameten10-ez-hifi-api.hf.space/")
-        val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
-        val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val configuredDeezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
-        val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
-            configuredProxyModeValue = dataStore.get(DeezerProxyModeKey, ""),
-            configuredProxyUrl = configuredDeezerProxyUrl,
-            globalProxyEnabled = dataStore.get(ProxyEnabledKey, false),
-        )
-        val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
-        val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
-        val providerMatchOverrides = dataStore.get(AudioProviderMatchOverridesKey, "")
-        val instagramCookie = dataStore.get(InstagramCookieKey, "")
-        val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-        val instagramAppId = dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_APP_ID
-        val instagramUuid = dataStore.get(InstagramUuidKey, "")
-        val instagramCookieConfigured = instagramCookie.isNotBlank()
-        val soundCloudAuthConfigured = dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
-        val qobuzBackend = dataStore.get(QobuzBackendKey).toEnum<QobuzBackend>(QobuzBackend.KENNY)
-        val qobuzCountry = dataStore.get(QobuzCountryKey, "US")
-            .trim()
-            .uppercase(Locale.US)
-            .takeIf { it.matches(Regex("[A-Z]{2}")) }
-            ?: "US"
-        return listOf(
-            "tidalQuality=${tidalQuality.name}",
-            "tidalResolvers=${TidalAudioProvider.resolverEndpointBases(tidalResolverEndpoints).joinToString(",").hashCode()}",
-            "deezerResolver=${deezerResolverUrl.hashCode()}",
-            "deezerQuality=${deezerQuality.name}",
-            "deezerProxy=${DeezerAudioProvider.normalizeProxyUrl(deezerProxyUrl).hashCode()}",
-            "deezerUseAccount=${dataStore.get(DeezerUseAccountKey, true)}",
-            "deezerCookie=${dataStore.get(DeezerCookieKey, "").hashCode()}",
-            "stopOnProviderError=$stopOnProviderError",
-            "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
-            "providerOverrides=${providerMatchOverrides.hashCode()}",
-            "instagramAuth=$instagramCookieConfigured",
-            "instagramCookie=${instagramCookie.hashCode()}",
-            "instagramUserAgent=${instagramUserAgent.hashCode()}",
-            "instagramAppId=${instagramAppId.hashCode()}",
-            "instagramUuid=${instagramUuid.hashCode()}",
-            "soundCloudAuth=$soundCloudAuthConfigured",
-            "backend=${qobuzBackend.name}",
-            "country=$qobuzCountry",
-        ).joinToString(";")
-    }
-
-    private fun isProviderFirstInPlaybackOrder(
-        mediaId: String,
-        provider: AudioProviderOrderItem,
-    ): Boolean {
-        if (TidalAudioProvider.isTidalTrackId(mediaId) && provider != AudioProviderOrderItem.DEEZER) {
-            return false
-        }
-        val providerOverride = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
-        if (providerOverride != null) {
-            return providerOverride.provider == provider
-        }
-
-        val orderedProviders =
-            buildList {
-                when {
-                    SoundCloudAudioProvider.isSoundCloudUrl(mediaId) -> add(AudioProviderOrderItem.SOUNDCLOUD)
-                    TidalAudioProvider.isTidalTrackId(mediaId) -> add(AudioProviderOrderItem.DEEZER)
-                    DeezerAudioProvider.isDeezerTrackId(mediaId) -> add(AudioProviderOrderItem.DEEZER)
-                }
-                addAll(AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, "")))
-            }.distinct()
-
-        return orderedProviders.firstOrNull { canAttemptProviderFromOrder(it) } == provider
-    }
-
-    private fun canAttemptProviderFromOrder(
-        provider: AudioProviderOrderItem,
-    ): Boolean =
-        when (provider) {
-            AudioProviderOrderItem.INSTAGRAM ->
-                dataStore.get(InstagramCookieKey, "").isNotBlank()
-            else -> true
-        }
-
-    /**
-     * Intercepts DataSource opens for resolved Amazon CDN URLs and routes them through
-     * AmazonFfmpegDataSource for progressive FFmpeg decryption, instead of streaming the
-     * still-encrypted CENC bytes straight through.
-     *
-     * This has to live at the DataSource level, not the MediaSource level: MediaSource.Factory
-     * .createMediaSource() runs before AmazonAudioProvider.resolve() has ever been called for
-     * a given mediaId (resolution only happens later, inside the ResolvingDataSource transform
-     * below, when the DataSource chain actually opens) - so a MediaSource-level check can never
-     * see a resolved stream on a first play. By wrapping the DataSource.Factory passed into
-     * ResolvingDataSource here, this sees the dataSpec only *after* the transform has already
-     * resolved it to the real CDN URL and populated AmazonAudioProvider.resolvedFor(), on the
-     * same synchronous call stack - so the lookup below is never racy.
-     */
-    // Amazon streaming-decrypt tracks are keyed by ASIN or mediaId here (both written), so
-    // AmazonFfmpegAwareDataSource.open() can look up the real known duration regardless of
-    // which identifier it recovers from the DataSpec's cache key.
-    private val knownDurationMsByTrackId = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    private inner class AmazonFfmpegAwareDataSourceFactory(
-        private val upstreamFactory: DataSource.Factory,
-    ) : DataSource.Factory {
-        override fun createDataSource(): DataSource = AmazonFfmpegAwareDataSource(upstreamFactory.createDataSource())
-    }
-
-    private inner class AmazonFfmpegAwareDataSource(
-        private val upstream: DataSource,
-    ) : DataSource {
-        private var active: DataSource = upstream
-        private val transferListeners = mutableListOf<TransferListener>()
-
-        override fun addTransferListener(transferListener: TransferListener) {
-            transferListeners += transferListener
-            upstream.addTransferListener(transferListener)
-        }
-
-        override fun open(dataSpec: DataSpec): Long {
-            val url = dataSpec.uri.toString()
-            val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey)
-            val resolved = mediaId?.let { AmazonAudioProvider.resolvedFor(it) }
-            val isAtmos = resolved?.codecs?.lowercase()?.contains("eac3") == true
-            // Deliberately not also checking AmazonAudioProvider.isAmazonCdnUrl(url) here -
-            // that's a url.contains("amazon") text check and Amazon's real CDN URLs are on
-            // generic CloudFront domains (e.g. *.cloudfront.net) with no "amazon" substring at
-            // all, so it would always be false. resolvedFor(mediaId) is already unambiguous and
-            // provider-specific (only ever populated by AmazonAudioProvider.resolve()), so it's
-            // sufficient on its own.
-            active = if (resolved != null && !isAtmos) {
-                Timber.tag(TAG).d("Amazon FFmpeg streaming decrypt engaged for $mediaId")
-                val knownDurationMs = mediaId?.let { knownDurationMsByTrackId[it] } ?: knownDurationMsByTrackId[resolved.trackId]
-                AmazonFfmpegDataSource(applicationContext, resolved, knownDurationMs).also { ds ->
-                    transferListeners.forEach(ds::addTransferListener)
-                }
-            } else {
-                upstream
-            }
-            return active.open(dataSpec)
-        }
-
-        override fun read(
-            buffer: ByteArray,
-            offset: Int,
-            length: Int,
-        ): Int = active.read(buffer, offset, length)
-
-        override fun getUri() = active.uri
-
-        override fun close() = active.close()
-    }
-
-    private fun createDataSourceFactory(): DataSource.Factory {
-        val resolvingFactory =
-            ResolvingDataSource.Factory(
-                AmazonFfmpegAwareDataSourceFactory(
-                    createCacheDataSource(),
-                ),
-            ) { dataSpec ->
-                val explicitProviderMediaId =
-                    DeezerAudioDataSource.mediaIdFromUri(dataSpec.uri)
-                if (
-                    explicitProviderMediaId == null &&
-                    dataSpec.uri.scheme.equals("file", ignoreCase = true)
-                ) {
-                    return@Factory dataSpec
-                }
-                if (
-                    explicitProviderMediaId == null &&
-                    dataSpec.key?.let(::isProviderFallbackCacheKey) == true &&
-                    dataSpec.uri.isResolvedProviderPlaybackUri()
-                ) {
-                    return@Factory dataSpec
-                }
-                if (
-                    explicitProviderMediaId == null &&
-                    dataSpec.uri.isTidalPlaybackCdnUri()
-                ) {
-                    return@Factory dataSpec
-                }
-                if (
-                    explicitProviderMediaId == null &&
-                    dataSpec.uri.isDirectHttpAudioUri()
-                ) {
-                    return@Factory dataSpec
-                }
-
-                val mediaId = explicitProviderMediaId
-                    ?: dataSpec.uri.mediaIdFromPendingTidalManifestUri()
-                    ?: dataSpec.key?.let(::mediaIdFromDataSpecKey)
-                    ?: dataSpec.uri
-                        .takeIf { it.scheme.isNullOrBlank() }
-                        ?.toString()
-                        ?.takeIf { it.isNotBlank() }
-                    ?: return@Factory dataSpec
-                val isPendingTidalDashRequest = dataSpec.uri.isPendingTidalDashRequest()
-
-                if (DeezerAudioDataSource.isDeezerUri(dataSpec.uri)) {
-                    return@Factory dataSpec
-                        .buildUpon()
-                        .setKey(deezerFallbackCacheKey(mediaId))
-                        .build()
-                }
-
-                if (AmazonAudioProvider.isAmazonCdnUrl(dataSpec.uri.toString())) {
-                    return@Factory dataSpec
-                        .buildUpon()
-                        .setKey(amazonFallbackCacheKey(mediaId))
-                        .build()
-                }
-
-                val song = database.getSongByIdBlocking(mediaId)
-                val streamSelectionKey = currentStreamSelectionKey()
-
-                if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
-                    return@Factory dataSpec
-                }
-
-                val shouldBypassUrlCache = bypassCacheForQualityChange.contains(mediaId)
-                if (!shouldBypassUrlCache) {
-                    val cacheLookupStartedAt = SystemClock.elapsedRealtime()
-                    findCompleteCachedKey(mediaId, song?.format?.contentLength)?.let { cacheKey ->
-                        Timber.tag(CACHE_TAG).d(
-                            "Complete cache hit: mediaId=%s cacheKey=%s lookupMs=%d",
-                            mediaId,
-                            cacheKey,
-                            SystemClock.elapsedRealtime() - cacheLookupStartedAt,
-                        )
-                        return@Factory dataSpec
-                            .buildUpon()
-                            .setKey(cacheKey)
-                            .build()
-                    }
-                }
-
-                val hasValidatedNetwork = connectivityObserver.isCurrentlyConnected()
-                isNetworkConnected.value = hasValidatedNetwork
-                if (!hasValidatedNetwork) {
-                    Timber.tag(CACHE_TAG).d("Offline cache miss: mediaId=%s", mediaId)
-                    throw PlaybackException(
-                        "Audio is not fully cached and no network connection is available",
-                        IOException("No complete cached resource for $mediaId"),
-                        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-                    )
-                }
-
-                val requestedFallbackKey = dataSpec.key?.takeIf(::isProviderFallbackCacheKey)
-                songUrlCache[mediaId]?.takeIf {
-                    !shouldBypassUrlCache &&
-                            it.expiresAtMs > System.currentTimeMillis() &&
-                            it.selectionKey == streamSelectionKey &&
-                            (requestedFallbackKey == null || it.cacheKey == requestedFallbackKey)
-                }?.let { cached ->
-                    val tidalProgressiveRetry =
-                        skipTidalLiveManifestOnceMediaIds.contains(mediaId) ||
-                                tidalProgressivePreferredMediaIds.contains(mediaId)
-                    val cachedIsTidalNonDashForPendingRoute =
-                        isPendingTidalDashRequest &&
-                                isTidalFallbackCacheKey(cached.cacheKey) &&
-                                cached.mimeType != MimeTypes.APPLICATION_MPD
-                    if (cachedIsTidalNonDashForPendingRoute && !tidalProgressiveRetry) {
-                        skipTidalLiveManifestOnceMediaIds.add(mediaId)
-                        tidalProgressivePreferredMediaIds.add(mediaId)
-                        throw PlaybackException(
-                            "TIDAL stream was resolved after Media3 selected a DASH source",
-                            IllegalStateException("Cached TIDAL stream is ${cached.mimeType ?: "not DASH"}"),
-                            PlaybackException.ERROR_CODE_REMOTE_ERROR,
-                        )
-                    }
-                    val currentDataSpecIsFallback = dataSpec.key?.let { key ->
-                        key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
-                                isTidalFallbackCacheKey(key) ||
-                                key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
-                                key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
-                                key.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) ||
-                                key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) ||
-                                key.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) ||
-                                key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
-                    } == true
-                    if (!currentDataSpecIsFallback || cached.isFallbackStream(mediaId)) {
-                        upsertCachedStreamFormat(mediaId, cached.format)
-                        return@Factory dataSpec
-                            .buildUpon()
-                            .setUri(cached.uri.toUri())
-                            .setKey(cached.cacheKey)
-                            .build()
-                    }
-                } ?: run {
-                    songUrlCache.remove(mediaId)
-                }
-
-                val queuedMetadataForDatabase = queuedMetadataForPlaybackDatabase(mediaId, song)
-                val resolved =
-                    resolvePlaybackStreamBlocking(
-                        mediaId = mediaId,
-                        song = song,
-                        queuedMetadata = queuedMetadataForDatabase,
-                    )
-
-                database.query {
-                    queuedMetadataForDatabase?.let { insert(it) }
-                    upsert(resolved.format)
-                }
-                publishCurrentPlaybackFormat(mediaId, resolved.format)
-
-                if (bypassCacheForQualityChange.remove(mediaId)) {
-                    Timber.tag("MusicService").d("Cleared bypass cache flag for $mediaId after stream fetch")
-                }
-
-                songUrlCache[mediaId] = CachedSongStream(
-                    uri = resolved.uri,
-                    expiresAtMs = resolved.expiresAtMs,
-                    cacheKey = resolved.cacheKey,
-                    selectionKey = streamSelectionKey,
-                    format = resolved.format,
-                    mimeType = resolved.mimeType,
-                    drmLicenseUri = resolved.drmLicenseUri,
-                    kid = resolved.kid,
-                    decryptionKey = resolved.decryptionKey,
-                )
-                if (isPendingTidalDashRequest && resolved.mimeType != MimeTypes.APPLICATION_MPD) {
-                    skipTidalLiveManifestOnceMediaIds.add(mediaId)
-                    tidalProgressivePreferredMediaIds.add(mediaId)
-                    throw PlaybackException(
-                        "TIDAL stream was resolved after Media3 selected a DASH source",
-                        IllegalStateException("Resolved TIDAL stream is ${resolved.mimeType ?: "not DASH"}"),
-                        PlaybackException.ERROR_CODE_REMOTE_ERROR,
-                    )
-                }
-                return@Factory dataSpec
-                    .buildUpon()
-                    .setUri(resolved.uri.toUri())
-                    .setKey(resolved.cacheKey)
-                    .build()
-            }
-        return LiveFlacBitrateDataSourceFactory(
-            upstreamFactory = ResilientPlaybackDataSourceFactory(resolvingFactory),
-            isEnabled = ::isLivePlaybackBitrateCollectionEnabled,
-            mediaIdResolver = ::liveBitrateMediaIdFromDataSpec,
-            isParserCandidate = ::isLivePlaybackParserCandidate,
-            sampleRateProvider = ::liveBitrateSampleRate,
-            onBitrate = { mediaId, bitrate, mediaStartMs, mediaEndMs ->
-                recordLivePlaybackBitrateSample(mediaId, mediaStartMs, mediaEndMs, bitrate)
-            },
-        )
-    }
-
-    private fun isLivePlaybackBitrateCollectionEnabled(): Boolean =
-        dataStore.get(LivePlaybackBitrateKey, false) &&
-                dataStore.get(PlayerLegacyQualityLabelKey, false)
-
-    private fun isLivePlaybackBitrateActive(): Boolean =
-        isScreenInteractiveForLiveBitrate &&
-                isLivePlaybackBitrateCollectionEnabled()
-
-    private fun liveBitrateMediaIdFromDataSpec(dataSpec: DataSpec): String? =
-        DeezerAudioDataSource.mediaIdFromUri(dataSpec.uri)
-            ?: dataSpec.uri.mediaIdFromPendingTidalManifestUri()
-            ?: dataSpec.key
-                ?.let(::mediaIdFromDataSpecKey)
-                ?.takeIf { it.isNotBlank() }
-
-    private fun isLivePlaybackParserCandidate(
-        dataSpec: DataSpec,
-        mediaId: String?,
-    ): Boolean {
-        if (!isLivePlaybackBitrateCollectionEnabled()) return false
-        val format =
-            mediaId
-                ?.let { id ->
-                    currentPlaybackFormat.value?.takeIf { it.id == id }
-                        ?: songUrlCache[id]?.format
-                }
-        if (format?.isFlacFormat() == true || format?.isAlacFormat() == true) return true
-        if (format != null && !format.isProviderFallbackFormat()) return false
-
-        val key = dataSpec.key.orEmpty().lowercase(Locale.US)
-        val uri = dataSpec.uri.toString().lowercase(Locale.US)
-        return "flac" in key ||
-                "flac" in uri.substringBefore('?') ||
-                key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
-                isTidalFallbackCacheKey(key) ||
-                key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
-                key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
-                key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX)
-    }
-
-    private fun liveBitrateSampleRate(mediaId: String?): Int? =
-        mediaId
-            ?.let { id ->
-                currentPlaybackFormat.value
-                    ?.takeIf { it.id == id }
-                    ?.sampleRate
-                    ?: songUrlCache[id]?.format?.sampleRate
-            }?.takeIf { it > 0 }
-
-    private fun clearResolvedStreamCache(mediaId: String) {
-        invalidateResolvedProviderStream(mediaId)
-        removeCachedAudio(mediaId)
-    }
-
-    fun setProviderMatchOverride(
-        mediaId: String,
-        provider: AudioProviderOrderItem?,
-        providerTrackId: String?,
-        label: String?,
-    ) {
-        if (mediaId.isBlank()) return
-        scope.launch(Dispatchers.IO) {
-            dataStore.edit { preferences ->
-                val overrides = ProviderMatchOverrides.decode(preferences[AudioProviderMatchOverridesKey])
-                if (provider == null || !provider.isPlaybackProvider() || providerTrackId.isNullOrBlank()) {
-                    overrides.remove(mediaId)
-                } else {
-                    overrides[mediaId] = ProviderMatchOverride(
-                        provider = provider,
-                        providerTrackId = providerTrackId,
-                        label = label?.takeIf { it.isNotBlank() } ?: providerTrackId,
-                    )
-                }
-                preferences[AudioProviderMatchOverridesKey] = ProviderMatchOverrides.encode(overrides)
-            }
-            withContext(Dispatchers.Main) {
-                clearResolvedStreamCache(mediaId)
-                if (player.currentMediaItem?.mediaId == mediaId) {
-                    val currentPosition = player.currentPosition.coerceAtLeast(0L)
-                    val wasPlaying = player.playWhenReady
-                    val currentIndex = player.currentMediaItemIndex
-                    player.stop()
-                    player.seekTo(currentIndex, currentPosition)
-                    player.prepare()
-                    if (wasPlaying) {
-                        player.play()
-                    }
-                }
-            }
-        }
-    }
-
-    private fun upsertCachedStreamFormat(
-        mediaId: String,
-        format: FormatEntity,
-    ) {
-        runCatching {
-            database.query {
-                val existing = getFormatByIdBlocking(mediaId)
-                val isAlac = format.codecs.contains("alac", ignoreCase = true)
-                val existingSampleRate = existing?.sampleRate ?: format.sampleRate
-                val existingAlacBitrate =
-                    existing
-                        ?.bitrate
-                        ?.takeIf { isAlac && it.isPlausibleAlacBitrate(existingSampleRate) }
-                val nextFormat =
-                    when {
-                        isAlac && format.bitrate > 0 && !format.bitrate.isPlausibleAlacBitrate(format.sampleRate) ->
-                            format.copy(bitrate = 0)
-                        isAlac && format.bitrate <= 0 && existingAlacBitrate != null ->
-                            format.copy(
-                                bitrate = existingAlacBitrate,
-                                sampleRate = format.sampleRate ?: existing?.sampleRate,
-                            )
-                        else -> format
-                    }
-                val existingHasBadAlacBitrate =
-                    isAlac &&
-                            existing?.bitrate?.let { it > 0 && !it.isPlausibleAlacBitrate(existingSampleRate) } == true
-                if (
-                    existing == null ||
-                    existing.itag != nextFormat.itag ||
-                    existingHasBadAlacBitrate ||
-                    (isAlac && nextFormat.bitrate > 0 && existing.bitrate <= 0) ||
-                    (existing.bitrate <= 0 && !isAlac) ||
-                    ((existing.sampleRate == null || existing.sampleRate <= 0) && nextFormat.sampleRate?.let { it > 0 } == true)
-                ) {
-                    upsert(nextFormat)
-                }
-            }
-            publishCurrentPlaybackFormat(mediaId, database.getFormatByIdBlocking(mediaId) ?: format)
-        }.onFailure { error ->
-            Timber.tag(TAG).w(error, "Failed to restore cached stream format for $mediaId")
-        }
-    }
-
-    private fun publishCurrentPlaybackFormat(
-        mediaId: String,
-        format: FormatEntity,
-    ) {
-        scope.launch {
-            val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
-            if (currentMediaId == mediaId && format.id == mediaId) {
-                currentPlaybackFormat.value = format
-            }
-        }
-    }
-
-    private fun refreshCurrentPlaybackFormatFromDatabase(mediaId: String?) {
-        if (mediaId.isNullOrBlank()) {
-            currentPlaybackFormat.value = null
-            return
-        }
-
-        scope.launch(Dispatchers.IO) {
-            val format =
-                runCatching {
-                    database.getFormatByIdBlocking(mediaId)
-                }.getOrNull()
-            withContext(Dispatchers.Main) {
-                val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
-                if (currentMediaId == mediaId) {
-                    currentPlaybackFormat.value = format
-                }
-            }
-        }
-    }
-
-    private suspend fun preloadNextTrack(target: NextTrackPreloadTarget) {
-        val mediaItem = target.mediaItem
-        val mediaId = mediaItem.mediaIdForPlaybackSource() ?: return
-        val queuedMetadata = mediaItem.metadata
-        if (
-            mediaId.isBlank() ||
-            queuedMetadata?.isEpisode == true ||
-            queuedMetadata?.isVideoSong == true ||
-            mediaId.isLocalMediaId()
-        ) {
-            return
-        }
-
-        val song = database.getSongByIdBlocking(mediaId)
-        if (song?.song?.isLocal == true || song?.song?.isEpisode == true) return
-
-        val selectionKey = currentStreamSelectionKey()
-        val now = System.currentTimeMillis()
-        val cachedResolution = songUrlCache[mediaId]?.takeIf {
-            it.expiresAtMs > now + PRELOAD_MIN_URL_LIFETIME_MS &&
-                it.selectionKey == selectionKey
-        }
-
-        cachedResolution?.let { cached ->
-            val targetBytes = NextTrackPreloadPolicy.targetBytes(
-                queueDistance = target.queueDistance,
-                bitrate = cached.format.bitrate,
-                contentLength = cached.format.contentLength,
-            )
-            val cachedBytes = contiguousCachedPrefix(cached.cacheKey, targetBytes)
-            if (cachedBytes >= targetBytes) {
-                Timber.tag(PRELOAD_TAG).d(
-                    "Cache hit: mediaId=%s distance=%d cached=%d target=%d cacheKey=%s",
-                    mediaId,
-                    target.queueDistance,
-                    cachedBytes,
-                    targetBytes,
-                    cached.cacheKey,
-                )
-                return
-            }
-        }
-
-        val resolved = cachedResolution?.toPlaybackStreamResolution() ?: run {
-            songUrlCache.remove(mediaId)
-            val resolution = resolveOnlineStream(
-                mediaId = mediaId,
-                song = song,
-                queuedMetadata = queuedMetadata,
-                allowUserFeedback = false,
-            )
-            database.query {
-                queuedMetadataForPlaybackDatabase(mediaId, song)?.let { insert(it) }
-                upsert(resolution.format)
-            }
-            songUrlCache[mediaId] = resolution.toCachedSongStream(selectionKey)
-            resolution
-        }
-
-        if (!resolved.supportsProgressivePreload()) {
-            Timber.tag(PRELOAD_TAG).d(
-                "Skipped unsupported stream: mediaId=%s mime=%s cacheKey=%s",
-                mediaId,
-                resolved.mimeType,
-                resolved.cacheKey,
-            )
-            return
-        }
-
-        val targetBytes = NextTrackPreloadPolicy.targetBytes(
-            queueDistance = target.queueDistance,
-            bitrate = resolved.format.bitrate,
-            contentLength = resolved.format.contentLength,
-        )
-        val cachedBefore = contiguousCachedPrefix(resolved.cacheKey, targetBytes)
-        val missingRange = NextTrackPreloadPolicy.missingRange(cachedBefore, targetBytes)
-        if (missingRange == null) {
-            Timber.tag(PRELOAD_TAG).d(
-                "Cache hit: mediaId=%s distance=%d cached=%d target=%d cacheKey=%s",
-                mediaId,
-                target.queueDistance,
-                cachedBefore,
-                targetBytes,
-                resolved.cacheKey,
-            )
-            return
-        }
-
-        Timber.tag(PRELOAD_TAG).d(
-            "Starting: mediaId=%s distance=%d target=%d cachedBefore=%d provider=%s cacheKey=%s",
-            mediaId,
-            target.queueDistance,
-            targetBytes,
-            cachedBefore,
-            resolved.providerLabel(),
-            resolved.cacheKey,
-        )
-        val startedAt = System.nanoTime()
-        val dataSource = createCacheDataSource().createDataSource()
-        var readBytes = 0L
-        runInterruptible(Dispatchers.IO) {
-            try {
-                dataSource.open(
-                    DataSpec.Builder()
-                        .setUri(resolved.uri)
-                        .setKey(resolved.cacheKey)
-                        .setPosition(missingRange.position)
-                        .setLength(missingRange.length)
-                        .build(),
-                )
-                val buffer = ByteArray(PRELOAD_READ_BUFFER_BYTES)
-                while (readBytes < missingRange.length && !Thread.currentThread().isInterrupted) {
-                    val requested = minOf(buffer.size.toLong(), missingRange.length - readBytes).toInt()
-                    val read = dataSource.read(buffer, 0, requested)
-                    if (read == C.RESULT_END_OF_INPUT) break
-                    if (read <= 0) break
-                    readBytes += read
-                }
-            } finally {
-                runCatching(dataSource::close)
-            }
-        }
-
-        val cachedAfter = contiguousCachedPrefix(resolved.cacheKey, targetBytes)
-        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
-        Timber.tag(PRELOAD_TAG).d(
-            "Completed: mediaId=%s cachedBefore=%d cachedAfter=%d downloaded=%d elapsedMs=%d provider=%s cacheKey=%s",
-            mediaId,
-            cachedBefore,
-            cachedAfter,
-            (cachedAfter - cachedBefore).coerceAtLeast(readBytes.coerceAtMost(missingRange.length)),
-            elapsedMs,
-            resolved.providerLabel(),
-            resolved.cacheKey,
-        )
-    }
-
-    private fun contiguousCachedPrefix(
-        cacheKey: String,
-        targetBytes: Long,
-    ): Long {
-        if (targetBytes <= 0) return 0L
-        val cachedLength = playerCache.getCachedLength(cacheKey, 0, targetBytes)
-        return cachedLength.takeIf { it > 0 }?.coerceAtMost(targetBytes) ?: 0L
-    }
-
-    private fun CachedSongStream.toPlaybackStreamResolution() =
-        PlaybackStreamResolution(
-            uri = uri,
-            expiresAtMs = expiresAtMs,
-            cacheKey = cacheKey,
-            format = format,
-            mimeType = mimeType,
-            drmLicenseUri = drmLicenseUri,
-            kid = kid,
-            decryptionKey = decryptionKey,
-        )
-
-    private fun PlaybackStreamResolution.toCachedSongStream(selectionKey: String) =
-        CachedSongStream(
-            uri = uri,
-            expiresAtMs = expiresAtMs,
-            cacheKey = cacheKey,
-            selectionKey = selectionKey,
-            format = format,
-            mimeType = mimeType,
-            drmLicenseUri = drmLicenseUri,
-            kid = kid,
-            decryptionKey = decryptionKey,
-        )
-
-    private fun PlaybackStreamResolution.supportsProgressivePreload(): Boolean {
-        val parsedUri = uri.toUri()
-        val scheme = parsedUri.scheme?.lowercase(Locale.US)
-        val path = parsedUri.path.orEmpty().lowercase(Locale.US)
-        return drmLicenseUri.isNullOrBlank() &&
-            tempFilePath.isNullOrBlank() &&
-            !cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) &&
-            parsedUri.getQueryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) != "1" &&
-            mimeType != MimeTypes.APPLICATION_MPD &&
-            mimeType != MimeTypes.APPLICATION_M3U8 &&
-            !path.endsWith(".mpd") &&
-            !path.endsWith(".m3u8") &&
-            (scheme == "http" || scheme == "https" || DeezerAudioDataSource.isDeezerUri(parsedUri))
-    }
-
-    private fun PlaybackStreamResolution.providerLabel(): String =
-        when {
-            cacheKey.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) -> "qobuz"
-            isTidalFallbackCacheKey(cacheKey) -> "tidal"
-            cacheKey.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) -> "deezer"
-            cacheKey.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) -> "soundcloud"
-            cacheKey.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) -> "instagram"
-            cacheKey.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) -> "apple"
-            cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) -> "amazon"
-            cacheKey.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX) -> "youtube"
-            cacheKey.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) -> "direct"
-            else -> "unknown"
-        }
-
-    private fun invalidateResolvedProviderStream(mediaId: String) {
-        songUrlCache.remove(mediaId)
-        QobuzAudioProvider.invalidate(mediaId)
-        TidalAudioProvider.invalidate(mediaId)
-        DeezerAudioProvider.invalidate(mediaId)
-        AmazonAudioProvider.invalidate(mediaId)
-        SoundCloudAudioProvider.invalidate(mediaId)
-        InstagramAudioProvider.invalidate(mediaId)
-        YouTubeAudioProvider.invalidate(mediaId)
-    }
-
-    private fun removeCachedAudio(mediaId: String) {
-        val keys =
-            (
-                PlaybackCacheIndex.keysForMediaId(playerCache.keys, mediaId) +
-                    PlaybackCacheIndex.keysForMediaId(downloadCache.keys, mediaId) +
-                    mediaId
-            ).distinct()
-        keys.forEach { key ->
-            playerCache.removeResource(key)
-            downloadCache.removeResource(key)
-        }
-    }
-
-    private fun findCompleteCachedKey(
-        mediaId: String,
-        fallbackContentLength: Long?,
-    ): String? {
-        val override = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
-        val preferredProviderKeys =
-            buildList {
-                override?.provider?.let { add(cacheKeyForProvider(it, mediaId)) }
-                songUrlCache[mediaId]?.cacheKey?.let(::add)
-                add(mediaId)
-                AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
-                    .mapTo(this) { provider -> cacheKeyForProvider(provider, mediaId) }
-            }
-        val discoveredKeys =
-            PlaybackCacheIndex.keysForMediaId(playerCache.keys + downloadCache.keys, mediaId)
-        return (preferredProviderKeys + discoveredKeys)
-            .distinct()
-            .firstOrNull { key ->
-                downloadCache.isFullyCached(key, fallbackContentLength) ||
-                    playerCache.isFullyCached(key, fallbackContentLength)
-            }
-    }
-
-    private fun cacheKeyForProvider(
-        provider: AudioProviderOrderItem,
-        mediaId: String,
-    ): String =
-        when (provider) {
-            AudioProviderOrderItem.SOUNDCLOUD -> soundCloudFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.TIDAL -> tidalFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.DEEZER -> deezerFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.INSTAGRAM -> instagramFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.QOBUZ -> qobuzFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.AMAZON_MUSIC -> amazonFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackCacheKey(mediaId)
-        }
-
-    private fun resolvePlaybackStreamBlocking(
-        mediaId: String,
-        song: Song?,
-        queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
-    ): PlaybackStreamResolution {
-        Timber.tag("MusicService").i("FETCHING PLAYBACK STREAM: $mediaId")
-        return runCatching {
-            runBlocking(Dispatchers.IO) {
-                resolveOnlineStream(mediaId, song, queuedMetadata)
-            }
-        }.getOrElse { throwable ->
-            when (throwable) {
-                is PlaybackException -> throw throwable
-                is java.net.ConnectException, is java.net.UnknownHostException -> {
-                    throw PlaybackException(
-                        getString(R.string.error_no_internet),
-                        throwable,
-                        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-                    )
-                }
-                is java.net.SocketTimeoutException -> {
-                    throw PlaybackException(
-                        getString(R.string.error_timeout),
-                        throwable,
-                        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
-                    )
-                }
-                else -> {
-                    throw PlaybackException(
-                        getString(R.string.error_unknown),
-                        throwable,
-                        PlaybackException.ERROR_CODE_REMOTE_ERROR,
-                    )
-                }
-            }
-        }
-    }
-
-    private suspend fun resolveOnlineStream(
-        mediaId: String,
-        song: Song?,
-        queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
-        allowUserFeedback: Boolean = true,
-    ): PlaybackStreamResolution {
-        if (mediaId.toUri().isTidalPlaybackCdnUri()) {
-            return PlaybackStreamResolution(
-                uri = mediaId,
-                expiresAtMs = System.currentTimeMillis() + 45 * 60 * 1000L,
-                cacheKey = mediaId,
-                format = tidalDirectPlaybackFormat(mediaId),
-                mimeType = MimeTypes.AUDIO_MP4,
-            )
-        }
-        if (mediaId.toUri().isDirectHttpAudioUri()) {
-            val mimeType = mediaId.directHttpAudioMimeType()
-            return PlaybackStreamResolution(
-                uri = mediaId,
-                expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
-                cacheKey = directHttpAudioCacheKey(mediaId),
-                format = directHttpAudioFormat(mediaId, mimeType),
-                mimeType = mimeType,
-            )
-        }
-        val tidalQuality = dataStore.get<String>(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
-        val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "https://igameten10-ez-hifi-api.hf.space/")
-        val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
-        val deezerQuality = dataStore.get<String>(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val deezerFastMode = dataStore.get(DeezerFastModeKey, false)
-        val configuredDeezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
-        val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
-            configuredProxyModeValue = dataStore.get(DeezerProxyModeKey, ""),
-            configuredProxyUrl = configuredDeezerProxyUrl,
-            globalProxyEnabled = dataStore.get(ProxyEnabledKey, false),
-        )
-        val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
-        val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
-        val providerOverride = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
-        val instagramCookie = dataStore.get(InstagramCookieKey, "")
-        val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-        val instagramAppId = dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_APP_ID
-        val instagramUuid = dataStore.get(InstagramUuidKey, "")
-        val soundCloudAuthToken = dataStore.get(SoundCloudAuthTokenKey, "")
-        val soundCloudQuality = dataStore.get<String>(SoundCloudAudioQualityKey).toEnum(SoundCloudAudioQuality.AAC_160)
-        val directTidalMediaId = TidalAudioProvider.isTidalTrackId(mediaId)
-        val directDeezerMediaId = DeezerAudioProvider.isDeezerTrackId(mediaId)
-        val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
-        val directTidalUsesDeezerStreams = directTidalMediaId
-        val skipTidalLiveManifestForThisAttempt =
-            skipTidalLiveManifestOnceMediaIds.remove(mediaId) ||
-                    tidalProgressivePreferredMediaIds.contains(mediaId)
-
-        fun QobuzAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = qobuzFallbackCacheKey(mediaId),
-                format = qobuzFallbackFormat(mediaId, this),
-                mimeType = MimeTypes.AUDIO_MP4,
-            )
-
-        fun TidalAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = tidalFallbackCacheKey(mediaId),
-                format = tidalFallbackFormat(mediaId, this),
-                mimeType = mimeType,
-            )
-
-        fun DeezerAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = deezerFallbackCacheKey(mediaId),
-                format = deezerFallbackFormat(mediaId, this),
-                mimeType = MimeTypes.AUDIO_MPEG,
-            )
-
-        fun InstagramAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = instagramFallbackCacheKey(mediaId),
-                format = instagramFallbackFormat(mediaId, this),
-                mimeType = mimeType,
-            )
-
-        fun AppleAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = appleMusicFallbackCacheKey(mediaId),
-                format = appleMusicFallbackFormat(mediaId, this),
-                mimeType = mimeType,
-            )
-
-        fun throwProviderFailure(
-            provider: String,
-            error: Throwable?,
-        ): Nothing {
-            val cause = error ?: IllegalStateException("$provider failed")
-            throw PlaybackException(
-                "$provider failed: ${cause.readableMessage()}",
-                cause,
-                PlaybackException.ERROR_CODE_REMOTE_ERROR,
-            )
-        }
-
-        fun showProviderWarning(message: String) {
-            if (allowUserFeedback) {
-                showPlaybackToast(message)
-            }
-        }
-
-        var soundCloudAttempt: Result<PlaybackStreamResolution> =
-            Result.failure(IllegalStateException("SoundCloud not attempted yet"))
-        var tidalAttempt: Result<TidalAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("TIDAL audio not enabled"))
-        var deezerAttempt: Result<DeezerAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Deezer audio not enabled"))
-        var amazonAttempt: Result<AmazonAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Amazon Music not enabled"))
-        var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Instagram audio not enabled"))
-        var appleAttempt: Result<AppleAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Apple Music not enabled"))
-        var youtubeAttempt: Result<PlaybackStreamResolution> =
-            Result.failure(IllegalStateException("YouTube Music not attempted yet"))
-        var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Qobuz not attempted yet"))
-        val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
-        val spotifyIsrc = resolveSpotifyIsrcForMatching(mediaId, song, queuedMetadata)
-        val orderedProviders =
-            ExperimentalPlaybackPolicy.prioritizeDeezer(
-                providers = buildList {
-                providerOverride?.provider?.let(::add)
-                if (directSoundCloudMediaId) add(AudioProviderOrderItem.SOUNDCLOUD)
-                if (directTidalUsesDeezerStreams) {
-                    add(AudioProviderOrderItem.DEEZER)
-                } else if (directTidalMediaId) {
-                    add(AudioProviderOrderItem.TIDAL)
-                }
-                if (directDeezerMediaId) add(AudioProviderOrderItem.DEEZER)
-                addAll(audioProviderOrder)
-                }.distinct(),
-                enabled = dataStore.get(ExperimentalDeezerFirstKey, false),
-            )
-
-        fun isForcedProvider(provider: AudioProviderOrderItem): Boolean =
-            providerOverride?.provider == provider
-
-        fun providerMediaId(provider: AudioProviderOrderItem): String =
-            if (isForcedProvider(provider)) providerOverride?.providerMediaId().orEmpty().ifBlank { mediaId } else mediaId
-
-        fun canAttemptOrderedProvider(provider: AudioProviderOrderItem): Boolean =
-            if (directTidalUsesDeezerStreams && provider != AudioProviderOrderItem.DEEZER) {
-                false
-            } else {
-                when (provider) {
-                    AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
-                    AudioProviderOrderItem.YOUTUBE_MUSIC -> mediaId.isYouTubeVideoId()
-                    else -> true
-                }
-            }
-
-        suspend fun attemptProvider(
-            provider: AudioProviderOrderItem,
-            candidateTrackId: String? = null,
-        ): PlaybackStreamResolution? {
-            if (candidateTrackId == null && provider in attemptedProviders) return null
-            if (!provider.isPlaybackProvider()) return null
-            if (directTidalUsesDeezerStreams && provider != AudioProviderOrderItem.DEEZER) return null
-            if (candidateTrackId == null && !canAttemptOrderedProvider(provider) && !isForcedProvider(provider)) return null
-            val attemptMediaId = candidateTrackId?.let { trackId ->
-                ProviderMatchOverride(
-                    provider = provider,
-                    providerTrackId = trackId,
-                    label = trackId,
-                ).providerMediaId()
-            } ?: providerMediaId(provider)
-            when (provider) {
-                AudioProviderOrderItem.SOUNDCLOUD -> {
-                    attemptedProviders += provider
-                    soundCloudAttempt = runCatching {
-                        resolveSoundCloudFallback(
-                            mediaId = mediaId,
-                            song = song,
-                            queuedMetadata = queuedMetadata,
-                            authToken = soundCloudAuthToken,
-                            quality = soundCloudQuality,
-                            queryMediaId = attemptMediaId,
-                        )
-                    }
-                    soundCloudAttempt.getOrNull()?.let { return it }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("SoundCloud", soundCloudAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.TIDAL -> {
-                    attemptedProviders += provider
-                    tidalAttempt = runCatching {
-                        TidalAudioProvider.resolve(
-                            query = buildTidalQuery(attemptMediaId, song, queuedMetadata, spotifyIsrc),
-                            cacheDir = cacheDir,
-                            preferAtmos = false,
-                            preferLiveDash = false,
-                            audioQuality = tidalQuality,
-                            resolverEndpoints = tidalResolverEndpoints,
-                        )
-                    }
-                    tidalAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using TIDAL stream for $mediaId: ${resolved.label}")
-                        resolved.losslessDowngradedBitrateKbps?.let { bitrateKbps ->
-                            showProviderWarning(getString(R.string.tidal_lossless_downgraded_to_aac, bitrateKbps))
-                        }
-                        return resolved.toPlaybackResolution()
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("TIDAL", tidalAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.DEEZER -> {
-                    attemptedProviders += provider
-                    deezerAttempt = runCatching {
-                        DeezerAudioProvider.resolve(
-                            buildDeezerQuery(
-                                mediaId = attemptMediaId,
-                                song = song,
-                                metadataOverride = queuedMetadata,
-                                resolverUrl = deezerResolverUrl,
-                                quality = deezerQuality,
-                                fastMode = if (directTidalUsesDeezerStreams) false else deezerFastMode,
-                                proxyUrl = deezerProxyUrl,
-                                isrcOverride = spotifyIsrc,
-                            ),
-                        )
-                    }
-                    deezerAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Deezer stream for $mediaId: ${resolved.label}")
-                        return resolved.toPlaybackResolution()
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("Deezer", deezerAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.AMAZON_MUSIC -> {
-                    attemptedProviders += provider
-                    val amazonQuery = buildAmazonQuery(
-                        mediaId = attemptMediaId,
-                        song = song,
-                        metadataOverride = queuedMetadata,
-                    )
-
-                    amazonAttempt = runCatching {
-                        AmazonAudioProvider.resolve(this@MusicService, amazonQuery)
-                    }
-
-                    amazonAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Amazon Music stream for $mediaId: ${resolved.label}")
-                        // Stash the already-known track duration (from local DB/queued metadata,
-                        // not from Amazon) so AmazonFfmpegAwareDataSource can write a correct
-                        // WAV data-chunk size instead of leaving duration unknown - see
-                        // knownDurationMsByTrackId below.
-                        val durationMs = song?.song?.duration
-                            ?.takeIf { it > 0 }
-                            ?.toLong()
-                            ?.times(1000L)
-                            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-                        if (durationMs != null) {
-                            knownDurationMsByTrackId[resolved.trackId] = durationMs
-                            knownDurationMsByTrackId[mediaId] = durationMs
-                        }
-                        val isAtmos = resolved.codecs.lowercase().contains("eac3")
-                        if (isAtmos) {
-                            // Atmos/EAC3 still goes through the existing blocking decrypt -
-                            // AmazonFfmpegDataSource only handles the FLAC (-f flac) case below.
-                            val localPath = AmazonAtmosDecryptor.prepareStream(this@MusicService, resolved)
-                            return PlaybackStreamResolution(
-                                uri = android.net.Uri.fromFile(File(localPath)).toString(),
-                                expiresAtMs = resolved.expiresAtMs,
-                                cacheKey = amazonFallbackCacheKey(mediaId),
-                                format = amazonFallbackFormat(mediaId, resolved).copy(
-                                    itag = AMAZON_ATMOS_ITAG,
-                                    mimeType = MimeTypes.AUDIO_MP4,
-                                ),
-                                mimeType = MimeTypes.AUDIO_MP4,
-                            )
-                        }
-
-                        // FLAC path: don't block here on a full download + FFmpeg pass.
-                        // createMediaSource() picks this resolution up via
-                        // AmazonAudioProvider.resolvedFor(asin) and wires an
-                        // AmazonFfmpegDataSource that streams the CDN URL straight into FFmpeg,
-                        // decrypting progressively as bytes arrive and teeing the result into
-                        // the same cache slot for the next play.
-                        val cachedFlac = AmazonFfmpegDecryptor.getCachedFlac(resolved.trackId)
-                        val streamUri = if (cachedFlac != null && cachedFlac.exists() && cachedFlac.length() > 0) {
-                            Timber.tag("MusicService").d("Amazon FFmpeg cache hit for $mediaId -> ${cachedFlac.absolutePath}")
-                            android.net.Uri.fromFile(cachedFlac).toString()
-                        } else {
-                            resolved.mediaUri
-                        }
-                        return PlaybackStreamResolution(
-                            uri = streamUri,
-                            expiresAtMs = resolved.expiresAtMs,
-                            cacheKey = amazonFallbackCacheKey(mediaId),
-                            format = amazonFallbackFormat(mediaId, resolved).copy(
-                                itag = AMAZON_FLAC_ITAG,
-                                mimeType = MimeTypes.AUDIO_FLAC,
-                            ),
-                            mimeType = MimeTypes.AUDIO_FLAC,
-                        )
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("Amazon Music", amazonAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.INSTAGRAM -> {
-                    attemptedProviders += provider
-                    instagramAttempt = runCatching {
-                        InstagramAudioProvider.resolve(
-                            buildInstagramQuery(mediaId, song, queuedMetadata, spotifyIsrc),
-                            instagramCookie,
-                            instagramUuid,
-                            instagramUserAgent,
-                            instagramAppId,
-                        )
-                    }
-                    instagramAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Instagram audio stream for $mediaId: ${resolved.title}")
-                        return resolved.toPlaybackResolution()
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("Instagram", instagramAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.YOUTUBE_MUSIC -> {
-                    attemptedProviders += provider
-                    youtubeAttempt = runCatching {
-                        resolveYouTubeFallback(
-                            mediaId = attemptMediaId,
-                            cacheMediaId = mediaId,
-                            song = song,
-                            queuedMetadata = queuedMetadata,
-                        )
-                    }
-                    youtubeAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using YouTube Music stream for $mediaId")
-                        return resolved
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("YouTube Music", youtubeAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.APPLE_MUSIC -> {
-                    attemptedProviders += provider
-                    appleAttempt = runCatching {
-                        AppleAudioProvider.resolve(
-                            AppleAudioProvider.Query(
-                                song = song?.song?.title ?: queuedMetadata?.title ?: mediaId,
-                                artist = song?.orderedArtists?.firstOrNull()?.name ?: queuedMetadata?.artists?.firstOrNull()?.name ?: "",
-                                album = song?.song?.albumName ?: song?.album?.title ?: queuedMetadata?.album?.title,
-                                isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
-                                durationMs = (song?.song?.duration ?: (queuedMetadata?.duration))?.toLong()?.times(1000L),
-                                quality = dataStore.get<String>(AppleAudioQualityKey).toEnum(AppleAudioQuality.AAC),
-                            )
-                        )
-                    }
-                    appleAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Apple Music stream for $mediaId: ${resolved.title}")
-                        return resolved.toPlaybackResolution()
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("Apple Music", appleAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.QOBUZ -> {
-                    attemptedProviders += provider
-                    qobuzAttempt = runCatching {
-                        QobuzAudioProvider.resolve(buildQobuzQuery(attemptMediaId, song, queuedMetadata, spotifyIsrc))
-                    }
-                    qobuzAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Qobuz stream for $mediaId: ${resolved.label}")
-                        return resolved.toPlaybackResolution()
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("Qobuz", qobuzAttempt.exceptionOrNull())
-                    }
-                }
-            }
-            return null
-        }
-
-        for (provider in orderedProviders) {
-            val startedAt = System.nanoTime()
-            val resolved =
-                if (dataStore.get(ExperimentalProviderPlaybackTimeoutKey, false)) {
-                    withTimeoutOrNull(20_000L) { attemptProvider(provider) }
-                } else {
-                    attemptProvider(provider)
-                }
-            if (dataStore.get(ExperimentalPlaybackDiagnosticsKey, false)) {
-                val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
-                Timber.tag(TAG).i(
-                    "Experimental playback attempt: provider=$provider durationMs=$durationMs success=${resolved != null}",
-                )
-            }
-            resolved?.let { return it }
-        }
-
-        if (directTidalUsesDeezerStreams) {
-            val deezerError = deezerAttempt.exceptionOrNull()
-                ?: IllegalStateException("Deezer audio was not attempted")
-            throw PlaybackException(
-                "Deezer failed: ${deezerError.readableMessage()}",
-                deezerError,
-                PlaybackException.ERROR_CODE_REMOTE_ERROR,
-            )
-        }
-
-        if (!attemptedProviders.contains(AudioProviderOrderItem.SOUNDCLOUD) && !directSoundCloudMediaId) {
-            soundCloudAttempt = runCatching {
-                resolveSoundCloudFallback(mediaId, song, queuedMetadata, soundCloudAuthToken)
-            }
-            soundCloudAttempt.getOrNull()?.let { return it }
-        }
-
-        if (
-            !attemptedProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC) &&
-            mediaId.isYouTubeVideoId()
-        ) {
-            youtubeAttempt = runCatching {
-                resolveYouTubeFallback(mediaId, song = song, queuedMetadata = queuedMetadata)
-            }
-        }
-        youtubeAttempt.getOrNull()?.let { return it }
-
-        val fallbackMetadata = queuedMetadata ?: song?.toMediaMetadata()
-        if (providerOverride == null && fallbackMetadata != null) {
-            val searchedCandidates = runCatching {
-                ProviderMatchSearch.search(
-                    context = this@MusicService,
-                    metadata = fallbackMetadata,
-                    perProviderLimit = 4,
-                )
-            }.onFailure { error ->
-                Timber.tag(TAG).w(error, "Automatic candidate fallback search failed for $mediaId")
-            }.getOrDefault(emptyList())
-
-            val safeCandidates = ProviderFallbackMatcher.selectSafeCandidates(
-                metadata = fallbackMetadata,
-                candidates = searchedCandidates.filterNot { candidate ->
-                    candidate.provider == AudioProviderOrderItem.YOUTUBE_MUSIC &&
-                        candidate.providerTrackId == mediaId
-                },
-                providerOrder = orderedProviders,
-            )
-
-            for (candidate in safeCandidates) {
-                Timber.tag(TAG).i(
-                    "Retrying playback with safe candidate: mediaId=$mediaId " +
-                        "provider=${candidate.provider} trackId=${candidate.providerTrackId}",
-                )
-                attemptProvider(candidate.provider, candidate.providerTrackId)?.let { resolved ->
-                    Timber.tag(TAG).i(
-                        "Automatic candidate fallback selected: mediaId=$mediaId " +
-                            "provider=${candidate.provider} trackId=${candidate.providerTrackId}",
-                    )
-                    return resolved
-                }
-            }
-        }
-
-        val youtubeError = youtubeAttempt.exceptionOrNull()
-            ?: IllegalStateException("YouTube fallback failed")
-        val soundCloudError = soundCloudAttempt.exceptionOrNull()
-            ?: IllegalStateException("SoundCloud fallback failed")
-        val tidalDetail = if (attemptedProviders.contains(AudioProviderOrderItem.TIDAL) || directTidalMediaId) {
-            tidalAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "TIDAL failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
-        val deezerDetail = if (attemptedProviders.contains(AudioProviderOrderItem.DEEZER) || directDeezerMediaId) {
-            deezerAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "Deezer failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
-        val instagramDetail = if (attemptedProviders.contains(AudioProviderOrderItem.INSTAGRAM)) {
-            instagramAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "Instagram failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
-        val appleDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
-            appleAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "Apple Music failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
-        val qobuzDetail = qobuzAttempt.exceptionOrNull()?.readableMessage()
-            ?.let { "Qobuz failed: $it; " }
-            .orEmpty()
-        val providerDetails =
-            "${qobuzDetail}${tidalDetail}${deezerDetail}${instagramDetail}${appleDetail}" +
-                "SoundCloud failed: ${soundCloudError.readableMessage()}; " +
-                "YouTube failed: ${youtubeError.readableMessage()}"
-        throw PlaybackException(
-            "No compatible audio source was found for ${fallbackMetadata?.title ?: mediaId}. $providerDetails",
-            youtubeError,
-            PlaybackException.ERROR_CODE_REMOTE_ERROR,
-        )
-    }
-
-    private suspend fun resolveSoundCloudFallback(
-        mediaId: String,
-        song: Song?,
-        queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
-        authToken: String = "",
-        quality: SoundCloudAudioQuality = SoundCloudAudioQuality.AAC_160,
-        queryMediaId: String = mediaId,
-    ): PlaybackStreamResolution {
-        val resolved = SoundCloudAudioProvider.resolve(
-            query = buildSoundCloudQuery(queryMediaId, song, queuedMetadata),
-            authToken = authToken,
-            quality = quality,
-        )
-        Timber.tag("MusicService").i(
-            "Using SoundCloud fallback for $mediaId: ${resolved.title} by ${resolved.artist}, bitrate=${resolved.bitrate}",
-        )
-        return PlaybackStreamResolution(
-            uri = resolved.mediaUri,
-            expiresAtMs = resolved.expiresAtMs,
-            cacheKey = soundCloudFallbackCacheKey(mediaId),
-            format = soundCloudFallbackFormat(mediaId, resolved),
-            mimeType = resolved.mimeType,
-        )
-    }
-
-    private suspend fun resolveYouTubeFallback(
-        mediaId: String,
-        cacheMediaId: String = mediaId,
-        song: Song? = null,
-        queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
-    ): PlaybackStreamResolution {
-        val title = song?.song?.title ?: queuedMetadata?.title
-        val artist = song?.orderedArtists?.firstOrNull()?.name ?: queuedMetadata?.artists?.firstOrNull()?.name
-        val fallbackQuery = if (!title.isNullOrBlank()) {
-            YouTubeAudioProvider.TrackQuery(title = title, artist = artist.orEmpty())
-        } else {
-            null
-        }
-        val resolved = YouTubeAudioProvider.resolve(mediaId, this@MusicService, fallbackQuery)
-        Timber.tag("MusicService").i(
-            "Using YouTube AAC fallback for $mediaId: itag=${resolved.itag}, bitrate=${resolved.bitrate}",
-        )
-        return PlaybackStreamResolution(
-            uri = resolved.mediaUri,
-            expiresAtMs = resolved.expiresAtMs,
-            cacheKey = youtubeFallbackCacheKey(cacheMediaId),
-            format = youtubeFallbackFormat(cacheMediaId, resolved),
-            mimeType = resolved.mimeType,
-        )
-    }
-
-    private suspend fun resolveSpotifyIsrcForMatching(
-        mediaId: String,
-        song: Song?,
-        queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
-    ): String? {
-        val spotifyTrackId =
-            listOf(
-                mediaId,
-                song?.song?.id,
-                queuedMetadata?.id,
-            ).firstOrNull { value ->
-                value?.startsWith("spotify:track:", ignoreCase = true) == true ||
-                        value?.contains("open.spotify.com/track/", ignoreCase = true) == true
-            } ?: return null
-        val cookie = dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() } ?: return null
-        return runCatching {
-            SpotifyCanvasClient.resolveTrackIsrc(spotifyTrackId, cookie)
-        }.onFailure { error ->
-            Timber.tag("MusicService").w(error, "Spotify ISRC match lookup failed for $spotifyTrackId")
-        }.getOrNull()
-    }
-
-    private fun buildTidalQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-        isrcOverride: String? = null,
-    ): TidalAudioProvider.Query {
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-
-        return TidalAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            isrc = isrcOverride ?: ProviderIsrc.firstOf(mediaId, song?.song?.id, queuedMetadata?.id),
-            durationMs = durationMs,
-        )
-    }
-
-    private fun buildQobuzQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-        isrcOverride: String? = null,
-    ): QobuzAudioProvider.Query {
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-        val backend = dataStore.get(QobuzBackendKey).toEnum<QobuzBackend>(QobuzBackend.KENNY)
-        val country = dataStore.get(QobuzCountryKey, "US")
-            .trim()
-            .uppercase(Locale.US)
-            .takeIf { it.matches(Regex("[A-Z]{2}")) }
-            ?: "US"
-        val customInstances = dataStore.get(QobuzCustomInstancesKey, "")
-
-        return QobuzAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            isrc = isrcOverride ?: ProviderIsrc.firstOf(mediaId, song?.song?.id, queuedMetadata?.id),
-            durationMs = durationMs,
-            countryCode = country,
-            backend = backend.toQobuzProviderBackend(),
-            customInstances = customInstances,
-        )
-    }
-
-    private fun buildDeezerQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-        resolverUrl: String,
-        quality: DeezerAudioQuality,
-        fastMode: Boolean = false,
-        proxyUrl: String = DeezerAudioProvider.DEFAULT_PROXY_URL,
-        isrcOverride: String? = null,
-    ): DeezerAudioProvider.Query {
-        val deezerCookie = dataStore.get(DeezerCookieKey, "")
-        val deezerUseAccount = dataStore.get(DeezerUseAccountKey, true)
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-
-        return DeezerAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            isrc = isrcOverride ?: ProviderIsrc.firstOf(mediaId, song?.song?.id, queuedMetadata?.id),
-            durationMs = durationMs,
-            resolverUrl = resolverUrl,
-            quality = quality,
-            fastMode = fastMode,
-            proxyUrl = proxyUrl,
-            experimentalResolverFallback = dataStore.get(ExperimentalDeezerResolverFallbackKey, true),
-            cookie = deezerCookie,
-            useAccount = deezerUseAccount,
-        )
-    }
-
-    private fun buildAmazonQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-    ): AmazonAudioProvider.Query {
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-
-        val country = runBlocking { dataStore.get(ContentCountryKey, "US") }
-        val quality = runBlocking { dataStore.get<String>(AmazonAudioQualityKey).toEnum(AmazonAudioQuality.HI_RES).name }
-
-        return AmazonAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            durationMs = durationMs,
-            country = country,
-            quality = quality,
-        )
-    }
-
-    private fun buildSoundCloudQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-    ): SoundCloudAudioProvider.Query {
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-
-        return SoundCloudAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            durationMs = durationMs,
-        )
-    }
-
-    private fun buildInstagramQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-        isrcOverride: String? = null,
-    ): InstagramAudioProvider.Query {
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-
-        return InstagramAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            durationMs = durationMs,
-            isrc = isrcOverride ?: ProviderIsrc.firstOf(mediaId, song?.song?.id, queuedMetadata?.id),
-        )
-    }
-
-    private fun QobuzBackend.toQobuzProviderBackend(): QobuzAudioProvider.ResolverBackend {
-        return when (this) {
-            QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
-        }
-    }
-
-    private fun Throwable.readableMessage(): String {
-        return message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
-    }
-
-    private suspend fun updateAppleMusicMotionBackground(metadata: com.metrolist.music.models.MediaMetadata?) {
-        currentAppleCanvasUrl.value = null
-        currentAppleTallCanvasUrl.value = null
-        if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
-        if (!dataStore.get(AppleMusicArtistMotionBackgroundKey, true)) return
-        if (isLocalMedia(metadata)) return
-
-        val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return
-        val cacheKey = preferredArtworkCacheKey(metadata, artist)
-        val cached =
-            synchronized(appleMusicArtistMotionBackgroundCache) {
-                appleMusicArtistMotionBackgroundCache[cacheKey]
-            }
-
-        if (cached != null) {
-            if (currentMediaMetadata.value?.id == metadata.id) {
-                // Split cache value if we stored both, or handle single value
-                val parts = cached.split("|")
-                currentAppleCanvasUrl.value = parts.getOrNull(0)?.takeIf { it.isNotBlank() }
-                currentAppleTallCanvasUrl.value = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
-            }
-            return
-        }
-
-        val song = database.getSongByIdBlocking(metadata.id)
-        // Resolve a trusted ISRC via the shared dual-source resolver. For
-        // YouTube Music sources (no embedded ISRC) this discovers one via
-        // Deezer + Apple validation, so the canvas lookup can use the precise
-        // `filter[isrc]` AMP path. Result is cached so the parallel SQUARE/TALL
-        // fetches below share one resolution pass.
-        val isrc = IsrcResolver.resolveAndValidate(
-            candidateIsrc = ProviderIsrc.firstOf(metadata.id, song?.song?.id, metadata.id),
-            song = metadata.title,
-            artist = artist,
-            durationSeconds = metadata.duration,
-        )
-
-        // NOTE: getBySongArtist() can chain up to 4 sequential network calls
-        // (token fetch -> iTunes ISRC lookup -> AMP catalog call -> AMP search
-        // fallback), and the token endpoint is a Hugging Face Space that can
-        // take well over 10s to cold-start. 4s was cutting this off before it
-        // had any real chance to succeed, so give it real breathing room.
-        val (square, tall) = coroutineScope {
-            val squareDeferred = async {
-                withTimeoutOrNull(APPLE_CANVAS_FETCH_TIMEOUT_MS) {
-                    AppleMusicCanvasProvider.getBySongArtist(
-                        song = metadata.title,
-                        artist = artist,
-                        album = metadata.album?.title,
-                        explicit = metadata.explicit,
-                        isrc = isrc,
-                        durationSeconds = metadata.duration,
-                        preferredAspect = AppleMusicCanvasProvider.CanvasAspectPreference.SQUARE,
-                    )
-                }?.animated
-            }
-
-            val tallDeferred = async {
-                withTimeoutOrNull(APPLE_CANVAS_FETCH_TIMEOUT_MS) {
-                    AppleMusicCanvasProvider.getBySongArtist(
-                        song = metadata.title,
-                        artist = artist,
-                        album = metadata.album?.title,
-                        explicit = metadata.explicit,
-                        isrc = isrc,
-                        durationSeconds = metadata.duration,
-                        preferredAspect = AppleMusicCanvasProvider.CanvasAspectPreference.TALL,
-                    )
-                }?.animated
-            }
-
-            squareDeferred.await() to tallDeferred.await()
-        }
-
-        // Only cache genuine results. If both came back empty this was very
-        // likely a timeout/network hiccup (cold token server, flaky
-        // connection, etc.) rather than Apple confirming "no canvas exists" -
-        // caching that permanently for the rest of the process lifetime is
-        // what made the feature look completely broken. Let it retry on the
-        // next play instead.
-        if (square != null || tall != null) {
-            val combined = "${square.orEmpty()}|${tall.orEmpty()}"
-            synchronized(appleMusicArtistMotionBackgroundCache) {
-                appleMusicArtistMotionBackgroundCache[cacheKey] = combined
-            }
-        }
-
-        if (currentMediaMetadata.value?.id == metadata.id) {
-            currentAppleCanvasUrl.value = square
-            currentAppleTallCanvasUrl.value = tall
-        }
-    }
-
-    private suspend fun updateTidalCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {
-        currentTidalCanvasUrl.value = null
-        if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
-        if (!dataStore.get(TidalAnimatedCoversEnabledKey, false)) return
-        if (isLocalMedia(metadata)) return
-
-        val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return
-        val cacheKey = preferredArtworkCacheKey(metadata, artist)
-        val cached =
-            synchronized(tidalAnimatedArtworkCache) {
-                if (tidalAnimatedArtworkCache.containsKey(cacheKey)) {
-                    true to tidalAnimatedArtworkCache[cacheKey]
-                } else {
-                    false to null
-                }
-            }
-        if (cached.first) {
-            if (currentMediaMetadata.value?.id == metadata.id) {
-                currentTidalCanvasUrl.value = cached.second
-            }
-            return
-        }
-
-        val resolved =
-            withTimeoutOrNull(3_500L) {
-                TidalHomeFeedProvider.resolveAnimatedArtwork(
-                    title = metadata.title,
-                    artist = artist,
-                    album = metadata.album?.title,
-                    cookie = dataStore.get(TidalCookieKey, ""),
-                )
-            }?.takeIf { it.isNotBlank() }
-
-        synchronized(tidalAnimatedArtworkCache) {
-            tidalAnimatedArtworkCache[cacheKey] = resolved
-        }
-        if (currentMediaMetadata.value?.id == metadata.id) {
-            currentTidalCanvasUrl.value = resolved
-        }
-    }
-
-    private suspend fun updatePreferredArtwork(
-        metadata: com.metrolist.music.models.MediaMetadata?,
-    ) {
-        currentPreferredArtworkUrl.value = null
-        if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
-        if (isLocalMedia(metadata)) return
-
-        val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() }
-        val cacheKey = preferredArtworkCacheKey(metadata, artist)
-        val cached =
-            synchronized(preferredArtworkCache) {
-                if (preferredArtworkCache.containsKey(cacheKey)) {
-                    true to preferredArtworkCache[cacheKey]
-                } else {
-                    false to null
-                }
-            }
-        if (cached.first) {
-            if (currentMediaMetadata.value?.id == metadata.id) {
-                currentPreferredArtworkUrl.value = cached.second
-                refreshDiscordRpcForPreferredArtwork(metadata.id)
-            }
-            return
-        }
-
-        val tidalArtwork =
-            withTimeoutOrNull(2_750L) {
-                TidalHomeFeedProvider.resolveAlbumArtwork(
-                    title = metadata.title,
-                    artist = artist,
-                    album = metadata.album?.title,
-                    cookie = dataStore.get(TidalCookieKey, ""),
-                )
-            }?.takeIf { it.isNotBlank() }
-        val resolved =
-            tidalArtwork
-                ?: withTimeoutOrNull(2_750L) {
-                    DeezerHomeFeedProvider.resolveAlbumArtwork(
-                        title = metadata.title,
-                        artist = artist,
-                        album = metadata.album?.title,
-                        cookie = dataStore.get(DeezerCookieKey, ""),
-                    )
-                }?.takeIf { it.isNotBlank() }
-
-        synchronized(preferredArtworkCache) {
-            preferredArtworkCache[cacheKey] = resolved
-        }
-        if (currentMediaMetadata.value?.id == metadata.id) {
-            currentPreferredArtworkUrl.value = resolved
-            refreshDiscordRpcForPreferredArtwork(metadata.id)
-        }
-    }
-
-    private fun refreshDiscordRpcForPreferredArtwork(mediaId: String) {
-        scope.launch(Dispatchers.Main.immediate) {
-            if (!player.isPlaying || currentSong.value?.song?.id != mediaId) return@launch
-            currentSong.value?.let { song ->
-                updateDiscordRPC(song)
-            }
-        }
-    }
-
-    private fun preferredArtworkCacheKey(
-        metadata: com.metrolist.music.models.MediaMetadata,
-        artist: String?,
-    ): String =
-        listOf(
-            metadata.title,
-            artist.orEmpty(),
-            metadata.album?.title.orEmpty(),
-        ).joinToString("|") { it.lowercase().trim() }
-
-    private suspend fun isLocalMedia(metadata: com.metrolist.music.models.MediaMetadata): Boolean =
-        metadata.id.isLocalMediaId() ||
-                withContext(Dispatchers.IO) {
-                    database.getSongByIdBlocking(metadata.id)?.song?.isLocal == true
-                }
-
-    private fun String.isLocalMediaId(): Boolean =
-        startsWith("content://", ignoreCase = true) ||
-                startsWith("file://", ignoreCase = true)
-
-    private fun MediaItem.isAmazonCdnStream(): Boolean {
-        val uri = localConfiguration?.uri?.toString() ?: return false
-        return AmazonAudioProvider.isAmazonCdnUrl(uri) || mediaId.startsWith("amazon:track:")
-    }
-
-    private fun loadEmbeddedCanvasInBackground(mediaId: String) {
-        scope.launch(Dispatchers.IO) {
-            val embeddedCanvas =
-                AudioTagWriter.extractEmbeddedCanvasToCache(applicationContext, mediaId)
-            withContext(Dispatchers.Main) {
-                if (currentMediaMetadata.value?.id == mediaId) {
-                    currentEmbeddedCanvasUrl.value = embeddedCanvas?.uri
-                }
-            }
-        }
-    }
-
-    private fun currentQueueMetadata(mediaId: String): com.metrolist.music.models.MediaMetadata? {
-        return if (Looper.myLooper() == Looper.getMainLooper()) {
-            player.findNextMediaItemById(mediaId)?.metadata
-        } else {
-            runCatching {
-                runBlocking(Dispatchers.Main) {
-                    player.findNextMediaItemById(mediaId)?.metadata
-                }
-            }.getOrNull()
-        }
-    }
-
-    private fun queuedMetadataForPlaybackDatabase(
-        mediaId: String,
-        song: Song?,
-    ): com.metrolist.music.models.MediaMetadata? {
-        if (song != null) return null
-        val metadata = currentQueueMetadata(mediaId)?.takeIf { it.id == mediaId } ?: return null
-        return if (mediaId.isExternalFrontendMediaId() && metadata.duration in 1 until 30) {
-            metadata.copy(duration = -1)
-        } else {
-            metadata
-        }
-    }
-
-    private fun String.isExternalFrontendMediaId(): Boolean {
-        val value = lowercase(Locale.US)
-        return value.startsWith("spotify:") ||
-                value.startsWith("deezer:") ||
-                value.startsWith("tidal:") ||
-                value.startsWith("soundcloud:") ||
-                value.startsWith("qobuz:") ||
-                value.contains("open.spotify.com") ||
-                value.contains("deezer.com") ||
-                value.contains("tidal.com") ||
-                value.contains("soundcloud.com") ||
-                value.contains("qobuz.com")
-    }
-
-    private fun Uri.isUnresolvedPlaybackUri(mediaId: String): Boolean {
-        val raw = toString()
-        if (raw == mediaId) return true
-        if (!scheme.isNullOrBlank()) return false
-        return raw.isNotBlank() &&
-                !raw.contains('/') &&
-                !raw.contains('\\') &&
-                !raw.contains('.') &&
-                raw.length <= 64
-    }
-
-    private fun MediaItem.mediaIdForPlaybackSource(): String? {
-        val localConfiguration = localConfiguration ?: return mediaId.takeIf { it.isNotBlank() }
-        return mediaId.takeIf { it.isNotBlank() }
-            ?: localConfiguration.customCacheKey?.let(::mediaIdFromDataSpecKey)
-            ?: DeezerAudioDataSource.mediaIdFromUri(localConfiguration.uri)
-    }
-
-    private fun MediaItem.buildPendingTidalRoute(
-        mediaId: String,
-        expectDash: Boolean,
-    ): MediaItem? {
-        val localConfiguration = localConfiguration ?: return null
-        val scheme = localConfiguration.uri.scheme?.lowercase(Locale.US)
-        val canRoute =
-            when (scheme) {
-                null, "" -> localConfiguration.uri.isUnresolvedPlaybackUri(mediaId)
-                "http", "https" -> true
-                else -> false
-            }
-        if (!canRoute) return null
-        return withResolvedPlaybackStream(
-            uri = pendingTidalManifestUri(mediaId, expectDash),
-            cacheKey = tidalFallbackCacheKey(mediaId),
-            mimeType = if (expectDash) MimeTypes.APPLICATION_MPD else null,
-        )
-    }
-
-    private fun resolveMediaItemForSource(mediaItem: MediaItem): MediaItem {
-        if (mediaItem.localConfiguration == null) return mediaItem
-        val mediaId = mediaItem.mediaIdForPlaybackSource()
-            ?: return mediaItem
-        val tidalPrimary =
-            isProviderFirstInPlaybackOrder(
-                mediaId = mediaId,
-                provider = AudioProviderOrderItem.TIDAL,
-            )
-        val skipTidalLiveManifestForAttempt =
-            skipTidalLiveManifestOnceMediaIds.contains(mediaId) ||
-                    tidalProgressivePreferredMediaIds.contains(mediaId)
-
-        val streamSelectionKey = currentStreamSelectionKey()
-        songUrlCache[mediaId]?.takeIf {
-            it.expiresAtMs > System.currentTimeMillis() &&
-                    it.selectionKey == streamSelectionKey
-        }?.let { cached ->
-            if (skipTidalLiveManifestForAttempt && isTidalFallbackCacheKey(cached.cacheKey)) {
-                Timber.tag("MusicService").d("Ignoring cached TIDAL stream during progressive retry for $mediaId")
-                clearResolvedStreamCache(mediaId)
-                return@let
-            }
-            val cachedUri = cached.uri.toUri()
-            val cachedIsBrokenTidalTemp =
-                tidalPrimary &&
-                        !skipTidalLiveManifestForAttempt &&
-                        isTidalFallbackCacheKey(cached.cacheKey) &&
-                        cachedUri.scheme.equals("file", ignoreCase = true) &&
-                        cached.mimeType != MimeTypes.APPLICATION_MPD
-            if (cachedIsBrokenTidalTemp) {
-                Timber.tag("MusicService").d("Ignoring non-DASH TIDAL temp cache before source selection for $mediaId")
-                clearResolvedStreamCache(mediaId)
-                return@let
-            }
-            if (
-                skipTidalLiveManifestForAttempt &&
-                isTidalFallbackCacheKey(cached.cacheKey) &&
-                cached.mimeType != MimeTypes.APPLICATION_MPD
-            ) {
-                skipTidalLiveManifestOnceMediaIds.remove(mediaId)
-            }
-            return mediaItem.withResolvedPlaybackStream(
-                uri = cached.uri,
-                cacheKey = cached.cacheKey,
-                mimeType = cached.mimeType,
-                drmLicenseUri = cached.drmLicenseUri,
-                kid = cached.kid,
-                decryptionKey = cached.decryptionKey
-            )
-        } ?: songUrlCache.remove(mediaId)
-
-        if (tidalPrimary) {
-            mediaItem.buildPendingTidalRoute(
-                mediaId = mediaId,
-                expectDash = false,
-            )?.let { pendingTidalItem ->
-                return pendingTidalItem
-            }
-        }
-
-        return mediaItem
-    }
-
-    private fun MediaItem.withResolvedPlaybackStream(
-        uri: String,
-        cacheKey: String,
-        mimeType: String? = null,
-        drmLicenseUri: String? = null,
-        kid: String? = null,
-        decryptionKey: String? = null,
-    ): MediaItem {
-        val resolvedUri = uri.toUri()
-        val playbackCacheKey = if (resolvedUri.scheme.equals("file", ignoreCase = true)) {
-            resolvedUri.toString()
-        } else {
-            cacheKey
-        }
-        val isBarePlaybackId =
-            resolvedUri.scheme.isNullOrBlank() &&
-                    resolvedUri.toString().isNotBlank() &&
-                    !resolvedUri.toString().contains('/') &&
-                    !resolvedUri.toString().contains('\\')
-        val isSoundCloudHls =
-            resolvedUri.isHierarchical &&
-                    resolvedUri.getQueryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) == "1"
-        val isClearKey = drmLicenseUri?.startsWith("clearkey://") == true
-        val builder = buildUpon()
-            .setUri(resolvedUri)
-            .setCustomCacheKey(playbackCacheKey)
-            .setMimeType(
-                when {
-                    isSoundCloudHls -> MimeTypes.APPLICATION_M3U8
-                    isBarePlaybackId -> mimeType
-                    else -> mimeType ?: localConfiguration?.mimeType
-                },
-            )
-        if (isClearKey) {
-            builder.setDrmConfiguration(
-                MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                    .setLicenseUri(Uri.parse(drmLicenseUri!!))
-                    .build()
-            )
-        } else if (!drmLicenseUri.isNullOrBlank()) {
-            builder.setDrmConfiguration(
-                MediaItem.DrmConfiguration
-                    .Builder(C.CLEARKEY_UUID)
-                    .setLicenseUri(drmLicenseUri)
-                    .setPlayClearContentWithoutKey(true)
-                    .build(),
-            )
-        }
-        return builder.build()
-    }
-
-    private fun MediaItem.isResolvedTidalPlaybackStream(): Boolean {
-        val localConfiguration = localConfiguration ?: return false
-        val uri = localConfiguration.uri
-        return localConfiguration.customCacheKey?.let(::isTidalFallbackCacheKey) == true ||
-                TidalAudioProvider.isLiveManifestUri(uri.toString()) ||
-                uri.isTidalPlaybackCdnUri()
-    }
-
-    private inner class PlaybackMediaSourceFactory(
-        private val dataSourceFactory: DataSource.Factory,
-    ) : MediaSource.Factory {
-        private val extractorsFactory =
-            DefaultExtractorsFactory()
-                .setConstantBitrateSeekingEnabled(true)
-        private val defaultFactory = DefaultMediaSourceFactory(
-            dataSourceFactory,
-            extractorsFactory,
-        )
-        private val hlsFactory = HlsMediaSource.Factory(dataSourceFactory)
-        private val dashFactory = DashMediaSource.Factory(dataSourceFactory)
-        private val supportedTypes = (
-                defaultFactory.supportedTypes.toSet() +
-                        C.CONTENT_TYPE_HLS +
-                        C.CONTENT_TYPE_DASH
-                ).toIntArray()
-
-        override fun createMediaSource(mediaItem: MediaItem): MediaSource {
-            val resolvedItem = runCatching {
-                resolveMediaItemForSource(mediaItem)
-            }.onFailure { error ->
-                Timber.tag("MusicService").w(error, "Failed to resolve stream before media source creation")
-            }.getOrDefault(mediaItem)
-
-            val uri = resolvedItem.localConfiguration?.uri
-            val streamUrl = uri?.toString() ?: ""
-
-            val finalFactory: DataSource.Factory = dataSourceFactory
-            val isHlsSource =
-                uri != null &&
-                        (
-                                resolvedItem.localConfiguration?.mimeType == MimeTypes.APPLICATION_M3U8
-                                )
-            val isDashSource =
-                uri != null &&
-                        resolvedItem.localConfiguration?.mimeType == MimeTypes.APPLICATION_MPD
-
-            return when {
-                isHlsSource -> {
-                    Timber.tag("MusicService").d("Using HLS media source for ${resolvedItem.mediaId}")
-                    hlsFactory.createMediaSource(
-                        resolvedItem.buildUpon()
-                            .setMimeType(MimeTypes.APPLICATION_M3U8)
-                            .build(),
-                    )
-                }
-                isDashSource -> {
-                    Timber.tag("MusicService").d("Using DASH media source for ${resolvedItem.mediaId}")
-                    dashFactory.createMediaSource(
-                        resolvedItem.buildUpon()
-                            .setMimeType(MimeTypes.APPLICATION_MPD)
-                            .build(),
-                    )
-                }
-                else -> defaultFactory.createMediaSource(resolvedItem)
-            }
-        }
-
-        override fun setDrmSessionManagerProvider(
-            drmSessionManagerProvider: DrmSessionManagerProvider,
-        ): MediaSource.Factory {
-            defaultFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
-            hlsFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
-            dashFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
-            return this
-        }
-
-        override fun setLoadErrorHandlingPolicy(
-            loadErrorHandlingPolicy: LoadErrorHandlingPolicy,
-        ): MediaSource.Factory {
-            defaultFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
-            hlsFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
-            dashFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
-            return this
-        }
-
-        override fun getSupportedTypes(): IntArray = supportedTypes
-    }
-
-    private fun createMediaSourceFactory() = PlaybackMediaSourceFactory(createDataSourceFactory())
-
-    private fun createLoadControl() =
-        DefaultLoadControl
-            .Builder()
-            .setTargetBufferBytes(AUDIO_TARGET_BUFFER_BYTES)
-            .setPrioritizeTimeOverSizeThresholds(false)
-            .setBufferDurationsMs(
-                AUDIO_MIN_BUFFER_MS,
-                AUDIO_MAX_BUFFER_MS,
-                AUDIO_BUFFER_FOR_PLAYBACK_MS,
-                AUDIO_BUFFER_FOR_REBUFFER_MS,
-            ).build()
-
-    private fun shouldEnableAudioOffload(
-        offloadPref: Boolean,
-        crossfadeEnabled: Boolean,
-    ): Boolean {
-        if (!offloadPref) return false
-        if (crossfadeEnabled) {
-            Timber.tag(TAG).d("Audio offload disabled because crossfade is enabled")
-            return false
-        }
-        Timber.tag(TAG).d(
-            "Audio offload requested, but custom EQ/silence/speed audio processors still block reliable offload"
-        )
-        return false
-    }
-
-    private fun createRenderersFactory(
-        eqProcessor: CustomEqualizerAudioProcessor,
-        silenceProcessor: SilenceDetectorAudioProcessor,
-    ) = object : DefaultRenderersFactory(this) {
-        init {
-            setExtensionRendererMode(EXTENSION_RENDERER_MODE_PREFER)
-        }
-
-        override fun buildAudioSink(
-            context: Context,
-            enableFloatOutput: Boolean,
-            enableAudioTrackPlaybackParams: Boolean,
-        ) = DefaultAudioSink
-            .Builder(this@MusicService)
-            .setEnableFloatOutput(enableFloatOutput)
-            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            .setAudioProcessorChain(
-                DefaultAudioSink.DefaultAudioProcessorChain(
-                    // 2. Inject processor into audio pipeline
-                    arrayOf(
-                        eqProcessor,
-                        silenceProcessor,
-                    ),
-                    SilenceSkippingAudioProcessor(2_000_000, 20_000, 256),
-                    SonicAudioProcessor(),
-                ),
-            ).build()
-    }
-
-    override fun onTracksChanged(tracks: Tracks) {
-        super<Player.Listener>.onTracksChanged(tracks)
-        updateCurrentAudioFormatFromTracks(tracks)
-    }
-
-    private fun updateCurrentAudioFormatFromTracks(
-        tracks: Tracks,
-        retryIfUnknown: Boolean = true,
-    ) {
-        val mediaId = player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() } ?: return
-        val audioFormat = tracks.selectedAudioFormat()
-        if (audioFormat == null) {
-            if (retryIfUnknown) scheduleAudioFormatRetry(mediaId)
-            return
-        }
-        val rendererSampleRate = audioFormat.sampleRate.takeIf { it > 0 }
-        val rendererBitrate = audioFormat.rendererBitrateForDatabase(rendererSampleRate)
-        if (rendererBitrate == null && rendererSampleRate == null) {
-            if (retryIfUnknown) scheduleAudioFormatRetry(mediaId)
-            return
-        }
-
-        scope.launch(Dispatchers.IO) {
-            var shouldRetry = false
-            var resolvedPlaybackFormat: FormatEntity? = null
-            database.query {
-                val existing = getFormatByIdBlocking(mediaId)
-                val cached = songUrlCache[mediaId]?.format
-                val baseFormat =
-                    when {
-                        cached != null && (existing == null || existing.itag != cached.itag || !existing.hasUsefulAudioMetadata()) -> cached
-                        existing != null -> existing
-                        else -> rendererFallbackFormat(mediaId, audioFormat, rendererBitrate, rendererSampleRate)
-                    }
-                if (existing == null) {
-                    val inserted = baseFormat.withRendererAudioMetadata(audioFormat, rendererBitrate, rendererSampleRate)
-                    upsert(inserted)
-                    resolvedPlaybackFormat = inserted
-                    shouldRetry = !inserted.hasUsefulAudioMetadata()
-                    return@query
-                }
-                val isAlac = baseFormat.codecs.contains("alac", ignoreCase = true)
-                val shouldClearBadAlacBitrate =
-                    isAlac &&
-                            baseFormat.bitrate > 0 &&
-                            !baseFormat.bitrate.isPlausibleAlacBitrate(rendererSampleRate ?: baseFormat.sampleRate)
-                val shouldUpdateBitrate =
-                    rendererBitrate != null &&
-                            (
-                                    baseFormat.bitrate <= 0 ||
-                                            (!isAlac && baseFormat.itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
-                                    )
-                val shouldUpdateSampleRate =
-                    rendererSampleRate != null &&
-                            (baseFormat.sampleRate == null || baseFormat.sampleRate <= 0 || baseFormat.itag in setOf(TIDAL_FALLBACK_ITAG, DEEZER_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
-                if (
-                    baseFormat == existing &&
-                    !shouldClearBadAlacBitrate &&
-                    !shouldUpdateBitrate &&
-                    !shouldUpdateSampleRate
-                ) {
-                    resolvedPlaybackFormat = baseFormat
-                    shouldRetry = !baseFormat.hasUsefulAudioMetadata()
-                    return@query
-                }
-
-                val updated = baseFormat.copy(
-                    bitrate = when {
-                        shouldClearBadAlacBitrate && rendererBitrate != null -> rendererBitrate
-                        shouldClearBadAlacBitrate -> 0
-                        shouldUpdateBitrate -> rendererBitrate
-                        else -> baseFormat.bitrate
-                    },
-                    sampleRate = if (shouldUpdateSampleRate) rendererSampleRate else baseFormat.sampleRate,
-                )
-                upsert(updated)
-                resolvedPlaybackFormat = updated
-                shouldRetry = !updated.hasUsefulAudioMetadata()
-            }
-            resolvedPlaybackFormat?.let { format ->
-                withContext(Dispatchers.Main) {
-                    val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
-                    if (currentMediaId == mediaId && format.id == mediaId) {
-                        currentPlaybackFormat.value = format
-                    }
-                }
-            }
-            if (retryIfUnknown && shouldRetry) {
-                scheduleAudioFormatRetry(mediaId)
-            } else if (!shouldRetry) {
-                audioFormatRetryJobs.remove(mediaId)?.cancel()
-            }
-        }
-    }
-
-    private fun FormatEntity.hasUsefulAudioMetadata(): Boolean {
-        val hasSampleRate = sampleRate?.let { it > 0 } == true
-        val hasBitrate = bitrate > 0 && (
-                !codecs.contains("alac", ignoreCase = true) ||
-                        bitrate.isPlausibleAlacBitrate(sampleRate)
-                )
-        return when {
-            itag == TIDAL_FALLBACK_ITAG -> hasBitrate || hasSampleRate
-            itag == DEEZER_FALLBACK_ITAG -> hasBitrate || hasSampleRate
-            codecs.contains("alac", ignoreCase = true) -> hasBitrate || hasSampleRate
-            else -> hasBitrate || hasSampleRate
-        }
-    }
-
-    private fun rendererFallbackFormat(
-        mediaId: String,
-        audioFormat: Format,
-        rendererBitrate: Int?,
-        rendererSampleRate: Int?,
-    ): FormatEntity {
-        val codecs = audioFormat.codecs?.takeIf { it.isNotBlank() }.orEmpty()
-        return FormatEntity(
-            id = mediaId,
-            itag = 0,
-            mimeType = audioFormat.sampleMimeType?.takeIf { it.isNotBlank() } ?: "audio/unknown",
-            codecs = codecs,
-            bitrate = rendererBitrate ?: 0,
-            sampleRate = rendererSampleRate,
-            contentLength = 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = player.currentMediaItem?.localConfiguration?.uri?.toString(),
-        )
-    }
-
-    private fun FormatEntity.withRendererAudioMetadata(
-        audioFormat: Format,
-        rendererBitrate: Int?,
-        rendererSampleRate: Int?,
-    ): FormatEntity {
-        val resolvedMimeType = mimeType
-            .takeIf { it.isNotBlank() && !it.equals("audio/unknown", ignoreCase = true) }
-            ?: audioFormat.sampleMimeType?.takeIf { it.isNotBlank() }
-            ?: "audio/unknown"
-        val resolvedCodecs = codecs
-            .takeIf { it.isNotBlank() }
-            ?: audioFormat.codecs?.takeIf { it.isNotBlank() }
-            ?: ""
-        val isAlac =
-            resolvedCodecs.contains("alac", ignoreCase = true) ||
-                    resolvedMimeType.contains("alac", ignoreCase = true)
-        val existingBitrate =
-            if (isAlac && !bitrate.isPlausibleAlacBitrate(sampleRate ?: rendererSampleRate)) {
-                0
-            } else {
-                bitrate
-            }
-        val providerItag =
-            itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG)
-        return copy(
-            mimeType = resolvedMimeType,
-            codecs = resolvedCodecs,
-            bitrate = when {
-                isAlac && rendererBitrate != null && existingBitrate <= 0 -> rendererBitrate
-                isAlac -> existingBitrate
-                rendererBitrate != null && (existingBitrate <= 0 || providerItag) -> rendererBitrate
-                else -> existingBitrate
-            },
-            sampleRate = when {
-                rendererSampleRate != null && (sampleRate == null || sampleRate <= 0 || providerItag) -> rendererSampleRate
-                else -> sampleRate
-            },
-        )
-    }
-
-    private fun Format.rendererBitrateForDatabase(sampleRate: Int?): Int? {
-        val bitrate = averageBitrate
-            .takeIf { it > 0 }
-            ?: peakBitrate.takeIf { it > 0 }
-        return if (isAlacRendererFormat()) {
-            bitrate?.takeIf { it.isPlausibleAlacBitrate(sampleRate) }
-        } else {
-            bitrate
-        }
-    }
-
-    private fun Format.isAlacRendererFormat(): Boolean =
-        codecs?.contains("alac", ignoreCase = true) == true ||
-                sampleMimeType?.contains("alac", ignoreCase = true) == true
-
-    private fun Int.isPlausibleAlacBitrate(sampleRate: Int?): Boolean {
-        if (this <= 0) return false
-        if (this == LEGACY_PLACEHOLDER_BPS) return false
-        val max = when {
-            sampleRate == null -> 6_500_000
-            sampleRate <= 48_000 -> 2_400_000
-            sampleRate <= 96_000 -> 5_500_000
-            else -> 10_000_000
-        }
-        return this in 128_000..max
-    }
-
-    private fun scheduleAudioFormatRetry(mediaId: String) {
-        if (audioFormatRetryJobs[mediaId]?.isActive == true) return
-
-        val retryJob =
-            scope.launch {
-                repeat(AUDIO_FORMAT_RETRY_ATTEMPTS) { attempt ->
-                    delay(AUDIO_FORMAT_RETRY_DELAY_MS)
-                    if (player.currentMediaItem?.mediaId != mediaId) return@launch
-
-                    val hasResolvedAudioQuality =
-                        withContext(Dispatchers.IO) {
-                            database.format(mediaId).first()?.hasUsefulAudioMetadata() == true
-                        }
-                    if (hasResolvedAudioQuality) return@launch
-
-                    Timber.tag(TAG).d(
-                        "Retrying audio format metadata for $mediaId (${attempt + 1}/$AUDIO_FORMAT_RETRY_ATTEMPTS)",
-                    )
-                    updateCurrentAudioFormatFromTracks(player.currentTracks, retryIfUnknown = false)
-                }
-            }
-
-        audioFormatRetryJobs[mediaId] = retryJob
-        retryJob.invokeOnCompletion {
-            audioFormatRetryJobs.remove(mediaId, retryJob)
-        }
-    }
-
-    private fun scheduleAudioFormatRefresh(mediaId: String) {
-        if (audioFormatRefreshJobs[mediaId]?.isActive == true) return
-
-        val refreshJob =
-            scope.launch {
-                refreshCurrentPlaybackFormatFromDatabase(mediaId)
-                listOf(250L, 900L, 1_800L).forEach { delayMs ->
-                    delay(delayMs)
-                    if (player.currentMediaItem?.mediaId != mediaId) return@launch
-                    refreshCurrentPlaybackFormatFromDatabase(mediaId)
-                    updateCurrentAudioFormatFromTracks(player.currentTracks)
-                }
-            }
-
-        audioFormatRefreshJobs[mediaId] = refreshJob
-        refreshJob.invokeOnCompletion {
-            audioFormatRefreshJobs.remove(mediaId, refreshJob)
-        }
-    }
-
-    private fun Tracks.selectedAudioFormat(): Format? {
-        groups.forEach { group ->
-            if (group.type != C.TRACK_TYPE_AUDIO || !group.isSelected) return@forEach
-            for (index in 0 until group.length) {
-                if (group.isTrackSelected(index)) return group.getTrackFormat(index)
-            }
-        }
-        return null
-    }
-
-    override fun onLoadCompleted(
-        eventTime: AnalyticsListener.EventTime,
-        loadEventInfo: LoadEventInfo,
-        mediaLoadData: MediaLoadData,
-    ) {
-        if (!isLivePlaybackBitrateActive()) return
-        if (
-            mediaLoadData.dataType != C.DATA_TYPE_MEDIA &&
-            mediaLoadData.dataType != C.DATA_TYPE_MEDIA_PROGRESSIVE_LIVE
-        ) {
-            return
-        }
-
-        val isAudioLoad =
-            mediaLoadData.trackType == C.TRACK_TYPE_AUDIO ||
-                    mediaLoadData.trackFormat
-                        ?.sampleMimeType
-                        ?.startsWith("audio/", ignoreCase = true) == true ||
-                    mediaLoadData.trackType == C.TRACK_TYPE_UNKNOWN
-        if (!isAudioLoad) return
-
-        val mediaId = eventTime.mediaId() ?: currentPlaybackMediaId()
-        val isFlacLoad =
-            mediaLoadData.trackFormat?.sampleMimeType?.contains("flac", ignoreCase = true) == true ||
-                    mediaLoadData.trackFormat?.codecs?.contains("flac", ignoreCase = true) == true
-        if (isFlacLoad || mediaId?.let(::isLivePlaybackParserBacked) == true) return
-
-        val mediaStartTimeMs = mediaLoadData.mediaStartTimeMs
-        val mediaEndTimeMs = mediaLoadData.mediaEndTimeMs
-        if (mediaStartTimeMs == C.TIME_UNSET || mediaEndTimeMs == C.TIME_UNSET) {
-            return
-        }
-
-        val mediaDurationMs = mediaEndTimeMs - mediaStartTimeMs
-        val bytesLoaded = loadEventInfo.bytesLoaded
-        if (mediaDurationMs <= 0 || bytesLoaded <= 0) return
-
-        val bitrate = ((bytesLoaded * 8_000L) / mediaDurationMs)
-            .coerceAtMost(Int.MAX_VALUE.toLong())
-            .toInt()
-        recordLivePlaybackBitrateSample(eventTime, mediaLoadData, bitrate)
-        publishLivePlaybackBitrate(eventTime, bitrate, force = true)
-    }
-
-    override fun onBandwidthEstimate(
-        eventTime: AnalyticsListener.EventTime,
-        totalLoadTimeMs: Int,
-        totalBytesLoaded: Long,
-        bitrateEstimate: Long,
-    ) {
-        // Network bandwidth is not audio bitrate; parser/load-window samples drive the live label.
-    }
-
-    private fun publishLivePlaybackTransferEstimate(
-        eventTime: AnalyticsListener.EventTime,
-        loadEventInfo: LoadEventInfo,
-    ) {
-        if (!isLivePlaybackBitrateActive()) return
-        val loadDurationMs = loadEventInfo.loadDurationMs
-        val bytesLoaded = loadEventInfo.bytesLoaded
-        if (loadDurationMs <= 0 || bytesLoaded <= 0) return
-
-        val bitrate = ((bytesLoaded * 8_000L) / loadDurationMs)
-            .coerceAtMost(Int.MAX_VALUE.toLong())
-            .toInt()
-        recordLivePlaybackBitrateSample(eventTime, mediaLoadData = null, bitrate = bitrate)
-        publishLivePlaybackBitrate(eventTime, bitrate, force = false)
-    }
-
-    private fun isLivePlaybackParserBacked(mediaId: String): Boolean {
-        val format =
-            currentPlaybackFormat.value?.takeIf { it.id == mediaId }
-                ?: songUrlCache[mediaId]?.format
-        return format?.isFlacFormat() == true
-    }
-
-    private fun publishLivePlaybackBitrate(
-        eventTime: AnalyticsListener.EventTime,
-        bitrate: Int,
-        force: Boolean,
-    ) {
-        val currentMediaId =
-            currentMediaMetadata.value?.id
-                ?: player.currentMetadata?.id
-                ?: player.currentMediaItem?.mediaId
-        if (currentMediaId.isNullOrBlank()) return
-
-        val eventMediaId =
-            if (!eventTime.timeline.isEmpty && eventTime.windowIndex != C.INDEX_UNSET) {
-                runCatching {
-                    eventTime.timeline
-                        .getWindow(eventTime.windowIndex, Timeline.Window())
-                        .mediaItem
-                        .mediaId
-                }.getOrNull()
-            } else {
-                null
-            }
-        if (!eventMediaId.isNullOrBlank() && eventMediaId != currentMediaId) return
-
-        publishLivePlaybackBitrate(currentMediaId, bitrate, force)
-    }
-
-    private fun publishLivePlaybackBitrate(
-        mediaId: String,
-        bitrate: Int,
-        force: Boolean,
-    ) {
-        if (!isLivePlaybackBitrateActive()) return
-        val currentMediaId =
-            currentMediaMetadata.value?.id
-                ?: player.currentMetadata?.id
-                ?: player.currentMediaItem?.mediaId
-        if (currentMediaId.isNullOrBlank() || currentMediaId != mediaId) return
-        val sampleRate = liveBitrateSampleRate(mediaId)
-        val displayBitrate = bitrate.toDisplayLivePlaybackBitrate(sampleRate) ?: return
-
-        val now = System.currentTimeMillis()
-        val previous = currentLivePlaybackBitrate.value
-        if (
-            !force &&
-            previous != null &&
-            now - lastLivePlaybackBitrateUpdateMs < LIVE_PLAYBACK_BITRATE_MIN_UPDATE_MS
-        ) {
-            return
-        }
-        if (!force && previous != null && abs(previous - displayBitrate) < LIVE_PLAYBACK_BITRATE_MIN_DELTA_BPS) {
-            return
-        }
-
-        currentLivePlaybackBitrate.value = displayBitrate
-        lastLivePlaybackBitrateUpdateMs = now
-    }
-
-    private fun Int.toDisplayLivePlaybackBitrate(sampleRate: Int? = null): Int? {
-        if (this < LIVE_PLAYBACK_BITRATE_MIN_BPS) return null
-        val max = livePlaybackBitrateMaxForSampleRate(sampleRate)
-        return takeIf { it <= max }
-    }
-
-    private fun livePlaybackBitrateMaxForSampleRate(sampleRate: Int?): Int =
-        when {
-            sampleRate == null -> 3_000_000
-            sampleRate <= 48_000 -> 3_000_000
-            sampleRate <= 96_000 -> 6_500_000
-            sampleRate <= 192_000 -> 12_000_000
-            else -> LIVE_PLAYBACK_BITRATE_ABSOLUTE_MAX_BPS
-        }
-
-    private fun recordLivePlaybackBitrateSample(
-        eventTime: AnalyticsListener.EventTime,
-        mediaLoadData: MediaLoadData?,
-        bitrate: Int,
-    ) {
-        val mediaId = eventTime.mediaId() ?: currentPlaybackMediaId() ?: return
-        val displayBitrate = bitrate.toDisplayLivePlaybackBitrate(liveBitrateSampleRate(mediaId)) ?: return
-        val sample =
-            LivePlaybackBitrateSample(
-                mediaId = mediaId,
-                mediaStartMs = mediaLoadData?.mediaStartTimeMs?.takeIf { it != C.TIME_UNSET },
-                mediaEndMs = mediaLoadData?.mediaEndTimeMs?.takeIf { it != C.TIME_UNSET },
-                bitrate = displayBitrate,
-                receivedAtMs = System.currentTimeMillis(),
-            )
-        synchronized(livePlaybackBitrateLock) {
-            livePlaybackBitrateSamples.addLast(sample)
-            pruneLivePlaybackBitrateSamplesLocked(sample.receivedAtMs)
-        }
-    }
-
-    private fun recordLivePlaybackBitrateSample(
-        mediaId: String,
-        mediaStartMs: Long?,
-        mediaEndMs: Long?,
-        bitrate: Int,
-    ) {
-        val displayBitrate = bitrate.toDisplayLivePlaybackBitrate(liveBitrateSampleRate(mediaId)) ?: return
-        val sample =
-            LivePlaybackBitrateSample(
-                mediaId = mediaId,
-                mediaStartMs = mediaStartMs,
-                mediaEndMs = mediaEndMs,
-                bitrate = displayBitrate,
-                receivedAtMs = System.currentTimeMillis(),
-            )
-        synchronized(livePlaybackBitrateLock) {
-            livePlaybackBitrateSamples.addLast(sample)
-            pruneLivePlaybackBitrateSamplesLocked(sample.receivedAtMs)
-        }
-    }
-
-    private fun observeLivePlaybackBitrateSetting() {
-        dataStore.data
-            .map {
-                val liveBitrateEnabled = it[LivePlaybackBitrateKey] ?: false
-                val legacyLabelEnabled = it[PlayerLegacyQualityLabelKey] ?: false
-                liveBitrateEnabled && legacyLabelEnabled
-            }
-            .distinctUntilChanged()
-            .collectLatest(scope) { enabled ->
-                if (enabled && isScreenInteractiveForLiveBitrate) {
-                    startLivePlaybackBitrateTicker()
-                } else {
-                    stopLivePlaybackBitrateTicker(clearValue = true, clearSamples = !enabled)
-                }
-            }
-    }
-
-    private fun startLivePlaybackBitrateTicker() {
-        if (livePlaybackBitrateTickerJob?.isActive == true) return
-        livePlaybackBitrateTickerJob =
-            scope.launch {
-                while (isActive) {
-                    delay(LIVE_PLAYBACK_BITRATE_TICK_MS)
-                    if (!isLivePlaybackBitrateActive()) continue
-                    val mediaId = currentPlaybackMediaId()
-                    if (
-                        mediaId.isNullOrBlank() ||
-                        player.playbackState != Player.STATE_READY ||
-                        !player.isPlaying
-                    ) {
-                        continue
-                    }
-                    val estimate =
-                        estimateLivePlaybackBitrate(
-                            mediaId = mediaId,
-                            playbackPositionMs = player.currentPosition.coerceAtLeast(0L),
-                        )
-                    if (estimate != null) {
-                        publishLivePlaybackBitrate(mediaId, estimate, force = false)
-                    } else {
-                        clearLivePlaybackBitrateValue()
-                    }
-                }
-            }
-    }
-
-    private fun stopLivePlaybackBitrateTicker(
-        clearValue: Boolean,
-        clearSamples: Boolean = true,
-    ) {
-        livePlaybackBitrateTickerJob?.cancel()
-        livePlaybackBitrateTickerJob = null
-        if (clearValue) {
-            clearLivePlaybackBitrateValue()
-        }
-        if (clearSamples) {
-            synchronized(livePlaybackBitrateLock) {
-                livePlaybackBitrateSamples.clear()
-            }
-        }
-    }
-
-    private fun clearLivePlaybackBitrateValue() {
-        currentLivePlaybackBitrate.value = null
-        lastLivePlaybackBitrateUpdateMs = 0L
-    }
-
-    private fun resetLivePlaybackBitrate(mediaId: String?) {
-        clearLivePlaybackBitrateValue()
-        if (mediaId.isNullOrBlank()) {
-            synchronized(livePlaybackBitrateLock) {
-                livePlaybackBitrateSamples.clear()
-            }
-        }
-    }
-
-    private fun estimateLivePlaybackBitrate(
-        mediaId: String,
-        playbackPositionMs: Long,
-    ): Int? {
-        val now = System.currentTimeMillis()
-        val samples =
-            synchronized(livePlaybackBitrateLock) {
-                pruneLivePlaybackBitrateSamplesLocked(now)
-                livePlaybackBitrateSamples
-                    .filter { it.mediaId == mediaId }
-                    .toList()
-            }
-        if (samples.isEmpty()) return null
-
-        val rangedSamples =
-            samples
-                .filter { it.mediaStartMs != null && it.mediaEndMs != null && it.mediaEndMs > it.mediaStartMs }
-                .sortedBy { it.mediaStartMs }
-        if (rangedSamples.isNotEmpty()) {
-            rollingRangedLivePlaybackBitrate(
-                mediaId = mediaId,
-                samples = rangedSamples,
-                playbackPositionMs = playbackPositionMs,
-            )?.let { return it }
-        }
-
-        val recentSamples =
-            samples.filter { now - it.receivedAtMs <= LIVE_PLAYBACK_BITRATE_ROLLING_WINDOW_MS }
-        if (recentSamples.isEmpty()) return null
-
-        return rollingRecentLivePlaybackBitrate(mediaId, recentSamples, now)
-    }
-
-    private fun rollingRangedLivePlaybackBitrate(
-        mediaId: String,
-        samples: List<LivePlaybackBitrateSample>,
-        playbackPositionMs: Long,
-    ): Int? {
-        val sampleRate = liveBitrateSampleRate(mediaId)
-        val windowStart = playbackPositionMs - LIVE_PLAYBACK_BITRATE_SMOOTH_BEHIND_MS
-        val windowEnd = playbackPositionMs + LIVE_PLAYBACK_BITRATE_SMOOTH_AHEAD_MS
-        val windowSamples =
-            samples
-                .filter { sample ->
-                    val start = sample.mediaStartMs ?: return@filter false
-                    val end = sample.mediaEndMs ?: return@filter false
-                    end >= windowStart && start <= windowEnd
-                }.ifEmpty {
-                    samples
-                        .minByOrNull { it.distanceTo(playbackPositionMs) }
-                        ?.takeIf { it.distanceTo(playbackPositionMs) <= LIVE_PLAYBACK_BITRATE_NEAREST_SAMPLE_MS }
-                        ?.let(::listOf)
-                        .orEmpty()
-                }
-        return weightedMedianLivePlaybackBitrate(
-            samples = windowSamples,
-            sampleRate = sampleRate,
-            weightFor = { sample ->
-                val start = sample.mediaStartMs ?: playbackPositionMs
-                val end = sample.mediaEndMs ?: start
-                val center = start + ((end - start) / 2L)
-                1.0 / (1.0 + abs(center - playbackPositionMs).toDouble() / LIVE_PLAYBACK_BITRATE_WEIGHT_DISTANCE_MS)
-            },
-        )
-    }
-
-    private fun rollingRecentLivePlaybackBitrate(
-        mediaId: String,
-        samples: List<LivePlaybackBitrateSample>,
-        now: Long,
-    ): Int? =
-        weightedMedianLivePlaybackBitrate(
-            samples = samples,
-            sampleRate = liveBitrateSampleRate(mediaId),
-            weightFor = { sample ->
-                val ageMs = (now - sample.receivedAtMs).coerceAtLeast(0L)
-                1.0 / (1.0 + ageMs.toDouble() / LIVE_PLAYBACK_BITRATE_WEIGHT_DISTANCE_MS)
-            },
-        )
-
-    private fun weightedMedianLivePlaybackBitrate(
-        samples: List<LivePlaybackBitrateSample>,
-        sampleRate: Int?,
-        weightFor: (LivePlaybackBitrateSample) -> Double,
-    ): Int? {
-        val values =
-            samples
-                .mapNotNull { it.bitrate.toDisplayLivePlaybackBitrate(sampleRate) }
-                .sorted()
-        if (values.isEmpty()) return null
-
-        val median = values.medianLivePlaybackBitrate()
-        val floor = (median * LIVE_PLAYBACK_BITRATE_OUTLIER_LOW_RATIO).toInt()
-        val ceiling = (median * LIVE_PLAYBACK_BITRATE_OUTLIER_HIGH_RATIO).toInt()
-        var weightTotal = 0.0
-        var weightedBitrate = 0.0
-        samples.forEach { sample ->
-            val bitrate = sample.bitrate.toDisplayLivePlaybackBitrate(sampleRate) ?: return@forEach
-            val weight = weightFor(sample).takeIf { it > 0.0 } ?: return@forEach
-            weightTotal += weight
-            weightedBitrate += bitrate.coerceIn(floor, ceiling) * weight
-        }
-        if (weightTotal <= 0.0) return median
-        return ((median * 0.6) + ((weightedBitrate / weightTotal) * 0.4))
-            .toInt()
-            .toDisplayLivePlaybackBitrate(sampleRate)
-    }
-
-    private fun List<Int>.medianLivePlaybackBitrate(): Int {
-        val middle = size / 2
-        return if (size % 2 == 0) {
-            (((this[middle - 1].toLong() + this[middle]) / 2L).coerceAtMost(Int.MAX_VALUE.toLong())).toInt()
-        } else {
-            this[middle]
-        }
-    }
-
-    private fun LivePlaybackBitrateSample.distanceTo(positionMs: Long): Long {
-        val start = mediaStartMs ?: return Long.MAX_VALUE
-        val end = mediaEndMs ?: return Long.MAX_VALUE
-        return when {
-            positionMs < start -> start - positionMs
-            positionMs > end -> positionMs - end
-            else -> 0L
-        }
-    }
-
-    private fun pruneLivePlaybackBitrateSamplesLocked(now: Long) {
-        while (
-            livePlaybackBitrateSamples.size > LIVE_PLAYBACK_BITRATE_MAX_SAMPLES ||
-            livePlaybackBitrateSamples.firstOrNull()?.let {
-                now - it.receivedAtMs > LIVE_PLAYBACK_BITRATE_SAMPLE_TTL_MS
-            } == true
-        ) {
-            livePlaybackBitrateSamples.removeFirst()
-        }
-    }
-
-    private fun AnalyticsListener.EventTime.mediaId(): String? =
-        if (!timeline.isEmpty && windowIndex != C.INDEX_UNSET) {
-            runCatching {
-                timeline
-                    .getWindow(windowIndex, Timeline.Window())
-                    .mediaItem
-                    .mediaId
-                    .takeIf { it.isNotBlank() }
-            }.getOrNull()
-        } else {
-            null
-        }
-
-    private fun currentPlaybackMediaId(): String? =
-        currentMediaMetadata.value?.id
-            ?: player.currentMetadata?.id
-            ?: player.currentMediaItem?.mediaId
-
-    private data class LivePlaybackBitrateSample(
-        val mediaId: String,
-        val mediaStartMs: Long?,
-        val mediaEndMs: Long?,
-        val bitrate: Int,
-        val receivedAtMs: Long,
-    )
-
-    override fun onPlaybackStatsReady(
-        eventTime: AnalyticsListener.EventTime,
-        playbackStats: PlaybackStats,
-    ) {
-        val mediaItem = eventTime.timeline.getWindow(eventTime.windowIndex, Timeline.Window()).mediaItem
-        val historyDurationMs = dataStore[HistoryDuration]?.times(1000f) ?: 30000f
-
-        if (playbackStats.totalPlayTimeMs >= historyDurationMs &&
-            !dataStore.get(PauseListenHistoryKey, false)
-        ) {
-            database.query {
-                incrementTotalPlayTime(mediaItem.mediaId, playbackStats.totalPlayTimeMs)
-                try {
-                    insert(
-                        Event(
-                            songId = mediaItem.mediaId,
-                            timestamp = LocalDateTime.now(),
-                            playTime = playbackStats.totalPlayTimeMs,
-                        ),
-                    )
-                } catch (_: SQLException) {
-                }
-            }
-        }
-
-        // Apple wrapper playback does not use YouTube/Opus stream tracking.
-    }
-
-    private fun saveQueueToDisk() {
-        if (player.mediaItemCount == 0) {
-            Timber.tag(TAG).d("Skipping queue save - no media items")
-            return
-        }
-
-        val snapshot =
-            try {
-                QueueSaveSnapshot(
-                    queue =
-                        currentQueue.toPersistQueue(
-                            title = queueTitle,
-                            items = player.mediaItems.mapNotNull { it.metadata },
-                            mediaItemIndex = player.currentMediaItemIndex,
-                            position = player.currentPosition,
-                        ),
-                    automix =
-                        PersistQueue(
-                            title = "automix",
-                            items = automixItems.value.mapNotNull { it.metadata },
-                            mediaItemIndex = 0,
-                            position = 0,
-                        ),
-                    playerState =
-                        PersistPlayerState(
-                            playWhenReady = player.playWhenReady,
-                            repeatMode = player.repeatMode,
-                            shuffleModeEnabled = player.shuffleModeEnabled,
-                            volume = playerVolume.value,
-                            currentPosition = player.currentPosition,
-                            currentMediaItemIndex = player.currentMediaItemIndex,
-                            playbackState = player.playbackState,
-                        ),
-                )
-            } catch (e: Exception) {
-                Timber.tag(TAG).e(e, "Error while snapshotting queue state")
-                reportException(e)
-                return
-            }
-
-        queueSaveJob?.cancel()
-        queueSaveJob =
-            scope.launch(Dispatchers.IO) {
-                delay(250)
-                writeQueueSnapshotToDisk(snapshot)
-            }
-    }
-
-    private fun writeQueueSnapshotToDisk(snapshot: QueueSaveSnapshot) {
-        writeObjectAtomically(
-            file = filesDir.resolve(PERSISTENT_QUEUE_FILE),
-            value = snapshot.queue,
-            successMessage = "Queue saved successfully",
-            failureMessage = "Failed to save queue",
-        )
-        writeObjectAtomically(
-            file = filesDir.resolve(PERSISTENT_AUTOMIX_FILE),
-            value = snapshot.automix,
-            successMessage = "Automix saved successfully",
-            failureMessage = "Failed to save automix",
-        )
-        writeObjectAtomically(
-            file = filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE),
-            value = snapshot.playerState,
-            successMessage = "Player state saved successfully",
-            failureMessage = "Failed to save player state",
-        )
-    }
-
-    private fun writeObjectAtomically(
-        file: File,
-        value: Any,
-        successMessage: String,
-        failureMessage: String,
-    ) {
-        runCatching {
-            val tempFile = File(file.parentFile, "${file.name}.tmp")
-            tempFile.outputStream().use { fos ->
-                ObjectOutputStream(fos).use { oos ->
-                    oos.writeObject(value)
-                }
-            }
-            if (file.exists() && !file.delete()) {
-                Timber.tag(TAG).w("Could not delete old ${file.name} before queue state replace")
-            }
-            if (!tempFile.renameTo(file)) {
-                tempFile.copyTo(file, overwrite = true)
-                tempFile.delete()
-            }
-            Timber.tag(TAG).d(successMessage)
-        }.onFailure {
-            Timber.tag(TAG).e(it, failureMessage)
-            reportException(it)
-        }
-    }
-
-    /**
-     * [Context.startForegroundService] requires [startForeground] to succeed quickly. If we cannot
-     * enter the foreground state, stop immediately so the system does not ANR the app process.
-     */
-    private fun ensureStartedAsForegroundOrStop(): Boolean =
-        startForegroundSafely(
-            notification = createFallbackForegroundNotification(),
-            deniedMessage = "Foreground service start not allowed; stopping service to avoid ANR",
-            failureMessage = "Failed to enter foreground; stopping service to avoid ANR",
-        )
-
-    private fun ensureForegroundWithLatestNotificationOrStop(): Boolean =
-        startForegroundSafely(
-            notification = latestMediaNotification ?: createFallbackForegroundNotification(),
-            deniedMessage = "Foreground promotion denied during notification update; stopping service",
-            failureMessage = "Failed to promote service during notification update; stopping service",
-            stopOnFailure = true,
-        )
-
-    private fun tryEnsureForegroundWithLatestNotification(): Boolean =
-        startForegroundSafely(
-            notification = latestMediaNotification ?: createFallbackForegroundNotification(),
-            deniedMessage = "Foreground promotion denied during notification update",
-            failureMessage = "Failed to promote service during notification update",
-            stopOnFailure = false,
-        )
-
-    private fun ensureForegroundChannelExists() {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm?.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.music_player),
-                NotificationManager.IMPORTANCE_LOW,
-            ),
-        )
-    }
-
-    private fun createFallbackForegroundNotification(): Notification {
-        ensureForegroundChannelExists()
-        val pending =
-            PendingIntent.getActivity(
-                this,
-                0,
-                Intent(this, MainActivity::class.java),
-                PendingIntent.FLAG_IMMUTABLE,
-            )
-        return NotificationCompat
-            .Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.music_player))
-            .setContentText("")
-            .setSmallIcon(R.drawable.small_icon)
-            .setContentIntent(pending)
-            .setOngoing(true)
-            .build()
-    }
-
-    private fun startForegroundSafely(
-        notification: Notification,
-        deniedMessage: String,
-        failureMessage: String,
-        stopOnFailure: Boolean = true,
-    ): Boolean =
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
-            true
-        } catch (e: Exception) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e.javaClass.name == "android.app.ForegroundServiceStartNotAllowedException") {
-                Timber.tag(TAG).w(e, deniedMessage)
-                if (stopOnFailure) {
-                    stopSelf()
-                }
-                false
-            } else {
-                Timber.tag(TAG).e(e, failureMessage)
-                reportException(e)
-                if (stopOnFailure) {
-                    stopSelf()
-                }
-                false
-            }
-        }
-
-    override fun onDestroy() {
-        isRunning = false
-        SpotifyCanvasClient.setListeningHistoryFailureReporter(null)
-        nextTrackPreloadCoordinator?.destroy()
-        nextTrackPreloadCoordinator = null
-
-        if (!::player.isInitialized) {
-            try {
-                scope.cancel()
-            } catch (_: Exception) {
-            }
-            super.onDestroy()
-            return
-        }
-
-        // Save episode position before destroying
-        val currentMetadata = player.currentMediaItem?.metadata
-        if (currentMetadata?.isEpisode == true && player.currentPosition > 0) {
-            runBlocking(Dispatchers.IO) {
-                database.updatePlaybackPosition(currentMetadata.id, player.currentPosition)
-            }
-        }
-
-        try {
-            unregisterReceiver(screenStateReceiver)
-        } catch (e: Exception) {
-            // Ignore
-        }
-        try {
-            unregisterReceiver(wallpaperRequestReceiver)
-        } catch (e: Exception) {
-            // Ignore
-        }
-        audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
-        castConnectionHandler?.release()
-        if (dataStore.get(PersistentQueueKey, true)) {
-            saveQueueToDisk()
-        }
-        connectivityObserver.unregister()
-        abandonAudioFocus()
-        closeAudioEffectSession()
-        mediaLibrarySessionCallback.release()
-        mediaSession.release()
-        player.removeListener(this)
-        player.removeListener(sleepTimer)
-        playerSilenceProcessors.remove(player)
-        scrobbleManager?.destroy()
-        youtubeMusicHistorySyncManager.destroy()
-        youtubeMusicProgressiveHistorySyncManager.destroy()
-        discordUpdateJob?.cancel()
-        DiscordRpcManager.clear()
-        DiscordRpcManager.destroy()
-        spotifyListeningHistoryManager?.destroy()
-        // Note: equalizerService audio processors are cleared in equalizerService.release() if needed,
-        // or we can't easily reference the specific processor created in createExoPlayer here without storing it.
-        // But since we are destroying the service, it's fine.
-        player.release()
-        scope.cancel()
-        super.onDestroy()
-    }
-
-    override fun onBind(intent: Intent?) = super.onBind(intent) ?: binder
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        if (dataStore.get(StopMusicOnTaskClearKey, false)) {
-            if (!::player.isInitialized) {
-                stopSelf()
-                return
-            }
-            // Remote playback (Cast) is independent of the local ExoPlayer; ending the session
-            // is required or audio keeps playing on the Cast device.
-            runCatching {
-                if (castConnectionHandler?.isCasting?.value == true) {
-                    castConnectionHandler?.disconnect()
-                }
-                player.stop()
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                // Media3: coordinates notification/foreground teardown and stopSelf; required when
-                // playback was ongoing (default super.onTaskRemoved keeps the service alive).
-                pauseAllPlayersAndStopSelf()
-            }.onFailure { e ->
-                Timber.tag(TAG).e(e, "Failed to stop playback on task clear")
-                runCatching { pauseAllPlayersAndStopSelf() }.onFailure { stopSelf() }
-            }
-            return
-        }
-        super.onTaskRemoved(rootIntent)
-        // Keep the notification even if the task is removed, as long as a track is loaded.
-        // User can still dismiss it via the 'X' or system notification controls.
-    }
-
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = mediaSession
-
-    override fun onUpdateNotification(
-        session: MediaSession,
-        startInForegroundRequired: Boolean,
-    ) {
-        try {
-            // Pass startInForegroundRequired through unchanged so Media3 manages the
-            // foreground service lifecycle itself. Overriding it to `false` and promoting
-            // manually causes Media3 to demote the service on every notification update
-            // (track change, metadata refresh, etc.); the subsequent manual re-promotion is
-            // denied while backgrounded on Android 12+ (mAllowStartForeground=false), which
-            // ends background playback mid-song after autoplay transitions.
-            // Media3 1.10.0 catches ForegroundServiceStartNotAllowedException internally in
-            // onUpdateNotificationInternal, so the 1.7.x crash-workaround is no longer
-            // needed; the try/catch below is kept as belt-and-suspenders defense.
-            super.onUpdateNotification(session, startInForegroundRequired)
-        } catch (e: Exception) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e.javaClass.name == "android.app.ForegroundServiceStartNotAllowedException") {
-                handleForegroundServiceStartNotAllowed(e)
-            } else if (e is IllegalStateException && isForegroundServiceStartNotAllowedException(e)) {
-                handleForegroundServiceStartNotAllowed(e)
-            } else if (e is IllegalStateException) {
-                throw e
-            } else {
-                Timber.tag(TAG).e(e, "Failed to update notification")
-            }
-        }
-    }
-
-    override fun onStartCommand(
-        intent: Intent?,
-        flags: Int,
-        startId: Int,
-    ): Int {
-        val requiresForegroundPromotion =
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    (intent?.action == null || intent.action == ACTION_ALARM_TRIGGER)
-        if (requiresForegroundPromotion && !ensureForegroundWithLatestNotificationOrStop()) {
-            return START_NOT_STICKY
-        }
-
-        when (intent?.action) {
-            ACTION_ALARM_TRIGGER -> {
-                handleAlarmTrigger(intent)
-            }
-
-            MusicWidgetReceiver.ACTION_PLAY_PAUSE -> {
-                if (player.isPlaying) player.pause() else player.play()
-                updateWidgetUI(player.isPlaying)
-            }
-
-            MusicWidgetReceiver.ACTION_LIKE -> {
-                toggleLike()
-            }
-
-            MusicWidgetReceiver.ACTION_NEXT -> {
-                prepareManualPlaybackTransition()
-                player.seekToNext()
-                updateWidgetUI(player.isPlaying)
-            }
-
-            MusicWidgetReceiver.ACTION_PREVIOUS -> {
-                prepareManualPlaybackTransition()
-                player.seekToPrevious()
-                updateWidgetUI(player.isPlaying)
-            }
-
-            MusicWidgetReceiver.ACTION_UPDATE_WIDGET -> {
-                updateWidgetUI(player.isPlaying)
-            }
-        }
-
-        return super.onStartCommand(intent, flags, startId)
-    }
-
-    private fun handleAlarmTrigger(intent: Intent) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                MusicAlarmScheduler.scheduleFromPreferences(this@MusicService)
-            } catch (t: Throwable) {
-                Timber.tag(TAG).e(t, "Failed to reschedule alarms after trigger")
-            }
-        }
-        val playlistId = intent.getStringExtra(EXTRA_ALARM_PLAYLIST_ID).orEmpty()
-        val alarmId = intent.getStringExtra(EXTRA_ALARM_ID).orEmpty()
-        if (playlistId.isBlank()) {
-            if (alarmId.isNotBlank()) {
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        val alarms = MusicAlarmStore.load(this@MusicService)
-                        val updated =
-                            alarms.map { alarm ->
-                                if (alarm.id == alarmId) alarm.copy(enabled = false, nextTriggerAt = -1L) else alarm
-                            }
-                        MusicAlarmScheduler.scheduleAll(this@MusicService, updated)
-                    } catch (t: Throwable) {
-                        Timber.tag(TAG).e(t, "Failed to disable alarm with invalid playlist")
-                    }
-                }
-            }
-            return
-        }
-        val randomSong = intent.getBooleanExtra(EXTRA_ALARM_RANDOM_SONG, false)
-        scope.launch {
-            try {
-                val playlistSongs =
-                    withContext(Dispatchers.IO) {
-                        database.playlistSongs(playlistId).first()
-                    }
-                if (playlistSongs.isEmpty()) {
-                    if (alarmId.isNotBlank()) {
-                        withContext(Dispatchers.IO) {
-                            val alarms = MusicAlarmStore.load(this@MusicService)
-                            val updated =
-                                alarms.map { alarm ->
-                                    if (alarm.id == alarmId) alarm.copy(enabled = false, nextTriggerAt = -1L) else alarm
-                                }
-                            MusicAlarmScheduler.scheduleAll(this@MusicService, updated)
-                        }
-                    }
-                    return@launch
-                }
-                val items = playlistSongs.map { it.song.toMediaItem() }
-                val playlistName =
-                    withContext(Dispatchers.IO) {
-                        database
-                            .playlist(playlistId)
-                            .first()
-                            ?.playlist
-                            ?.name
-                    }
-                withContext(Dispatchers.IO) {
-                    MusicAlarmScheduler.scheduleFromPreferences(this@MusicService)
-                }
-
-                val alarmItems =
-                    if (randomSong) {
-                        val firstIndex = Random.nextInt(items.size)
-                        buildList(items.size) {
-                            add(items[firstIndex])
-                            items.forEachIndexed { index, item ->
-                                if (index != firstIndex) add(item)
-                            }
-                        }
-                    } else {
-                        items
-                    }
-
-                player.stop()
-                player.clearMediaItems()
-                playQueue(
-                    ListQueue(
-                        title = playlistName,
-                        items = alarmItems,
-                        startIndex = 0,
-                        position = 0L,
-                    ),
-                    playWhenReady = true,
-                )
-            } catch (t: Throwable) {
-                Timber.tag(TAG).e(t, "Failed to start alarm playback")
-            }
-        }
-    }
-
-    private fun handleForegroundServiceStartNotAllowed(error: Throwable?) {
-        if (error != null) {
-            Timber.tag(TAG).w(error, "Foreground service start denied during notification update")
-        } else {
-            Timber.tag(TAG).w("Foreground service start denied by MediaSessionService listener")
-        }
-
-        if (tryEnsureForegroundWithLatestNotification()) {
-            return
-        }
-
-        if (!::player.isInitialized) {
-            stopSelf()
-            return
-        }
-
-        if (player.isPlaying) {
-            Timber.tag(TAG).w("Keeping playback alive after denied foreground restart request")
-            return
-        }
-
-        runCatching {
-            pauseAllPlayersAndStopSelf()
-        }.onFailure {
-            Timber.tag(TAG).w(it, "Failed to stop service after foreground start denial")
-            stopSelf()
-        }
-    }
-
-    private fun isForegroundServiceStartNotAllowedException(error: IllegalStateException): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                error.javaClass.name == ForegroundServiceStartNotAllowedException::class.java.name
-
-    /**
-     * Updates all app widgets with current playback state
-     */
-    private fun updateWidgetUI(isPlaying: Boolean) {
-        scope.launch {
-            try {
-                val songData = currentSong.value
-                val song = songData?.song
-                val songTitle = song?.title ?: getString(R.string.no_song_playing)
-                val artistName = songData?.artists?.joinToString(", ") { it.name } ?: getString(R.string.tap_to_open)
-                val isLiked = songData?.song?.liked == true
-
-                widgetManager.updateWidgets(
-                    title = songTitle,
-                    artist = artistName,
-                    artworkUri = song?.thumbnailUrl,
-                    isPlaying = isPlaying,
-                    isLiked = isLiked,
-                    duration = if (player.duration != C.TIME_UNSET) player.duration else 0,
-                    currentPosition = player.currentPosition,
-                )
-            } catch (e: Exception) {
-                // Widget not added to home screen or other error
-            }
-        }
-    }
-
-    private var widgetUpdateJob: Job? = null
-
-    private fun startWidgetUpdates() {
-        widgetUpdateJob?.cancel()
-        widgetUpdateJob =
-            scope.launch {
-                while (isActive) {
-                    if (player.isPlaying) {
-                        updateWidgetUI(true)
-                    }
-                    delay(WIDGET_UPDATE_INTERVAL_MS)
-                }
-            }
-    }
-
-    private fun stopWidgetUpdates() {
-        widgetUpdateJob?.cancel()
-        widgetUpdateJob = null
-    }
-
-    private fun shareSong() {
-        val songData = currentSong.value
-        val songId = songData?.song?.id ?: return
-
-        val shareIntent =
-            Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=$songId")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        startActivity(
-            Intent.createChooser(shareIntent, null).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-        )
-    }
-
-    /**
-     * Get the stream URL for a given media ID.
-     * This is used for Google Cast to send the audio URL to Chromecast.
-     */
-    suspend fun getStreamUrl(mediaId: String): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                val song = database.getSongByIdBlocking(mediaId)
-                if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
-                    return@withContext null
-                }
-                resolveOnlineStream(mediaId, song).uri
-            } catch (e: Exception) {
-                timber.log.Timber.e(e, "Failed to get stream URL for Cast")
-                null
-            }
-        }
-
-    /**
-     * Initialize Google Cast support
-     */
-    private fun initializeCast() {
-        if (dataStore.get(com.metrolist.music.constants.EnableGoogleCastKey, true)) {
-            try {
-                castConnectionHandler = CastConnectionHandler(this, scope, this)
-                castConnectionHandler?.initialize()
-                timber.log.Timber.d("Google Cast initialized")
-            } catch (e: Exception) {
-                timber.log.Timber.e(e, "Failed to initialize Google Cast")
-            }
-        }
-    }
-
-    override fun onPositionDiscontinuity(
-        oldPosition: Player.PositionInfo,
-        newPosition: Player.PositionInfo,
-        reason: Int,
-    ) {
-        player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let { mediaId ->
-            scheduleAudioFormatRefresh(mediaId)
-        }
-        if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-            val seekPosition =
-                newPosition.positionMs
-                    .takeUnless { it == C.TIME_UNSET }
-                    ?: player.currentPosition
-            seekSpotifyListeningHistoryIfAllowed(
-                positionMs = seekPosition,
-                isPlaying = player.isPlaying,
-                metadata = newPosition.mediaItem?.metadata ?: player.currentMetadata,
-                duration = currentPlaybackDurationIfReady(),
-            )
-            scheduleCrossfade()
-        }
-    }
-
-    private fun scheduleCrossfade() {
-        crossfadeTriggerJob?.cancel()
-        crossfadeTriggerJob = null
-        if (isCrossfading || secondaryPlayer != null) return
-        val mixProfile = currentMetroMixProfile()
-        if (!crossfadeEnabled || player.duration == C.TIME_UNSET || player.duration <= mixProfile.durationMs) return
-        if (crossfadeGapless && isNextItemGapless()) return
-        if (!player.hasNextMediaItem() && player.repeatMode != REPEAT_MODE_ONE) return
-
-        val triggerTime = player.duration - mixProfile.durationMs
-        val phraseAlignedTrigger =
-            if (mixProfile.preset == MetroMixPreset.AUTOMIX) {
-                alignToPhraseStart(triggerTime, player.duration)
-            } else {
-                triggerTime
-            }
-        val delayMs = phraseAlignedTrigger - player.currentPosition
-        pendingMetroMixProfile = mixProfile
-        if (delayMs <= 250L) {
-            startCrossfade()
-            return
-        }
-
-        val targetMediaId = player.currentMediaItem?.mediaId
-
-        crossfadeTriggerJob =
-            scope.launch {
-                delay(delayMs)
-                if (isActive && player.isPlaying && player.currentMediaItem?.mediaId == targetMediaId && !sleepTimer.pauseWhenSongEnd) {
-                    startCrossfade()
-                }
-            }
-    }
-
-    /**
-     * Snaps the natural crossfade trigger point back to the nearest 8-bar
-     * phrase boundary of the currently playing track, so Automix transitions
-     * start where a DJ actually would - at a structural boundary - instead of
-     * at an arbitrary fixed offset from the end of the file. Falls back to the
-     * natural trigger time whenever BPM is unavailable or snapping would land
-     * implausibly close to the start of the track.
-     */
-    private fun alignToPhraseStart(
-        naturalTriggerMs: Long,
-        trackDurationMs: Long,
-    ): Long {
-        val bpm = player.currentMediaItem?.metadata?.bpm?.takeIf { it in 40f..240f } ?: return naturalTriggerMs
-        val barMs = 60_000f / bpm * 4f // 4/4 assumed - the overwhelming majority of streamed music
-        val phraseMs = (barMs * 8f).toLong().coerceAtLeast(1L) // 8-bar phrase, the standard pop/EDM unit
-
-        // Snap to the phrase boundary at or before the natural trigger point,
-        // never later - we don't want to shorten the outgoing track's own tail.
-        val snapped = (naturalTriggerMs / phraseMs) * phraseMs
-        val minSensibleTriggerMs = (trackDurationMs * 0.15).toLong()
-        return if (snapped in minSensibleTriggerMs..naturalTriggerMs) snapped else naturalTriggerMs
-    }
-
-    private fun FormatEntity.isAlacFormat(): Boolean =
-        codecs.contains("alac", ignoreCase = true) ||
-                mimeType.contains("alac", ignoreCase = true)
-
-    private fun FormatEntity.isFlacFormat(): Boolean =
-        mimeType.contains("flac", ignoreCase = true) ||
-                codecs.contains("flac", ignoreCase = true)
-
-    private fun FormatEntity.isProviderFallbackFormat(): Boolean =
-        itag in setOf(
-            QOBUZ_FALLBACK_ITAG,
-            TIDAL_FALLBACK_ITAG,
-            DEEZER_FALLBACK_ITAG,
-            SOUNDCLOUD_FALLBACK_ITAG,
-            INSTAGRAM_FALLBACK_ITAG,
-            APPLE_MUSIC_FALLBACK_ITAG,
-            DIRECT_HTTP_AUDIO_ITAG,
-        )
-
-    private fun currentMetroMixProfile(): MetroMixRuntimeProfile {
-        val currentSongId = player.currentMediaItem?.mediaId
-        val nextIndex = player.nextMediaItemIndex
-        val nextSongId = if (nextIndex != C.INDEX_UNSET) player.getMediaItemAt(nextIndex).mediaId else null
-
-        if (currentSongId != null && nextSongId != null) {
-            val transition = runBlocking(Dispatchers.IO) { database.getTransition(currentSongId, nextSongId) }
-            if (transition != null) {
-                val bpm = transition.bpmA ?: player.currentMediaItem?.metadata?.bpm
-                val bars = transition.overlapBars.coerceIn(2, 32)
-                val barDurationMs = bpm?.takeIf { it in 40f..240f }?.let { (60_000f / it * 4f * bars).toLong() }
-
-                val styleOverride = transition.mixTransitionStyleOverride?.let {
-                    runCatching { MetroMixPreset.valueOf(it) }.getOrNull()
-                }
-
-                val durationMs = transition.mixOutStartMs?.let { outStart ->
-                    transition.mixInStartMs?.let { inStart ->
-                        (outStart - inStart).coerceAtLeast(0L)
-                    }
-                } ?: barDurationMs ?: ((styleOverride?.durationSeconds ?: (crossfadeDuration / 1000f)) * 1000f).toLong()
-
-                return MetroMixRuntimeProfile(
-                    preset = styleOverride ?: activeMetroMixPreset?.let { if (it == MetroMixPreset.AUTO) inferAutoMetroMixPreset() else it },
-                    durationMs = durationMs.coerceIn(750L, 60_000L),
-                    volumeCurve = runCatching { MetroMixVolumeCurve.valueOf(transition.volumeCurve) }.getOrDefault(activeMetroMixVolumeCurve),
-                    eqCurve = runCatching { MetroMixEqCurve.valueOf(transition.eqTemplate) }.getOrDefault(activeMetroMixEqCurve),
-                    effectCurve = runCatching { MetroMixEffectCurve.valueOf(transition.effectType) }.getOrDefault(activeMetroMixEffectCurve),
-                )
-            }
-        }
-
-        val selectedPreset = activeMetroMixPreset
-        val runtimePreset =
-            when (selectedPreset) {
-                null -> null
-                MetroMixPreset.AUTO -> inferAutoMetroMixPreset()
-                else -> selectedPreset
-            }
-        val bpm = player.currentMediaItem?.metadata?.bpm
-        val bars = activeMetroMixBars.coerceIn(2, 32)
-        val barDurationMs = bpm?.takeIf { it in 40f..240f }?.let { (60_000f / it * 4f * bars).toLong() }
-        val presetDurationMs = ((runtimePreset?.durationSeconds ?: (crossfadeDuration / 1000f)) * 1000f).toLong()
-        val durationMs =
-            if (selectedPreset != null) {
-                barDurationMs ?: (presetDurationMs * (bars / 8f)).toLong()
-            } else {
-                presetDurationMs
-            }.coerceIn(750L, 32_000L)
-        return MetroMixRuntimeProfile(
-            preset = runtimePreset,
-            durationMs = durationMs,
-            volumeCurve = activeMetroMixVolumeCurve,
-            eqCurve = activeMetroMixEqCurve,
-            effectCurve = activeMetroMixEffectCurve,
-        )
-    }
-
-    private fun inferAutoMetroMixPreset(): MetroMixPreset {
-        val current = player.currentMediaItem?.mediaMetadata
-        val nextIndex = player.nextMediaItemIndex
-        val next =
-            if (nextIndex != C.INDEX_UNSET) {
-                player.getMediaItemAt(nextIndex).mediaMetadata
-            } else {
-                null
-            }
-        val currentTitle = current?.title?.toString().orEmpty()
-        val nextTitle = next?.title?.toString().orEmpty()
-        val titles = "$currentTitle $nextTitle".lowercase(Locale.US)
-        val currentAlbum = current?.albumTitle?.toString().orEmpty()
-        val nextAlbum = next?.albumTitle?.toString().orEmpty()
-        val sameAlbum = currentAlbum.isNotBlank() && currentAlbum == nextAlbum
-        val currentDuration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
-
-        return when {
-            sameAlbum -> MetroMixPreset.SMOOTH
-            titles.containsAny("skit", "interlude", "intro") || currentDuration in 1L..95_000L -> MetroMixPreset.QUICK_CUT
-            titles.containsAny("outro", "acoustic", "live", "remaster") -> MetroMixPreset.VOCAL_BLEND
-            titles.containsAny("club", "extended", "remix", "mix", "edit") -> MetroMixPreset.CLUB_BLEND
-            currentDuration >= 300_000L -> MetroMixPreset.BEAT_BLEND
-            currentDuration in 1L..150_000L -> MetroMixPreset.RADIO_EDIT
-            else -> MetroMixPreset.SMART_DJ
-        }
-    }
-
-    private fun String.containsAny(vararg needles: String): Boolean =
-        needles.any { contains(it) }
-
-    private fun isNextItemGapless(): Boolean {
-        val current = player.currentMediaItem?.mediaMetadata ?: return false
-        val nextIndex = player.nextMediaItemIndex
-        if (nextIndex == C.INDEX_UNSET) return false
-        val next = player.getMediaItemAt(nextIndex).mediaMetadata
-        return current.albumTitle != null && current.albumTitle == next.albumTitle
-    }
-
-    /**
-     * Computes the full Automix transition plan from BPM + Camelot key on both
-     * tracks: shared target tempo, per-track speed ratios, a beat-phase seek
-     * offset for the incoming track, and a harmonic-mixing-driven duration/EQ
-     * adjustment. Returns null when either track is missing BPM data (the
-     * caller falls back to the plain equal-power AUTOMIX curve in that case).
-     */
-    private fun buildAutomixPlan(
-        outgoing: MediaMetadata?,
-        incoming: MediaMetadata?,
-        outgoingPositionMs: Long,
-    ): AutomixPlan? {
-        val bpmA = outgoing?.bpm?.takeIf { it in 40f..240f } ?: return null
-        val bpmB = incoming?.bpm?.takeIf { it in 40f..240f } ?: return null
-        val targetBpm = (bpmA + bpmB) / 2f
-        val speedA = (targetBpm / bpmA).coerceIn(0.92f, 1.08f)
-        val speedB = (targetBpm / bpmB).coerceIn(0.92f, 1.08f)
-
-        // Beat-phase alignment: assume both tracks' downbeat 1 lands at
-        // track-time 0 (the standard assumption absent a true onset/beat
-        // tracker), find how far track A currently sits into its own beat
-        // cycle at tempo-matched speed, and start track B at the equivalent
-        // point in its cycle so the two beat grids line up from the first bar.
-        val beatMsA = 60_000f / (bpmA * speedA)
-        val beatMsB = 60_000f / (bpmB * speedB)
-        val phaseA = outgoingPositionMs.toFloat().mod(beatMsA)
-        val phaseOffsetMs = ((phaseA / beatMsA) * beatMsB).toLong().coerceIn(0L, beatMsB.toLong().coerceAtLeast(1L) - 1L)
-
-        val hint = harmonicMixHint(outgoing.keySignature, incoming.keySignature)
-
-        return AutomixPlan(
-            bpmA = bpmA,
-            bpmB = bpmB,
-            targetBpm = targetBpm,
-            speedA = speedA,
-            speedB = speedB,
-            phaseOffsetMs = phaseOffsetMs,
-            keyCompatibility = hint.compatibility,
-            durationScale = hint.durationScale,
-            bassSeparation = hint.bassSeparation,
-        )
-    }
-
-    private fun startCrossfade() {
-        if (isCrossfading) return
-        if (secondaryPlayer != null) return
-        if (castConnectionHandler?.isCasting?.value == true) return
-        val mixProfile = pendingMetroMixProfile ?: currentMetroMixProfile()
-        pendingMetroMixProfile = null
-        activeCrossfadeDurationMs = mixProfile.durationMs
-        activeMetroMixRuntimePreset = mixProfile.preset
-        activeMetroMixRuntimeProfile = mixProfile
-        activeAutomixPlan = null
-
-        // Preserve player state before creating the secondary player
-        // Use runBlocking to ensure we get the correct state from DataStore
-        val savedRepeatMode = runBlocking { dataStore.get(RepeatModeKey, REPEAT_MODE_OFF) }
-        val savedShuffleEnabled = runBlocking { dataStore.get(ShuffleModeKey, false) }
-
-        // For repeat-one, crossfade back into the same track
-        val targetIndex =
-            if (savedRepeatMode == REPEAT_MODE_ONE) {
-                player.currentMediaItemIndex
-            } else {
-                player.nextMediaItemIndex
-            }
-        if (targetIndex == C.INDEX_UNSET) return
-        val targetMediaItem = runCatching { player.getMediaItemAt(targetIndex) }.getOrNull()
-
-        if (mixProfile.preset == MetroMixPreset.AUTOMIX) {
-            val plan =
-                buildAutomixPlan(
-                    outgoing = player.currentMediaItem?.metadata,
-                    incoming = targetMediaItem?.metadata,
-                    outgoingPositionMs = player.currentPosition,
-                )
-            activeAutomixPlan = plan
-            if (plan != null) {
-                // Harmonic mixing drives blend width: compatible keys sustain a
-                // longer overlap, clashing keys get in and out fast.
-                activeCrossfadeDurationMs = (activeCrossfadeDurationMs * plan.durationScale).toLong().coerceIn(1_500L, 20_000L)
-                Timber.tag(TAG).d(
-                    "Automix plan: %.1f->%.1f bpm (target %.1f), speed %.3f/%.3f, phase +%dms, key=%s, duration=%dms",
-                    plan.bpmA,
-                    plan.bpmB,
-                    plan.targetBpm,
-                    plan.speedA,
-                    plan.speedB,
-                    plan.phaseOffsetMs,
-                    plan.keyCompatibility,
-                    activeCrossfadeDurationMs,
-                )
-            }
-        }
-
-        secondaryPlayer = createExoPlayer(publishToUi = false)
-        val secPlayer = secondaryPlayer!!
-        secPlayer.addListener(secondaryPlayerListener)
-        var swapped = false
-        val readinessListener =
-            object : Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState != Player.STATE_READY || swapped) return
-                    swapped = true
-                    secPlayer.removeListener(this)
-                    crossfadePrepareJob?.cancel()
-                    crossfadePrepareJob = null
-                    performCrossfadeSwap(targetIndex, targetMediaItem)
-                    if (savedShuffleEnabled) {
-                        val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-                    }
-                }
-
-                override fun onPlayerError(error: PlaybackException) {
-                    swapped = true
-                    secPlayer.removeListener(this)
-                    cleanupSecondaryCrossfadePlayer()
-                }
-            }
-        secPlayer.addListener(readinessListener)
-
-        val itemCount = player.mediaItemCount
-        val items = mutableListOf<MediaItem>()
-        // Copy entire queue history + future
-        for (i in 0 until itemCount) {
-            items.add(player.getMediaItemAt(i))
-        }
-
-        secPlayer.setMediaItems(items)
-        // Seek to target track (next track, or current track for repeat-one).
-        // Automix nudges the start position into the incoming track's beat
-        // cycle so its downbeat lines up with the outgoing track's grid.
-        secPlayer.seekTo(targetIndex, activeAutomixPlan?.phaseOffsetMs ?: 0L)
-        secPlayer.volume = 0f
-
-        // Copy repeat and shuffle state to the new player
-        secPlayer.repeatMode = savedRepeatMode
-        secPlayer.shuffleModeEnabled = savedShuffleEnabled
-
-        secPlayer.prepare()
-        secPlayer.playWhenReady = true
-        nextTrackPreloadCoordinator?.requestRefresh()
-
-        crossfadePrepareJob =
-            scope.launch {
-                delay((activeCrossfadeDurationMs + 5_000L).coerceAtLeast(8_000L))
-                if (!swapped && secondaryPlayer === secPlayer) {
-                    Timber.tag(TAG).w("Crossfade secondary player did not become ready in time")
-                    secPlayer.removeListener(readinessListener)
-                    cleanupSecondaryCrossfadePlayer()
-                }
-            }
-    }
-
-    private fun crossfadeVolumePair(
-        progress: Float,
-        preset: MetroMixPreset?,
-        profile: MetroMixRuntimeProfile? = null,
-    ): Pair<Float, Float> {
-        val p = progress.coerceIn(0f, 1f)
-        fun smooth(value: Float) = value * value * (3f - 2f * value)
-        fun easeOut(value: Float) = 1f - (1f - value) * (1f - value)
-        fun easeIn(value: Float) = value * value
-        fun range(value: Float, start: Float, end: Float) = ((value - start) / (end - start)).coerceIn(0f, 1f)
-        fun equalPowerIn(value: Float) = sin(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
-        fun equalPowerOut(value: Float) = cos(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
-        fun centerDuck(amount: Float): Float {
-            val distanceFromCenter = (2f * p - 1f).coerceIn(-1f, 1f)
-            return 1f - amount * (1f - distanceFromCenter * distanceFromCenter)
-        }
-        fun pair(fadeIn: Float, fadeOut: Float, headroom: Float = 1f): Pair<Float, Float> =
-            (fadeIn.coerceIn(0f, 1f) * headroom) to (fadeOut.coerceIn(0f, 1f) * headroom)
-        val effectivePreset =
-            when {
-                profile?.effectCurve == MetroMixEffectCurve.ECHO -> MetroMixPreset.ECHO_OUT
-                profile?.effectCurve == MetroMixEffectCurve.WAVE -> MetroMixPreset.BEAT_BLEND
-                profile?.eqCurve == MetroMixEqCurve.BASS_SWAP -> MetroMixPreset.BASS_SWAP
-                profile?.eqCurve == MetroMixEqCurve.VOCAL_SPACE -> MetroMixPreset.VOCAL_BLEND
-                profile?.volumeCurve == MetroMixVolumeCurve.PUNCHY -> MetroMixPreset.ENERGY_MATCH
-                profile?.volumeCurve == MetroMixVolumeCurve.MELT -> MetroMixPreset.LOOP_OUT
-                profile?.volumeCurve == MetroMixVolumeCurve.WAVE -> MetroMixPreset.BEAT_BLEND
-                profile?.volumeCurve == MetroMixVolumeCurve.BALANCED -> MetroMixPreset.SMART_DJ
-                else -> preset
-            }
-
-        return when (effectivePreset) {
-            null -> {
-                val fadeIn = easeOut(p)
-                val fadeOut = (1f - p) * (1f - p)
-                pair(fadeIn, fadeOut)
-            }
-
-            MetroMixPreset.AUTO,
-            MetroMixPreset.SMART_DJ,
-            MetroMixPreset.SMOOTH -> {
-                val duck = centerDuck(0.10f)
-                pair(equalPowerIn(smooth(p)), equalPowerOut(smooth(p)), duck)
-            }
-
-            MetroMixPreset.AUTOMIX -> {
-                // Full-width equal-power blend across the tempo-synced window; the
-                // actual beat/tempo alignment happens via playback speed ramping
-                // in the crossfade tick loop (see applyAutomixTempoSync), so the
-                // volume curve itself just needs to be a clean, wide, low-duck
-                // blend that won't fight the tempo ramp.
-                val fadeIn = equalPowerIn(smooth(range(p, 0.02f, 0.98f)))
-                val fadeOut = equalPowerOut(smooth(range(p, 0.02f, 0.98f)))
-                pair(fadeIn, fadeOut, centerDuck(0.09f))
-            }
-
-            MetroMixPreset.BEAT_BLEND -> {
-                val fadeIn = equalPowerIn(smooth(range(p, 0.05f, 0.95f)))
-                val fadeOut = equalPowerOut(smooth(range(p, 0.05f, 0.95f)))
-                pair(fadeIn, fadeOut, centerDuck(0.08f))
-            }
-
-            MetroMixPreset.ENERGY_MATCH -> {
-                val fadeIn = easeOut(range(p, 0.02f, 0.92f))
-                val fadeOut = 1f - easeIn(range(p, 0.08f, 1f))
-                pair(fadeIn, fadeOut, centerDuck(0.14f))
-            }
-
-            MetroMixPreset.CLUB_BLEND -> {
-                val fadeIn = smooth(range(p, 0.00f, 0.86f))
-                val fadeOut = 1f - smooth(range(p, 0.18f, 1f))
-                pair(fadeIn, fadeOut, centerDuck(0.16f))
-            }
-
-            MetroMixPreset.VOCAL_BLEND -> {
-                val fadeIn = smooth(range(p, 0.34f, 1f))
-                val fadeOut = 1f - smooth(range(p, 0.08f, 0.76f))
-                pair(fadeIn, fadeOut, centerDuck(0.06f))
-            }
-
-            MetroMixPreset.BASS_SWAP -> {
-                val fadeIn = easeOut(range(p, 0.18f, 0.74f))
-                val fadeOut = 1f - smooth(range(p, 0.38f, 0.80f))
-                pair(fadeIn, fadeOut, centerDuck(0.18f))
-            }
-
-            MetroMixPreset.RADIO_EDIT -> {
-                val curve = smooth(p)
-                pair(equalPowerIn(curve), equalPowerOut(curve), centerDuck(0.12f))
-            }
-
-            MetroMixPreset.QUICK_CUT -> {
-                val fadeIn = smooth(range(p, 0.04f, 0.52f))
-                val fadeOut = 1f - smooth(range(p, 0.20f, 0.58f))
-                pair(fadeIn, fadeOut, centerDuck(0.05f))
-            }
-
-            MetroMixPreset.LOOP_OUT -> {
-                val fadeIn = equalPowerIn(smooth(p))
-                val fadeOut = (1f - smooth(range(p, 0.10f, 1f))) * (1f - 0.15f * p)
-                pair(fadeIn, fadeOut, centerDuck(0.18f))
-            }
-
-            MetroMixPreset.FADE -> pair(p, 1f - p)
-
-            MetroMixPreset.RISE -> {
-                val fadeIn = easeOut(p)
-                val fadeOut = 1f - smooth(p)
-                pair(fadeIn, fadeOut)
-            }
-
-            MetroMixPreset.BLEND -> {
-                val fadeIn = smooth(p)
-                val fadeOut = (1f - easeIn(p)).coerceIn(0f, 1f)
-                pair(fadeIn, fadeOut, centerDuck(0.10f))
-            }
-
-            MetroMixPreset.DROP -> {
-                val delayed = ((p - 0.35f) / 0.65f).coerceIn(0f, 1f)
-                pair(smooth(delayed), if (p < 0.42f) 1f else (1f - smooth(delayed)))
-            }
-
-            MetroMixPreset.ECHO_OUT -> {
-                val fadeIn = smooth(p)
-                val remaining = 1f - p
-                pair(fadeIn, remaining * remaining * remaining)
-            }
-
-            MetroMixPreset.LONG_BLEND -> {
-                val fadeIn = easeOut(p)
-                val fadeOut = 1f - easeIn(p)
-                pair(fadeIn, fadeOut, centerDuck(0.12f))
-            }
-        }
-    }
-
-    private fun performCrossfadeSwap(
-        targetIndex: Int,
-        targetMediaItem: MediaItem?,
-    ) {
-        val nextPlayer = secondaryPlayer ?: return
-        isCrossfading = true
-        val currentPlayer = player
-        val metroMixPreset = activeMetroMixRuntimePreset ?: activeMetroMixPreset
-        val metroMixProfile = activeMetroMixRuntimeProfile
-
-        fadingPlayer = currentPlayer
-        player = nextPlayer
-        secondaryPlayer = null
-        nextTrackPreloadCoordinator?.updatePlayer(player)
-        nextTrackPreloadCoordinator?.requestRefresh()
-
-        fadingPlayer?.removeListener(this)
-        fadingPlayer?.removeListener(sleepTimer)
-
-        // Add listener to sync play/pause state
-        player.addListener(
-            object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    if (isCrossfading && fadingPlayer != null) {
-                        if (isPlaying) {
-                            fadingPlayer?.play()
-                        } else {
-                            fadingPlayer?.pause()
-                        }
-                    } else {
-                        player.removeListener(this)
-                    }
-                }
-            },
-        )
-
-        nextPlayer.removeListener(secondaryPlayerListener)
-        nextPlayer.addListener(this)
-        nextPlayer.addListener(sleepTimer)
-
-        sleepTimer.player = player
-
-        try {
-            (mediaSession as MediaSession).player = player
-        } catch (e: Exception) {
-            timber.log.Timber.e(e, "Failed to swap player in MediaSession")
-        }
-
-        val previousAudioSessionId = fadingPlayer?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET
-        previousMediaItemIndex = targetIndex
-        val transitionedMetadata = targetMediaItem?.metadata ?: player.currentMetadata
-        currentMediaMetadata.value = transitionedMetadata
-        updateCurrentAudioFormatFromTracks(player.currentTracks)
-        _playerFlow.value = player
-        updateNotification()
-        updateWidgetUI(player.isPlaying)
-        if (player.isPlaying && transitionedMetadata != null) {
-            val transitionDuration = currentPlaybackDurationIfReady()
-            scrobbleManager?.onSongStop()
-            scrobbleManager?.onSongStart(transitionedMetadata, duration = transitionDuration)
-            youtubeMusicHistorySyncManager.onSongStop()
-            youtubeMusicHistorySyncManager.onSongStart(transitionedMetadata, durationMs = transitionDuration)
-            youtubeMusicProgressiveHistorySyncManager.onSongStop()
-            youtubeMusicProgressiveHistorySyncManager.onSongStart(
-                transitionedMetadata,
-                durationMs = transitionDuration,
-            )
-            startSpotifyListeningHistoryIfAllowed(
-                metadata = transitionedMetadata,
-                duration = transitionDuration,
-            )
-        }
-        if (dataStore.get(PersistentQueueKey, true)) {
-            saveQueueToDisk()
-        }
-
-        openAudioEffectSession()
-
-        crossfadeJob =
-            scope.launch {
-                val duration = activeCrossfadeDurationMs.coerceAtLeast(750L)
-                val steps = (duration / 20L).toInt().coerceIn(40, 250)
-                val stepTime = (duration / steps).coerceAtLeast(10L)
-                val startVolume =
-                    try {
-                        fadingPlayer?.volume ?: 1f
-                    } catch (e: Exception) {
-                        1f
-                    }
-
-                // Prepare MetroMix Filters if preset is active
-                val fadingEq = playerEqProcessors[fadingPlayer as Player]
-                val currentEq = playerEqProcessors[player as Player]
-
-                if (metroMixPreset == MetroMixPreset.BASS_SWAP ||
-                    (metroMixPreset == MetroMixPreset.AUTOMIX && (activeAutomixPlan?.bassSeparation ?: 0f) > 0.05f)
-                ) {
-                    val bassFilter = ParametricEQBand(frequency = 100.0, gain = 0.0, q = 0.7, filterType = FilterType.LSC)
-                    fadingEq?.setMetroMixBands(listOf(bassFilter))
-                    currentEq?.setMetroMixBands(listOf(bassFilter))
-                }
-
-                // AUTOMIX: reuse the plan computed at startCrossfade time (same
-                // numbers that were used to phase-align the beat grids at seek
-                // time) rather than recomputing BPM here, so the tempo ramp and
-                // the phase alignment never drift apart mid-transition.
-                val automixPlan = activeAutomixPlan
-                val automixSpeedA = automixPlan?.speedA
-                val automixSpeedB = automixPlan?.speedB
-                // Clashing keys get extra low-end separation on the outgoing
-                // track while the two overlap, so the dissonance is less audible.
-                val automixBassDuck = automixPlan?.bassSeparation ?: 0f
-
-                fun range(p: Float, start: Float, end: Float) = ((p - start) / (end - start)).coerceIn(0f, 1f)
-                fun smooth(value: Float) = value.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
-
-                for (i in 0..steps) {
-                    if (!isActive) break
-                    // Pause volume ramp if player is paused
-                    while (!player.isPlaying && isActive) {
-                        delay(100)
-                    }
-
-                    val progress = i / steps.toFloat()
-                    val (fadeIn, fadeOut) = crossfadeVolumePair(progress, metroMixPreset, metroMixProfile)
-
-                    try {
-                        player.volume = startVolume * fadeIn
-                        fadingPlayer?.volume = startVolume * fadeOut
-
-                        if (automixSpeedA != null && automixSpeedB != null) {
-                            // Ease into the tempo-matched speed and ease back out to 1.0x by
-                            // the edges of the window, so the very start/end of playback for
-                            // each track is never audibly pitched.
-                            val tempoBlend = smooth(range(progress, 0.05f, 0.5f)) - smooth(range(progress, 0.5f, 0.95f))
-                            val speedA = 1f + (automixSpeedA - 1f) * tempoBlend
-                            val speedB = 1f + (automixSpeedB - 1f) * tempoBlend
-                            // Explicit pitch=1f is required here: Sonic only gives
-                            // pitch-preserving time-stretch when pitch is pinned to 1,
-                            // otherwise the single-arg constructor ties pitch to speed
-                            // and you get the chipmunk/slowdown effect instead.
-                            fadingPlayer?.playbackParameters = PlaybackParameters(speedA.coerceIn(0.85f, 1.15f), 1f)
-                            player.playbackParameters = PlaybackParameters(speedB.coerceIn(0.85f, 1.15f), 1f)
-                        }
-
-                        // Apply dynamic EQ effects
-                        when (metroMixPreset) {
-                            MetroMixPreset.BASS_SWAP -> {
-                                // Fade out bass on old track, fade in on new track
-                                // Bass swap happens in the middle
-                                val fadeOutBass = (1.0 - range(progress, 0.3f, 0.6f)) * -24.0
-                                val fadeInBass = (range(progress, 0.4f, 0.7f) - 1.0) * -24.0
-                                fadingEq?.updateMetroMixGain(0, fadeOutBass)
-                                currentEq?.updateMetroMixGain(0, fadeInBass)
-                            }
-                            MetroMixPreset.VOCAL_BLEND -> {
-                                // Duck the old track's vocals using a band-stop or high-shelf
-                                // VOCAL_BLEND: Fade out old vocals quickly while keeping the beat,
-                                // then bring in new track.
-                                val vocalDuck = range(progress, 0.05f, 0.45f) * -22.0
-                                fadingEq?.updateMetroMixGain(1, vocalDuck) // Assuming index 1 is vocal band
-                            }
-                            MetroMixPreset.AUTOMIX -> {
-                                if (automixBassDuck > 0.05f) {
-                                    // Peaks at the center of the transition where both tracks'
-                                    // low end overlaps most; keyed off harmonic compatibility so
-                                    // clashing keys get more separation than compatible ones.
-                                    val centerWeight = 1f - kotlin.math.abs(2f * progress - 1f)
-                                    val duckDb = -24.0 * automixBassDuck * centerWeight
-                                    fadingEq?.updateMetroMixGain(0, duckDb)
-                                }
-                            }
-                            else -> {}
-                        }
-                    } catch (e: Exception) {
-                        break
-                    }
-
-                    delay(stepTime)
-                }
-
-                try {
-                    fadingPlayer?.volume = 0f
-                    player.volume = startVolume
-                    fadingEq?.setMetroMixBands(emptyList())
-                    currentEq?.setMetroMixBands(emptyList())
-                    if (automixSpeedA != null && automixSpeedB != null) {
-                        // The fading player is about to be released; the surviving player
-                        // must land back on normal speed or it'll keep playing pitched.
-                        player.playbackParameters = PlaybackParameters(1f, 1f)
-                    }
-                } catch (e: Exception) {
-                }
-
-                cleanupCrossfade(fadingPlayerSessionId = previousAudioSessionId)
-            }
-    }
-
-    private fun cleanupSecondaryCrossfadePlayer(scheduleNext: Boolean = true) {
-        crossfadePrepareJob?.cancel()
-        crossfadePrepareJob = null
-        secondaryPlayer?.let { player ->
-            runCatching {
-                player.removeListener(secondaryPlayerListener)
-                player.stop()
-                player.clearMediaItems()
-                player.release()
-            }
-        }
-        secondaryPlayer = null
-        nextTrackPreloadCoordinator?.requestRefresh()
-        isCrossfading = false
-        activeMetroMixRuntimePreset = null
-        activeMetroMixRuntimeProfile = null
-        activeAutomixPlan = null
-        pendingMetroMixProfile = null
-        if (scheduleNext) {
-            scheduleCrossfade()
-        }
-    }
-
-    private fun cleanupCrossfade(
-        fadingPlayerSessionId: Int = C.AUDIO_SESSION_ID_UNSET,
-        scheduleNext: Boolean = true,
-    ) {
-        crossfadePrepareJob?.cancel()
-        crossfadePrepareJob = null
-        fadingPlayer?.stop()
-        fadingPlayer?.clearMediaItems()
-        fadingPlayer?.release()
-        fadingPlayer = null
-        isCrossfading = false
-        activeMetroMixRuntimePreset = null
-        activeMetroMixRuntimeProfile = null
-        activeAutomixPlan = null
-        pendingMetroMixProfile = null
-        applyEffectiveVolume()
-        sleepTimer.notifySongTransition()
-
-        if (fadingPlayerSessionId != C.AUDIO_SESSION_ID_UNSET && fadingPlayerSessionId > 0) {
-            closeAudioEffectSession(sessionIdOverride = fadingPlayerSessionId, clearNormalizationCache = true)
-        }
-        if (scheduleNext) {
-            scheduleCrossfade()
-        }
-    }
-
-    companion object {
-        const val ACTION_ALARM_TRIGGER = "com.metrofuse.plus.action.ALARM_TRIGGER"
-        const val EXTRA_ALARM_ID = "extra_alarm_id"
-        const val EXTRA_ALARM_PLAYLIST_ID = "extra_alarm_playlist_id"
-        const val EXTRA_ALARM_RANDOM_SONG = "extra_alarm_random_song"
-
-        const val ROOT = "root"
-        const val SONG = "song"
-        const val ARTIST = "artist"
-        const val ALBUM = "album"
-        const val PLAYLIST = "playlist"
-        const val YOUTUBE_PLAYLIST = "youtube_playlist"
-        const val SEARCH = "search"
-        const val SHUFFLE_ACTION = "__shuffle__"
-
-        const val CHANNEL_ID = "music_channel_01"
-        const val NOTIFICATION_ID = 888
-        const val ERROR_CODE_NO_STREAM = 1000001
-        const val CHUNK_LENGTH = 512 * 1024L
-        const val PERSISTENT_QUEUE_FILE = "persistent_queue.data"
-        const val PERSISTENT_AUTOMIX_FILE = "persistent_automix.data"
-        const val PERSISTENT_PLAYER_STATE_FILE = "persistent_player_state.data"
-        const val MAX_CONSECUTIVE_ERR = 5
-        const val MAX_RETRY_COUNT = 10
-
-        // Constants for audio normalization
-        private const val MAX_GAIN_MB = 1500 // Maximum gain in millibels (15 dB)
-        private const val MIN_GAIN_MB = -2400 // Minimum gain in millibels (-24 dB)
-
-        private const val TAG = "MusicService"
-        private const val CACHE_TAG = "PlaybackCache"
-        private const val PRELOAD_TAG = "NextTrackPreload"
-        private const val PRELOAD_MIN_URL_LIFETIME_MS = 60_000L
-        private const val PRELOAD_READ_BUFFER_BYTES = 64 * 1024
-
-        // Was 4_000L â€” too short given the underlying OkHttpClient's own
-        // 8s connect / 10s read timeouts, plus the token endpoint's cold-start
-        // latency (it's a Hugging Face Space that can take 15-60s to wake).
-        // That mismatch meant the fetch was almost always aborted before it
-        // had a real chance to complete, which combined with permanent
-        // negative-caching made the canvas look completely broken.
-        private const val APPLE_CANVAS_FETCH_TIMEOUT_MS = 15_000L
-        private const val AUDIO_FORMAT_RETRY_ATTEMPTS = 8
-        private const val AUDIO_FORMAT_RETRY_DELAY_MS = 1_000L
-        private const val LIVE_PLAYBACK_BITRATE_TICK_MS = 125L
-        private const val LIVE_PLAYBACK_BITRATE_MIN_UPDATE_MS = 90L
-        private const val LIVE_PLAYBACK_BITRATE_MIN_DELTA_BPS = 250
-        private const val LIVE_PLAYBACK_BITRATE_MIN_BPS = 32_000
-        private const val LIVE_PLAYBACK_BITRATE_ABSOLUTE_MAX_BPS = 20_000_000
-        private const val LIVE_PLAYBACK_BITRATE_MAX_SAMPLES = 1024
-        private const val LIVE_PLAYBACK_BITRATE_SAMPLE_TTL_MS = 2 * 60 * 1000L
-        private const val LIVE_PLAYBACK_BITRATE_ROLLING_WINDOW_MS = 6_000L
-        private const val LIVE_PLAYBACK_BITRATE_NEAREST_SAMPLE_MS = 30_000L
-        private const val LIVE_PLAYBACK_BITRATE_SMOOTH_BEHIND_MS = 2_250L
-        private const val LIVE_PLAYBACK_BITRATE_SMOOTH_AHEAD_MS = 500L
-        private const val LIVE_PLAYBACK_BITRATE_WEIGHT_DISTANCE_MS = 700.0
-        private const val LIVE_PLAYBACK_BITRATE_OUTLIER_LOW_RATIO = 0.55
-        private const val LIVE_PLAYBACK_BITRATE_OUTLIER_HIGH_RATIO = 1.75
-        private const val WIDGET_UPDATE_INTERVAL_MS = 1_000L
-        private const val PRIVATE_STREAM_MARKER = "_metrolist_private"
-        private const val TIDAL_PENDING_MANIFEST_SCHEME = "metrofuse-tidal"
-        private const val TIDAL_PENDING_MANIFEST_HOST = "manifest"
-        private const val TIDAL_PENDING_MEDIA_ID = "media_id"
-        private const val TIDAL_PENDING_EXPECT_DASH = "expect_dash"
-        private const val QOBUZ_FALLBACK_ITAG = 100_027
-        private const val TIDAL_FALLBACK_ITAG = 100_029
-        private const val DEEZER_FALLBACK_ITAG = 100_033
-        private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
-        private const val INSTAGRAM_FALLBACK_ITAG = 100_041
-        private const val AMAZON_FALLBACK_ITAG = 100_045
-        private const val AMAZON_FLAC_ITAG = 100_046
-        private const val AMAZON_ATMOS_ITAG = 100_047
-        private val YouTubeVideoIdRegex = Regex("^[A-Za-z0-9_-]{11}$")
-
-        private fun String.isYouTubeVideoId(): Boolean =
-            YouTubeVideoIdRegex.matches(this)
-
-        private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
-        const val APPLE_MUSIC_FALLBACK_ITAG = 100_050
-        private const val DIRECT_HTTP_AUDIO_ITAG = 100_051
-        private const val DISCORD_RPC_MAX_IMAGE_URL_LENGTH = 300
-        private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
-        private const val AMAZON_FALLBACK_CACHE_PREFIX = "amazon-fallback-m4a:"
-        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
-        private const val OLD_TIDAL_FALLBACK_CACHE_PREFIX = "tidal-flac-fallback:"
-        private const val TIDAL_FALLBACK_CACHE_PREFIX = "tidal-flac-fallback-temp-v1:"
-        private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
-        private const val APPLE_MUSIC_FALLBACK_CACHE_PREFIX = "apple-music-fallback-audio:"
-        private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
-        private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
-        private const val DIRECT_HTTP_AUDIO_CACHE_PREFIX = "direct-http-audio:"
-        private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
-        private const val AUDIO_MIN_BUFFER_MS = 6_000
-        private const val AUDIO_MAX_BUFFER_MS = 22_000
-        private const val AUDIO_BUFFER_FOR_PLAYBACK_MS = 800
-        private const val AUDIO_BUFFER_FOR_REBUFFER_MS = 2_500
-        private const val AUDIO_TARGET_BUFFER_BYTES = 8 * 1024 * 1024
-        private const val LEGACY_PLACEHOLDER_BPS = 4_000_000
-
-        private fun amazonFallbackCacheKey(mediaId: String) = "$AMAZON_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun tidalFallbackCacheKey(mediaId: String) = "$TIDAL_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun deezerFallbackCacheKey(mediaId: String) = "$DEEZER_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun appleMusicFallbackCacheKey(mediaId: String) = "$APPLE_MUSIC_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun pendingTidalManifestUri(
-            mediaId: String,
-            expectDash: Boolean,
-        ): String =
-            Uri.Builder()
-                .scheme(TIDAL_PENDING_MANIFEST_SCHEME)
-                .authority(TIDAL_PENDING_MANIFEST_HOST)
-                .appendQueryParameter(TIDAL_PENDING_MEDIA_ID, mediaId)
-                .appendQueryParameter(TIDAL_PENDING_EXPECT_DASH, if (expectDash) "1" else "0")
-                .build()
-                .toString()
-
-        private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun instagramFallbackCacheKey(mediaId: String) = "$INSTAGRAM_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun directHttpAudioCacheKey(mediaId: String) = "$DIRECT_HTTP_AUDIO_CACHE_PREFIX$mediaId"
-
-        private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun isTidalFallbackCacheKey(key: String): Boolean =
-            key.startsWith(TIDAL_FALLBACK_CACHE_PREFIX) ||
-                    key.startsWith(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
-
-        private fun isAmazonFallbackCacheKey(key: String): Boolean =
-            key.startsWith(AMAZON_FALLBACK_CACHE_PREFIX)
-
-        private fun isProviderFallbackCacheKey(key: String): Boolean =
-            key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
-                    isTidalFallbackCacheKey(key) ||
-                    isAmazonFallbackCacheKey(key) ||
-                    key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
-                    key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
-                    key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
-                    key.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) ||
-                    key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) ||
-                    key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
-
-        private fun Uri.isResolvedProviderPlaybackUri(): Boolean =
-            when (scheme?.lowercase(Locale.US)) {
-                "http", "https", "data", "file" -> true
-                else -> false
-            }
-
-        private fun Uri.isDirectHttpAudioUri(): Boolean {
-            if (scheme?.lowercase(Locale.US) !in setOf("http", "https")) return false
-            val text = toString().lowercase(Locale.US)
-            if (
-                listOf(
-                    "open.spotify.com/",
-                    "/license",
-                    "widevine",
-                    ".mpd",
-                    ".m3u8",
-                    "manifest",
-                    "drm",
-                ).any { it in text }
-            ) {
-                return false
-            }
-            return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac")
-                .any { it in text.substringBefore('?') } ||
-                    listOf("audio", "podcast", "episode", "download")
-                        .any { it in text }
-        }
-
-        private fun String.directHttpAudioMimeType(): String {
-            val lower = lowercase(Locale.US).substringBefore('?')
-            return when {
-                ".mp3" in lower -> "audio/mpeg"
-                ".m4a" in lower -> "audio/mp4"
-                ".aac" in lower -> "audio/aac"
-                ".ogg" in lower || ".opus" in lower -> "audio/ogg"
-                ".flac" in lower -> "audio/flac"
-                else -> "audio/mpeg"
-            }
-        }
-
-        private fun Uri.isTidalPlaybackCdnUri(): Boolean {
-            val host = host?.lowercase(Locale.US) ?: return false
-            return path?.contains("/mediatracks/", ignoreCase = true) == true &&
-                    (
-                            host == "audio.tidal.com" ||
-                                    host.endsWith(".audio.tidal.com") ||
-                                    host.endsWith(".tidal.com")
-                            )
-        }
-
-        private fun Uri.isPendingTidalManifestUri(): Boolean =
-            scheme?.equals(TIDAL_PENDING_MANIFEST_SCHEME, ignoreCase = true) == true &&
-                    host?.equals(TIDAL_PENDING_MANIFEST_HOST, ignoreCase = true) == true
-
-        private fun Uri.isPendingTidalDashRequest(): Boolean =
-            isPendingTidalManifestUri() &&
-                    getQueryParameter(TIDAL_PENDING_EXPECT_DASH) != "0"
-
-        private fun Uri.mediaIdFromPendingTidalManifestUri(): String? =
-            if (isPendingTidalManifestUri()) {
-                getQueryParameter(TIDAL_PENDING_MEDIA_ID)?.takeIf { it.isNotBlank() }
-            } else {
-                null
-            }
-
-        private fun mediaIdFromDataSpecKey(key: String): String? =
-            key
-                .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
-                .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
-                .removePrefix(TIDAL_FALLBACK_CACHE_PREFIX)
-                .removePrefix(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
-                .removePrefix(DEEZER_FALLBACK_CACHE_PREFIX)
-                .removePrefix(APPLE_MUSIC_FALLBACK_CACHE_PREFIX)
-                .removePrefix(AMAZON_FALLBACK_CACHE_PREFIX)
-                .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
-                .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
-                .removePrefix(DIRECT_HTTP_AUDIO_CACHE_PREFIX)
-                .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
-                .takeUnless { Uri.parse(it).isTidalPlaybackCdnUri() }
-
-
-        private fun amazonFallbackFormat(
-            mediaId: String,
-            resolved: AmazonAudioProvider.Resolved,
-        ): FormatEntity =
-            FormatEntity(
-                id = mediaId,
-                itag = AMAZON_FALLBACK_ITAG,
-                mimeType = resolved.mimeType,
-                codecs = resolved.codecs,
-                bitrate = resolved.bitrate,
-                sampleRate = resolved.sampleRate,
-                contentLength = 0L,
-                loudnessDb = null,
-                perceptualLoudnessDb = null,
-                playbackUrl = null,
-            )
-
-        private fun appleMusicFallbackFormat(
-            mediaId: String,
-            resolved: AppleAudioProvider.Resolved,
-        ): FormatEntity =
-            FormatEntity(
-                id = mediaId,
-                itag = APPLE_MUSIC_FALLBACK_ITAG,
-                mimeType = resolved.mimeType,
-                codecs = resolved.codecs,
-                bitrate = resolved.bitrate,
-                sampleRate = 44100,
-                contentLength = 0L,
-                loudnessDb = null,
-                perceptualLoudnessDb = null,
-                playbackUrl = null,
-            )
-
-        private fun qobuzFallbackFormat(
-            mediaId: String,
-            resolved: QobuzAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = QOBUZ_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun tidalFallbackFormat(
-            mediaId: String,
-            resolved: TidalAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = TIDAL_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = resolved.contentLength ?: 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun tidalDirectPlaybackFormat(mediaId: String) = FormatEntity(
-            id = mediaId,
-            itag = TIDAL_FALLBACK_ITAG,
-            mimeType = MimeTypes.AUDIO_MP4,
-            codecs = "mp4a.40.2",
-            bitrate = 320_000,
-            sampleRate = null,
-            contentLength = 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun directHttpAudioFormat(
-            mediaId: String,
-            mimeType: String,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = DIRECT_HTTP_AUDIO_ITAG,
-            mimeType = mimeType,
-            codecs = "",
-            bitrate = 0,
-            sampleRate = null,
-            contentLength = 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun deezerFallbackFormat(
-            mediaId: String,
-            resolved: DeezerAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = DEEZER_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = resolved.contentLength ?: 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun soundCloudFallbackFormat(
-            mediaId: String,
-            resolved: SoundCloudAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = SOUNDCLOUD_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = resolved.contentLength ?: 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun instagramFallbackFormat(
-            mediaId: String,
-            resolved: InstagramAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = INSTAGRAM_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = resolved.contentLength ?: 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun youtubeFallbackFormat(
-            mediaId: String,
-            resolved: YouTubeAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = resolved.itag,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = resolved.contentLength ?: 0L,
-            loudnessDb = resolved.loudnessDb,
-            perceptualLoudnessDb = resolved.perceptualLoudnessDb,
-            playbackUrl = null,
-        )
-
-        @Volatile
-        var isRunning = false
-            private set
-    }
-}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí×¼×Dèµ©hºÚn¶X§zÍKÊŠ‚ˆ
+ˆY]›Û\Ý›Ú™XÝ
+ÊHŒ‚ˆ
+ˆXÙ[œÙY[™\ˆÔLËŒÙYHÚ]\ÝÜžH›ÜˆÛÛšX]ÜœÂˆ
+‹Â‚š[N”Ý\™\ÜÊ‘T‘PÐUSÓˆŠB‚œXÚØYÙHÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚÂ‚š[\Ü[™›ÚY˜\‘›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[Û‚š[\Ü[™›ÚY˜\“›ÝYšXØ][Û‚š[\Ü[™›ÚY˜\“›ÝYšXØ][ÛÚ[›™[š[\Ü[™›ÚY˜\“›ÝYšXØ][Û“X[˜YÙ\‚š[\Ü[™›ÚY˜\”[™[™Ò[[š[\Ü[™›ÚY˜ÛÛ[œ›ØYØ\Ý™XÙZ]™\‚š[\Ü[™›ÚY˜ÛÛ[ÛÛ\Û™[˜[YBš[\Ü[™›ÚY˜ÛÛ[ÛÛ^š[\Ü[™›ÚY˜ÛÛ[’[[š[\Ü[™›ÚY˜ÛÛ[’[[š[\‚š[\Ü[™›ÚY˜ÛÛ[œK”Ù\šXÙR[™›Âš[\Ü[™›ÚY™]X˜\ÙK”ÔS^Ù\[Û‚š[\Ü[™›ÚY›YYXK]Y[Ñ]šXÙPØ[˜XÚÂš[\Ü[™›ÚY›YYXK]Y[Ñ]šXÙR[™›Âš[\Ü[™›ÚY›YYXK]Y[Ñ›ØÝ\Ô™\]Y\Ýš[\Ü[™›ÚY›YYXK]Y[ÓX[˜YÙ\‚š[\Ü[™›ÚY›YYXK˜]Y[Ùž]Y[ÑY™™XÝš[\Ü[™›ÚY›YYXK˜]Y[Ùž“ÝY™\ÜÑ[š[˜Ù\‚š[\Ü[™›ÚY›™]ÛÛ›™XÝ]š]SX[˜YÙ\‚š[\Ü[™›ÚY›™]•\šBš[\Ü[™›ÚY›ÜËš[™\‚š[\Ü[™›ÚY›ÜËZ[š[\Ü[™›ÚY›ÜË[™Bš[\Ü[™›ÚY›ÜË’[™\‚š[\Ü[™›ÚY›ÜË“ÛÜ\‚š[\Ü[™›ÚY›ÜË”Þ\Ý[PÛØÚÂš[\Ü[™›ÚYÚYÙ]•Ø\Ýš[\Ü[™›ÚY˜ÛÜ™K˜\“›ÝYšXØ][ÛÛÛ\]š[\Ü[™›ÚY˜ÛÜ™K˜\“›ÝYšXØ][Û“X[˜YÙ\ÛÛ\]š[\Ü[™›ÚY˜ÛÜ™K˜\”Ù\šXÙPÛÛ\]š[\Ü[™›ÚY˜ÛÜ™K˜ÛÛ[™Ù]Þ\Ý[TÙ\šXÙBš[\Ü[™›ÚY˜ÛÜ™K›™]Õ\šBš[\Ü[™›ÚY™]\ÝÜ™Kœ™Y™\™[˜Ù\Ë˜ÛÜ™K™Y]š[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹]Y[Ð]šX]\Âš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹Âš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹‘›Ü›X]š[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹“YYXR][Bš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹“Z[YU\\Âš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^X˜XÚÑ^Ù\[Û‚š[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^X˜XÚÔ\˜[Y]\œÂš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^Y\‚š[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^Y\‹‘U‘S•ÔÔÒUSÓ—ÑTÐÓÓ•S•RUBš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^Y\‹‘U‘S•ÕSQSS‘WÐÒS‘ÑQš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^Y\‹”‘TPUÓSÑWÐSš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^Y\‹”‘TPUÓSÑWÓÑ‘‚š[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^Y\‹”‘TPUÓSÑWÓÓ‘Bš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹”^Y\‹”ÕUWÒQBš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹•[Y[[™Bš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹•˜XÚÜÂš[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹˜]Y[Ë”ÛÛšXÐ]Y[Ô›ØÙ\ÜÛÜ‚š[\Ü[™›ÚY›YYXLË˜ÛÛ[[Û‹][•[œÝX›P\Bš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK‘]TÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK‘]TÜXÂš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK‘Y˜][]TÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK’]TÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK”™\ÛÛš[™Ñ]TÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK•˜[œÙ™\“\Ý[™\‚š[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK˜ØXÚKØXÚQ]TÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK˜ØXÚKØXÚQ]TÛÝ\˜ÙK‘“Q×ÒQÓ“Ô‘WÐÐPÒWÓÓ—ÑT”“Ô‚š[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK˜ØXÚK”Ú[\PØXÚBš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹™›K‘Y˜][›TÙ\ÜÚ[Û“X[˜YÙ\‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹™›K‘œ˜[Y]ÛÜšÓYYXQ›Bš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹™›K“ØØ[YYXQ›PØ[˜XÚÂš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹œÛÝ\˜ÙK”›ÙÜ™\ÜÚ]™SYYXTÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™]\ÛÝ\˜ÙK›ÚÚ“ÚÒ]TÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹‘Y˜][ØYÛÛ›Ûš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹‘Y˜][™[™\™\œÑ˜XÝÜžBš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹‘^Ô^Y\‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹˜[˜[]XÜË[˜[]XÜÓ\Ý[™\‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹˜[˜[]XÜË”^X˜XÚÔÝ]Âš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹˜[˜[]XÜË”^X˜XÚÔÝ]Ó\Ý[™\‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹˜]Y[Ë‘Y˜][]Y[ÔÚ[šÂš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹˜]Y[Ë”Ú[[˜ÙTÚÚ\[™Ð]Y[Ô›ØÙ\ÜÛÜ‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹™\Ú‘\ÚYYXTÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹™›K‘›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹šË’ÓYYXTÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹œÛÝ\˜ÙK‘Y˜][YYXTÛÝ\˜ÙQ˜XÝÜžBš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹œÛÝ\˜ÙK“ØY]™[[™›Âš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹œÛÝ\˜ÙK“YYXSØY]Bš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹œÛÝ\˜ÙK“YYXTÛÝ\˜ÙBš[\Ü[™›ÚY›YYXLË™^Ü^Y\‹œÛÝ\˜ÙK”ÚY™›SÜ™\‹‘Y˜][ÚY™›SÜ™\‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹˜XÚÜÙ[XÝ[Û‹‘Y˜][˜XÚÔÙ[XÝÜ‚š[\Ü[™›ÚY›YYXLË™^Ü^Y\‹\Ý™X[K“ØY\œ›Ü’[™[™ÔÛXÞBš[\Ü[™›ÚY›YYXLË™^˜XÝÜ‹‘Y˜][^˜XÝÜœÑ˜XÝÜžBš[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹ÛÛ[X[™]Û‚š[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹‘Y˜][YYXS›ÝYšXØ][Û”›ÝšY\‚š[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹“YYXPÛÛ›Û\‚š[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹“YYXSXœ˜\žTÙ\šXÙBš[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹“YYXS›ÝYšXØ][Û‚š[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹“YYXTÙ\ÜÚ[Û‚š[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹“YYXTÙ\ÜÚ[Û”Ù\šXÙBš[\Ü[™›ÚY›YYXLËœÙ\ÜÚ[Û‹”Ù\ÜÚ[Û•ÚÙ[‚š[\ÜÛÛK™ÛÛÙÛK˜ÛÛ[[Û‹˜ÛÛXÝ’[[]]X›S\Ýš[\ÜÛÛK™ÛÛÙÛK˜ÛÛ[[Û‹][˜ÛÛ˜Ý\œ™[“[Ü™Q^XÝ]ÜœÂš[\ÜÛÛK›Y]›Û\Ýš[›™\X™K–[ÝUX™Bš[\ÜÛÛK›Y]›Û\Ýš[›™\X™K›[Ù[Ë”ÛÛ™Ò][Bš[\ÜÛÛK›Y]›Û\Ýš[›™\X™K›[Ù[Ë•Ø]Ú[™Ú[š[\ÜÛÛK›Y]›Û\Ýš[›™\X™K›[Ù[Ë–[ÝUX™PÛY[š[\ÜÛÛK›Y]›Û\Ý›\Ý›K“\Ý“Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË“XZ[XÝ]š]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË”‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë[™›ÚY]]ÔÞ[˜ÙY\šXÜÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë[™›ÚY]]Õ\™Ù]^[\ÝÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ó›Ü›X[^˜][Û’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[ÓÙ™›ØYš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô›ÝšY\“Ü™\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô›ÝšY\“Ü™\’][Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô›ÝšY\“X]ÚÝ™\œšY\ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô›ÝšY\“Ü™\’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô]X[]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[]™UØ[\\’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[ÛÛ™š\›P™Y›Ü™TÚÚ\Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[Y^™\‘š\œÝÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[Y^™\”™\ÛÛ™\‘˜[˜XÚÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[^X˜XÚÑXYÛ›ÜÝXÜÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[™\Ù\™TÛÛ™ÐØXÚSÛ”]X[]PÚ[™ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[›ÝšY\”^X˜XÚÕ[Y[Ý]Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžTÞ[˜ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžP[™›ÚY]\ÚXÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžUÙX’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžUÙX”™[Z^Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ëš\Ô^X˜XÚÔ›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËØ[˜\ÕØ[\\”Ù\šXÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë”™Y™\™[˜ÙPØXÚBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë›Z^š\›[ÛšXÓZ^[š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë™]TÝÜ™Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë™Ù]š[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË˜ÛÛXÝš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË›Û‘XXÚš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]]ÑÝÛ›ØYÛ“ZÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜[X^›Û‹[X^›Û][ÜÑXÜž\Ü‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜[X^›Û‹[X^›Û‘™›\YÑXÜž\Ü‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜[X^›Û‹[X^›Û]Y[Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜[X^›Û‹[X^›Û]Y[Ô›ÝšY\‹Ð[X^›Û\Ú[“Ü“[š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜[X^›Û‹[X^›Û‘™›\YÑ]TÛÝ\˜ÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]]ÓØY[Ü™RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]]ÔÚÚ\™^Û‘\œ›Ü’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]]Ü^RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[ËÜ›ÜÜÙ˜YQ\˜][Û’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[ËÜ›ÜÜÙ˜YQ[˜X›YÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[ËÜ›ÜÜÙ˜YQØ\\ÜÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\]Y[Ô]X[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\]Y[Ô]X[]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\ÛÛÚÚYRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\•\ÙPXØÛÝ[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\‘˜\Ý[ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\”›ÞS[ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\”›ÞU\›Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘Y^™\”™\ÛÛ™\•\›Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØX›SØY[Ü™UÚ[”™\X][Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™XØÙ\ÜÕÚÙ[’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™XÝ]š]S˜[YRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™XÝ]š]U\RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™Y˜[˜ÙY[ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™[š[X]YØ[˜\ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™[š[X]YØ[˜\Ô]X[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™[š[X]YØ[˜\Ô]X[]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™]ÛŒU^Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™]ÛŒUš\ÚX›RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™]ÛŒ•^Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™]ÛŒ•š\ÚX›RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™YUÚ[”ÜÝYžR\ÝÜžRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™ÚÝÔ›ÝšY\’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™ÚÝÔ^X˜XÚÑ]Z[ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™Ý]\ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘\ØÛÜ™\ÙQ]Z[ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘ÝÛ›ØYØ[˜\Ó[ÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘ÝÛ›ØYØ[˜\Ó[ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘[˜X›Q\ØÛÜ™”ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘[˜X›S\Ý“TØÜ›Ø˜›[™ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘[˜X›TÛÛ™ÐØXÚRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë’YQ^XÚ]Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë’YUšY[ÔÛÛ™ÜÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë’\ÝÜžQ\˜][Û‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“\Ý“U\ÙS›ÝÔ^Z[™Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^[˜X›YÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^˜\œÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^Y™™XÝÝ\™Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^Y™™XÝÝ\™RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^\PÝ\™Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^\PÝ\™RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^™\Ù]š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^™\Ù]Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^›Û[YPÝ\™Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“Y]›ÓZ^›Û[YPÝ\™RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“™^˜XÚÔ™[ØYÛÝ[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“YYXTÙ\ÜÚ[ÛÛÛœÝ[Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“YYXTÙ\ÜÚ[ÛÛÛœÝ[ËÛÛ[X[™YÕ\™Ù]^[\Ýš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“YYXTÙ\ÜÚ[ÛÛÛœÝ[ËÛÛ[X[™ÙÙÛSZÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“YYXTÙ\ÜÚ[ÛÛÛœÝ[ËÛÛ[X[™ÙÙÛT™\X][ÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“YYXTÙ\ÜÚ[ÛÛÛœÝ[ËÛÛ[X[™ÙÙÛTÚY™›Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“YYXTÙ\ÜÚ[ÛÛÛœÝ[ËÛÛ[X[™ÙÙÛTÝ\˜Y[Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”]\ÙS\Ý[’\ÝÜžRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”]\ÙSÛ“]]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”\œÚ\Ý[]Y]YRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”\œÚ\Ý[ÚY™›PXÜ›ÜÜÔ]Y]Y\ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë’[œÝYÜ˜[PÛÛÚÚYRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë’[œÝYÜ˜[P\YÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë’[œÝYÜ˜[U\Ù\YÙ[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë’[œÝYÜ˜[U]ZYÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”^Y\“YØXÞT]X[]SX™[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“]™T^X˜XÚÐš]˜]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë•Y[[š[X]YÛÝ™\œÑ[˜X›YÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë•Y[]Y[Ô]X[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë•Y[]Y[Ô]X[]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë•Y[ÛÛÚÚYRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë•Y[™\ÛÛ™\‘[™Ú[ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”[Ø^Ý\ÝÛR[œÝ[˜Ù\ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”^Y\•›Û[YRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”™]™[\XØ]U˜XÚÜÒ[”]Y]YRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”›ÞQ[˜X›YÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”[Ø^˜XÚÙ[™š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”[Ø^˜XÚÙ[™Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”[Ø^ÛÝ[žRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÛÝ[™ÛÝY]Y[Ô]X[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÛÝ[™ÛÝY]Y[Ô]X[]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÛÝ[™ÛÝY]]ÚÙ[’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”™[Y[X™\”ÚY™›P[™™\X]Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”™\X][ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”™\Ý[YSÛ›Y]ÛÝÛÛ›™XÝÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ØÜ›Ø˜›Q[^T\˜Ù[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ØÜ›Ø˜›Q[^TÙXÛÛ™ÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ØÜ›Ø˜›SZ[”ÛÛ™Ñ\˜][Û’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÚÝÓ\šXÜÒÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÚY™›S[ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÚY™›T^[\Ýš\œÝÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”Ú[Z[\ÛÛ[š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÚÚ\Ú[[˜ÙR[œÝ[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÚÚ\Ú[[˜ÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë[X^›Û]Y[Ô]X[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë[X^›Û]Y[Ô]X[]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[ËÛÛ[ÛÝ[žRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[ËÛÛ[[™ÝXYÙRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÜÝYžPÛÛÚÚYRÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÜÝYžPØ[˜\Ñ[˜X›YÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÜÝYžS\Ý[š[™Ò\ÝÜžQ[˜X›YÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÜÝYžS\Ý[š[™Ò\ÝÜžQÛØ˜[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÝÜ]\ÚXÓÛ•\ÚÐÛX\’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë”ÝÜÛ”›ÝšY\‘\œ›Ü’Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™Y^™\‹‘Y^™\]Y[Ð]Ø\™Q]TÛÝ\˜ÙQ˜XÝÜžBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™Y^™\‹‘Y^™\]Y[Ñ]TÛÝ\˜ÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™Y^™\‹‘Y^™\]Y[Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™\ØÛÜ™‘\ØÛÜ™XÝ]š]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™\ØÛÜ™‘\ØÛÜ™œÓX[˜YÙ\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹“]\ÚXÑ]X˜\ÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë‘]™[š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë‘›Ü›X][]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë“\šXÜÑ[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë“\šXÜÑ[]KÛÛ\[š[Û‹“T’PÔ×Ó“ÕÑ“ÕS‘š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë”^[\Ý[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë”™[]YÛÛ™ÓX\š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë”ÛÛ™Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™K‘ÝÛ›ØYØXÚBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™K”^Y\ØXÚBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™\K‘\]X[^™\”Ù\šXÙBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™\K˜]Y[ËÝ\ÝÛQ\]X[^™\]Y[Ô›ØÙ\ÜÛÜ‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™\K™]K‘TT›Ùš[T™\ÜÚ]ÜžBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™\K™]K‘š[\•\Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™\K™]K”\˜[Y]šXÑTP˜[™š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœË”Ú[[[™\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœË˜ÛÛXÝš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœË˜ÛÛXÝ]\Ýš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœË˜Ý\œ™[Y]Y]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœË™š[™™^YYXR][PžRYš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœË›YYXR][\Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœË›Y]Y]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœËœÙ]Ù™›ØY[˜X›Yš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœËÑ[[Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœËÓYYXR][Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœËÔ\œÚ\Ý]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœËÔ]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË›\šXÜË“\šXÜÒ[\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË›\šXÜË“\šXÜÕ][Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë”\œÚ\Ý^Y\”Ý]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë”\œÚ\Ý]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[ËÓYYXSY]Y]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚË˜[\›K“]\ÚXÐ[\›TØÚY[\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚË˜[\›K“]\ÚXÐ[\›TÝÜ™Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚË˜]Y[Ë”Ú[[˜ÙQ]XÝÜ]Y[Ô›ØÙ\ÜÛÜ‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËœ]Y]Y\Ë‘[\T]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËœ]Y]Y\Ë“\Ý]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËœ]Y]Y\Ë”]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËœ]Y]Y\Ë”ÛÝ[™ÛÝY]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËœ]Y]Y\Ë–[ÝUX™T]Y]YBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË”ÛÝ[™ÛÝYÛYQ™YY›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËœ]Y]Y\Ë™š[\‘^XÚ]š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË™^[œÚ[ÛœËÑ[[Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ^X˜XÚËœ]Y]Y\Ë™š[\•šY[ÔÛÛ™ÜÂš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË‘Y^™\’ÛYQ™YY›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË’\Ü˜Ô™\ÛÛ™\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË”›ÝšY\’\Ü˜Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË”›ÝšY\‘˜[˜XÚÓX]Ú\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË”›ÝšY\“X]ÚÝ™\œšYBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË”›ÝšY\“X]ÚÝ™\œšY\Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË”›ÝšY\“X]ÚÙX\˜Úš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË‘^\š[Y[[^X˜XÚÔÛXÞBš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ›ÝšY\œË•Y[ÛYQ™YY›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœ[Ø^‹”[Ø^]Y[Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËœÛÝ[™ÛÝY”ÛÝ[™ÛÝY]Y[Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËš[œÝYÜ˜[K’[œÝYÜ˜[P]Y[Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜\K\P]Y[Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë\P]Y[Ô]X[]Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë\P]Y[Ô]X[]RÙ^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËY[•Y[]Y[Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“ÝY™\ÜÓ]™[š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë“ÝY™\ÜÓ]™[Ù^Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXËZK][Ëœ™\Ú^™Bš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][ËÛÚ[š]X\ØY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë“™]ÛÜšÐÛÛ›™XÝ]š]SØœÙ\™\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë”ØÜ›Ø˜›SX[˜YÙ\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë”Þ[˜Õ][Âš[\ÜÛÛK›Y]›Û\Ý›]\ÚXË˜\K\S]\ÚXÐØ[˜\Ô›ÝšY\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ë™\ØÛÜ™‘\ØÛÜ™Ø[˜\Ô™[[ÝT™[™\™\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][Ëœ™\Ü^Ù\[Û‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËÚYÙ]“Y]›Û\ÝÚYÙ]X[˜YÙ\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËÚYÙ]“]\ÚXÕÚYÙ]™XÙZ]™\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][ËœÜÝYžK”ÜÝYžPØ[˜\ÐÛY[š[\ÜÛÛK›Y]›Û\Ý›]\ÚXË][ËœÜÝYžK”ÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\‚š[\ÜÛÛK›Y]›Û\Ý›]\ÚXËž[Ý]X™K–[ÝUX™P]Y[Ô›ÝšY\‚š[\ÜYÙÙ\‹š[˜[™›ÚY[™›ÚY[žTÚ[š[\ÜÛÝ[ž˜ÛÜ›Ý][™\ËØ[˜Ù[][Û‘^Ù\[Û‚š[\ÜÛÝ[‹˜ÛÜ›Ý][™\Ë˜ÛÜ›Ý][™PÛÛ^š[\ÜÛÝ[‹[YK‘\˜][Û‹ÛÛ\[š[Û‹œÙXÛÛ™Âš[\ÜÛÝ[ž˜ÛÜ›Ý][™\ËÛÜ›Ý][™TØÛÜBš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë‘Y™\œ™Yš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë‘\Ü]Ú\œÂš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë‘^\š[Y[[ÛÜ›Ý][™\Ð\Bš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë‘›ÝÔ™]šY]Âš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë’›Ø‚š[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë”Ý\\š\ÛÜ’›Ø‚š[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë˜\Þ[˜Âš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë˜Ø[˜Ù[š[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë˜ÛÜ›Ý][™TØÛÜBš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™[^Bš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË“]]X›TÝ]Q›ÝÂš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË”Ú\š[™ÔÝ\Yš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË˜\ÔÚ\™Y›ÝÂš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË˜\ÔÝ]Q›ÝÂš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË˜ÛÛXÝ]\Ý\ÈÛÛXÝ]\ÝÝ\Ü[™[™Âš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË˜ÛÛXš[™Bš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË™X›Ý[˜ÙBš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË™\Ý[˜Ý[[Ú[™ÙYš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË™\Ý[˜Ý[[Ú[™ÙYžBš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË™š\œÝš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË™›]X\]\Ýš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË™š[\“›Ý[š[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË›X\š[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝËœÝ]R[‚š[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ëš\ÐXÝ]™Bš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ë›][˜Úš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ëœ\Âš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ëœ[›ØÚÚ[™Âš[\ÜÛÝ[ž˜ÛÜ›Ý][™\Ëœ[’[\œ\X›Bš[\ÜÛÝ[ž˜ÛÜ›Ý][™\ËÚ]ÛÛ^š[\ÜÛÝ[ž˜ÛÜ›Ý][™\ËÚ][Y[Ý]Ü“[š[\ÜÚÚË“ÚÒÛY[š[\Ü[X™\‹›ÙË•[X™\‚š[\Ü˜]˜Kš[Ë‘š[Bš[\Ü˜]˜Kš[Ë’SÑ^Ù\[Û‚š[\Ü˜]˜Kš[Ë“Øš™XÝ[œ]Ý™X[Bš[\Ü˜]˜Kš[Ë“Øš™XÝÝ]]Ý™X[Bš[\Ü˜]˜K[YK“ØØ[]U[YBš[\Ü˜]˜K][\œ˜^Q\]YBš[\Ü˜]˜K][“ØØ[Bš[\Ü˜]˜K][˜ÛÛ˜Ý\œ™[ÛÛ˜Ý\œ™[\ÚX\š[\Ü˜]˜K][˜ÛÛ˜Ý\œ™[•[YU[š]š[\ÜÛÝ[‹›X]”Bš[\ÜÛÝ[‹›X]˜ÛÜÂš[\ÜÛÝ[‹›X]œÚ[‚š[\Ü˜]˜K][˜ÛÛ˜Ý\œ™[˜]ÛZXË]ÛZXÓÛ™Âš[\Ü˜]˜^š[š™XÝ’[š™XÝš[\ÜÛÝ[‹›X]”Bš[\ÜÛÝ[‹›X]˜XœÂš[\ÜÛÝ[‹›X]˜ÛÜÂš[\ÜÛÝ[‹›X]œÚ[‚š[\ÜÛÝ[‹œ˜[™ÛK”˜[™ÛBš[\Ü˜]˜K][ÛÛXÝ[ÛœÂ‚œš]˜]HÛÛœÝ˜[S”ÕS•ÔÒSSÑWÔÒÒTÔÕTÓTÈHMWÌœš]˜]HÛÛœÝ˜[S”ÕS•ÔÒSSÑWÔÒÒTÔÑUWÓTÈHÍL‚œš]˜]H]HÛ\ÜÈÜ›ÜÜÙ˜YT™Y™\™[˜ÙTÝ]Jˆ˜[Ü›ÜÜÙ˜YQ[˜X›Yˆ›ÛÛX[‹ˆ˜[Ü›ÜÜÙ˜YQ\˜][ÛŽˆ›Ø]ˆ˜[Ü›ÜÜÙ˜YQØ\\ÜÎˆ›ÛÛX[‹ˆ˜[Y]›ÓZ^[˜X›Yˆ›ÛÛX[‹ˆ˜[Y]›ÓZ^™\Ù]ˆY]›ÓZ^™\Ù]ˆ˜[Y]›ÓZ^˜\œÎˆ[ˆ˜[Y]›ÓZ^›Û[YPÝ\™NˆY]›ÓZ^›Û[YPÝ\™Kˆ˜[Y]›ÓZ^\PÝ\™NˆY]›ÓZ^\PÝ\™Kˆ˜[Y]›ÓZ^Y™™XÝÝ\™NˆY]›ÓZ^Y™™XÝÝ\™KŠB‚œš]˜]H]HÛ\ÜÈY]›ÓZ^[[YT›Ùš[Jˆ˜[™\Ù]ˆY]›ÓZ^™\Ù]Ëˆ˜[\˜][Û“\ÎˆÛ™Ëˆ˜[›Û[YPÝ\™NˆY]›ÓZ^›Û[YPÝ\™HHY]›ÓZ^›Û[YPÝ\™KUUËˆ˜[\PÝ\™NˆY]›ÓZ^\PÝ\™HHY]›ÓZ^\PÝ\™KUUËˆ˜[Y™™XÝÝ\™NˆY]›ÓZ^Y™™XÝÝ\™HHY]›ÓZ^Y™™XÝÝ\™KUUËŠB‚‹ÊŠ‚ˆ
+ˆ]™\ž][™ÈH]]ÛZ^[™Ú[™H™YYÈ›ÜˆÛ™H˜[œÚ][Û‹ÛÛ\]YÛ˜ÙH]ˆ
+ˆÓ]\ÚXÔÙ\šXÙKœÝ\Ü›ÜÜÙ˜YWH[YHœ›ÛH”H
+ÈØ[Y[ÝÙ^HY]Y]H[™[‚ˆ
+ˆ™]\ÙYžH›ÝH™X]\\ÙHÙYZÈ
+ÛÈ˜XÚÜÈÝ\[YÛ™Y
+H[™Bˆ
+ˆÜ›ÜÜÙ˜YHXÚÈÛÜ
+ÛÈH[\È˜[\[™\˜][ÛˆØØ[[™ÈÝ^H[ˆÞ[˜Âˆ
+ˆÚ]H[X™\ˆ]Ø\ÈXÝX[H\ÙYÈ[YÛˆH™X]ÜšYÊK‚ˆ
+‹Âœš]˜]H]HÛ\ÜÈ]]ÛZ^[Šˆ˜[œPNˆ›Ø]ˆ˜[œPŽˆ›Ø]ˆ˜[\™Ù]œNˆ›Ø]ˆËÈ^X˜XÚÈÜYY][\Y\ˆ›ÜˆXXÚ˜XÚËØ\YÈ
+ËËN	HÛÈÛÛšXÉÜÂˆËÈ]Ú\™\Ù\š[™È[YK\Ý™]ÚÝ^\È[˜]YX›K‚ˆ˜[ÜYYNˆ›Ø]ˆ˜[ÜYYŽˆ›Ø]ˆËÈÝÈ˜\ˆ[È˜XÚÈˆÈÝ\^X˜XÚÈÛÈ]ÈÝÛ˜™X][™\È\Ú]ˆËÈ˜XÚÈIÜÈ™X]ÜšY]H[ÛY[H˜[œÚ][Ûˆ™YÚ[œËˆ\›Þ[X]YˆËÈžH\ÜÝ[Z[™È›Ý˜XÚÜÈÝ\ÛˆHÝÛ˜™X]Ú[˜ÙH›ÈYHÛœÙ]Ø™X]ˆËÈ˜XÚÙ\ˆ\È]˜Z[X›HHH˜Z\ˆ\ÜÝ[\[Ûˆ›ÜˆHXZ[œÝ™X[HØ][ÙË‚ˆ˜[\ÙSÙ™œÙ]\ÎˆÛ™Ëˆ˜[Ù^PÛÛ\]Xš[]NˆÛÛK›Y]›Û\Ý›]\ÚXË][Ë›Z^’Ù^PÛÛ\]Xš[]Kˆ˜[\˜][Û”ØØ[Nˆ›Ø]ˆ˜[˜\ÜÔÙ\\˜][ÛŽˆ›Ø]ŠB‚Ü[Š^\š[Y[[ÛÜ›Ý][™\Ð\NŽ˜Û\ÜË›ÝÔ™]šY]ÎŽ˜Û\ÜÊB[™›ÚY˜[››Ý][Û‹“Ü[Š[œÝX›P\NŽ˜Û\ÜÊB[™›ÚY[žTÚ[˜Û\ÜÈ]\ÚXÔÙ\šXÙH‚ˆYYXSXœ˜\žTÙ\šXÙJ
+Kˆ^Y\‹“\Ý[™\‹ˆ[˜[]XÜÓ\Ý[™\‹ˆ^X˜XÚÔÝ]Ó\Ý[™\‹Ø[˜XÚÈÂˆ[š™XÝˆ]Z[š]˜\ˆ]X˜\ÙNˆ]\ÚXÑ]X˜\ÙB‚ˆ[š™XÝˆ]Z[š]˜\ˆ\šXÜÒ[\Žˆ\šXÜÒ[\‚‚ˆ[š™XÝˆ]Z[š]˜\ˆÞ[˜Õ][ÎˆÞ[˜Õ][Â‚ˆ[š™XÝˆ]Z[š]˜\ˆYYXSXœ˜\žTÙ\ÜÚ[ÛØ[˜XÚÎˆYYXSXœ˜\žTÙ\ÜÚ[ÛØ[˜XÚÂ‚ˆ[š™XÝˆ]Z[š]˜\ˆ\]X[^™\”Ù\šXÙNˆ\]X[^™\”Ù\šXÙB‚ˆ[š™XÝˆ]Z[š]˜\ˆ\T›Ùš[T™\ÜÚ]ÜžNˆTT›Ùš[T™\ÜÚ]ÜžB‚ˆ[š™XÝˆ]Z[š]˜\ˆÚYÙ]X[˜YÙ\ŽˆY]›Û\ÝÚYÙ]X[˜YÙ\‚‚ˆ[š™XÝˆ]Z[š]˜\ˆ\Ý[•ÙÙ]\“X[˜YÙ\ŽˆÛÛK›Y]›Û\Ý›]\ÚXË›\Ý[ÙÙ]\‹“\Ý[•ÙÙ]\“X[˜YÙ\‚‚ˆš]˜]H]Z[š]˜\ˆ]Y[ÓX[˜YÙ\Žˆ]Y[ÓX[˜YÙ\‚ˆš]˜]H˜\ˆ]Y[Ñ›ØÝ\Ô™\]Y\Ýˆ]Y[Ñ›ØÝ\Ô™\]Y\ÝÈH[ˆš]˜]H˜\ˆ\Ý]Y[Ñ›ØÝ\ÔÝ]HH]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×Ó“Ó‘Bˆš]˜]H˜\ˆØ\Ô^Z[™Ð™Y›Ü™P]Y[Ñ›ØÝ\ÓÜÜÈH˜[ÙBˆš]˜]H˜\ˆ\Ð]Y[Ñ›ØÝ\ÈH˜[ÙBˆš]˜]H˜\ˆ™Y[˜[›ØÝ\ÑØZ[ˆH˜[ÙBˆš]˜]H˜\ˆØ\Ô^Z[™Ð™Y›Ü™U›Û[YS]]HH˜[ÙBˆš]˜]H˜\ˆ\Ô]\ÙYžU›Û[YS]]HH˜[ÙB‚ˆš]˜]H˜\ˆÜ›ÜÜÙ˜YQ[˜X›YH˜[ÙBˆš]˜]H˜\ˆÜ›ÜÜÙ˜YQ\˜][ÛˆHL‚ˆš]˜]H˜\ˆÜ›ÜÜÙ˜YQØ\\ÜÈHYBˆš]˜]H˜\ˆXÝ]™SY]›ÓZ^™\Ù]ˆY]›ÓZ^™\Ù]ÈH[ˆš]˜]H˜\ˆXÝ]™SY]›ÓZ^˜\œÈHˆš]˜]H˜\ˆXÝ]™SY]›ÓZ^›Û[YPÝ\™HHY]›ÓZ^›Û[YPÝ\™KUUÂˆš]˜]H˜\ˆXÝ]™SY]›ÓZ^\PÝ\™HHY]›ÓZ^\PÝ\™KUUÂˆš]˜]H˜\ˆXÝ]™SY]›ÓZ^Y™™XÝÝ\™HHY]›ÓZ^Y™™XÝÝ\™KUUÂˆš]˜]H˜\ˆ[™[™ÓY]›ÓZ^›Ùš[NˆY]›ÓZ^[[YT›Ùš[OÈH[ˆš]˜]H˜\ˆXÝ]™PÜ›ÜÜÙ˜YQ\˜][Û“\ÈHLˆš]˜]H˜\ˆXÝ]™SY]›ÓZ^[[YT™\Ù]ˆY]›ÓZ^™\Ù]ÈH[ˆš]˜]H˜\ˆXÝ]™SY]›ÓZ^[[YT›Ùš[NˆY]›ÓZ^[[YT›Ùš[OÈH[ˆš]˜]H˜\ˆXÝ]™P]]ÛZ^[Žˆ]]ÛZ^[ÈH[ˆš]˜]H˜\ˆÜ›ÜÜÙ˜YUšYÙÙ\’›ØŽˆ›ØÈH[ˆš]˜]H˜\ˆÜ›ÜÜÙ˜YT™\\™R›ØŽˆ›ØÈH[‚ˆš]˜]H˜[ÙXÛÛ™\žT^Y\“\Ý[™\ˆBˆØš™XÝˆ^Y\‹“\Ý[™\ˆÂˆÝ™\œšYH[ˆÛ”^Y\‘\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠHÂˆ[X™\‹YÊQÊK™J\œ›Ü‹”ÙXÛÛ™\žH^Y\ˆ\œ›ÜˆŠBˆÛX[\ÙXÛÛ™\žPÜ›ÜÜÙ˜YT^Y\Š
+BˆBˆB‚ˆš]˜]H˜[ØÛÜHHÛÜ›Ý][™TØÛÜJ\Ü]Ú\œË“XZ[ˆ
+ÈÝ\\š\ÛÜ’›ØŠ
+JBˆš]˜]H˜\ˆ[Ý]X™S]\ÚXÒ\ÝÜžQ˜Z[\™S›ÝYšYYH˜[ÙBˆš]˜]H˜[[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\ˆBˆ[ÝUX™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\ŠˆØÛÜHHØÛÜKˆ\Ñ[˜X›YHÂˆ]TÝÜ™K™Ù]
+^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžTÞ[˜ÒÙ^KYJH	‰‚ˆY]TÝÜ™K™Ù]
+^\š[Y[[[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÒÙ^KYJBˆKˆ\Ð]][XØ]YHÈ[ÝUX™Kš\Ðœ›ÝÜÙ\]][XØ][ÛˆKˆ™\Ü^X˜XÚÈHŽœ™\Ü[ÝUX™S]\ÚXÒ\ÝÜžT^X˜XÚËˆ
+Bˆš]˜]H˜[[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\ˆBˆ[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\ŠˆØÛÜHHØÛÜKˆ\Ñ[˜X›YHÂˆ]TÝÜ™K™Ù]
+^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžTÞ[˜ÒÙ^KYJH	‰‚ˆ]TÝÜ™K™Ù]
+^\š[Y[[[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÒÙ^KYJBˆKˆ\Ð]][XØ]YHÈ[ÝUX™Kš\Ðœ›ÝÜÙ\]][XØ][ÛˆKˆÝ\œ™[ÜÚ][Û“\ÈHÈ^Y\‹˜Ý\œ™[ÜÚ][Û‹˜ÛÙ\˜ÙP]X\Ý
+
+HKˆÝ\Ù\ÜÚ[ÛˆHŽœÝ\[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÙ\ÜÚ[Û‹ˆ™\Ü›ÙÜ™\ÜÈHŽœ™\Ü[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžT›ÙÜ™\ÜËˆ
+B‚ˆš]˜]H˜[š[™\ˆH]\ÚXÐš[™\Š
+B‚ˆ[›™\ˆÛ\ÜÈ]\ÚXÐš[™\ˆˆš[™\Š
+HÂˆ˜[Ù\šXÙNˆ]\ÚXÔÙ\šXÙBˆÙ]
+
+HH\Ð]\ÚXÔÙ\šXÙBˆB‚ˆš]˜]H]Z[š]˜\ˆÛÛ›™XÝ]š]SX[˜YÙ\ŽˆÛÛ›™XÝ]š]SX[˜YÙ\‚ˆ]Z[š]˜\ˆÛÛ›™XÝ]š]SØœÙ\™\Žˆ™]ÛÜšÐÛÛ›™XÝ]š]SØœÙ\™\‚ˆ˜[ØZ][™Ñ›Ü“™]ÛÜšÐÛÛ›™XÝ[ÛˆH]]X›TÝ]Q›ÝÊ˜[ÙJBˆš]˜]H˜[\Ó™]ÛÜšÐÛÛ›™XÝYH]]X›TÝ]Q›ÝÊ˜[ÙJB‚ˆš]˜]H]Z[š]˜\ˆ]Y[Ô]X[]NˆÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô]X[]B‚ˆš]˜]H˜\ˆÝ\œ™[]Y]YNˆ]Y]YHH[\T]Y]YBˆ˜\ˆ]Y]YU]NˆÝš[™ÏÈH[ˆš]˜]H˜\ˆ]Y]YTØ]™R›ØŽˆ›ØÈH[ˆš]˜]H˜\ˆÜÝYžP]]Ü^R›ØŽˆ›ØÈH[ˆš]˜]H˜\ˆÜÝYžP]]Ü^T™]šY]Ò›ØŽˆ›ØÈH[ˆš]˜]H˜\ˆÜÝYžP]]Ü^TÙYYÙ^NˆÝš[™ÏÈH[‚ˆ˜[Ý\œ™[YYXSY]Y]HH]]X›TÝ]Q›ÝÏÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÏŠ[
+Bˆ˜[Ý\œ™[Y[Ø[˜\Õ\›H]]X›TÝ]Q›ÝÏÝš[™ÏÏŠ[
+Bˆ˜[Ý\œ™[\PØ[˜\Õ\›H]]X›TÝ]Q›ÝÏÝš[™ÏÏŠ[
+Bˆ˜[Ý\œ™[\U[Ø[˜\Õ\›H]]X›TÝ]Q›ÝÏÝš[™ÏÏŠ[
+Bˆ˜[Ý\œ™[[X™YYØ[˜\Õ\›H]]X›TÝ]Q›ÝÏÝš[™ÏÏŠ[
+Bˆ˜[Ý\œ™[™Y™\œ™Y\ÛÜšÕ\›H]]X›TÝ]Q›ÝÏÝš[™ÏÏŠ[
+Bˆ˜[Ý\œ™[Y[\ÛÜšÕ\›HÝ\œ™[™Y™\œ™Y\ÛÜšÕ\›ˆš]˜]H˜[™Y™\œ™Y\ÛÜšÐØXÚHBˆØš™XÝˆ[šÙY\ÚX\Ýš[™ËÝš[™ÏÏŠM‹ÍY‹YJHÂˆÝ™\œšYH[ˆ™[[Ý™Q[\Ý[žJ[\Ýˆ]]X›SX\“]]X›Q[žOÝš[™ËÝš[™ÏÏŠNˆ›ÛÛX[ˆHÚ^™HˆM‚ˆBˆš]˜]H˜[Y[[š[X]Y\ÛÜšÐØXÚHBˆØš™XÝˆ[šÙY\ÚX\Ýš[™ËÝš[™ÏÏŠLŽÍY‹YJHÂˆÝ™\œšYH[ˆ™[[Ý™Q[\Ý[žJ[\Ýˆ]]X›SX\“]]X›Q[žOÝš[™ËÝš[™ÏÏŠNˆ›ÛÛX[ˆHÚ^™HˆLŽˆBˆš]˜]H˜[\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™ØXÚHBˆØš™XÝˆ[šÙY\ÚX\Ýš[™ËÝš[™ÏÏŠLŽÍY‹YJHÂˆÝ™\œšYH[ˆ™[[Ý™Q[\Ý[žJ[\Ýˆ]]X›SX\“]]X›Q[žOÝš[™ËÝš[™ÏÏŠNˆ›ÛÛX[ˆHÚ^™HˆLŽˆBˆš]˜]H˜[Ý\œ™[ÛÛ™ÈBˆÝ\œ™[YYXSY]Y]Bˆ™›]X\]\ÝÈYYXSY]Y]HO‚ˆ]X˜\ÙKœÛÛ™ÊYYXSY]Y]OËšY
+BˆKœÝ]R[ŠØÛÜKÚ\š[™ÔÝ\Y“^š[K[
+Bˆ˜[Ý\œ™[›Ü›X]BˆÝ\œ™[YYXSY]Y]K™›]X\]\ÝÈYYXSY]Y]HO‚ˆ]X˜\ÙK™›Ü›X]
+YYXSY]Y]OËšY
+BˆBˆ˜[Ý\œ™[^X˜XÚÑ›Ü›X]H]]X›TÝ]Q›ÝÏ›Ü›X][]OÏŠ[
+Bˆ˜[Ý\œ™[]™T^X˜XÚÐš]˜]HH]]X›TÝ]Q›ÝÏ[ÏŠ[
+Bˆš]˜]H˜[]™T^X˜XÚÐš]˜]TØ[\\ÈH\œ˜^Q\]YO]™T^X˜XÚÐš]˜]TØ[\OŠ
+Bˆš]˜]H˜[]™T^X˜XÚÐš]˜]SØÚÈH[žJ
+Bˆš]˜]H˜\ˆ]™T^X˜XÚÐš]˜]UXÚÙ\’›ØŽˆ›ØÈH[ˆš]˜]H˜\ˆ\Ý]™T^X˜XÚÐš]˜]U\]S\ÈH‚ˆ]Z[š]˜\ˆ^Y\•›Û[YNˆ]]X›TÝ]Q›ÝÏ›Ø]‚ˆ˜[\Ó]]YH]]X›TÝ]Q›ÝÊ˜[ÙJBˆš]˜]H˜[ÛY\[Y\•›Û[YS][\Y\ˆH]]X›TÝ]Q›ÝÊYŠBˆš]˜]H˜[]Y[Ñ›ØÝ\Õ›Û[YS][\Y\ˆH]]X›TÝ]Q›ÝÊYŠB‚ˆ[ˆÙÙÛS]]J
+HÂˆ˜[™]Ó]]YÝ]HHZ\Ó]]Y˜[YBˆ\Ó]]Y˜[YHH™]Ó]]YÝ]Bˆ\QY™™XÝ]™U›Û[YJ
+BˆB‚ˆ[ˆÙ]]]Y
+]]Yˆ›ÛÛX[ŠHÂˆ\Ó]]Y˜[YHH]]Yˆ\QY™™XÝ]™U›Û[YJ
+BˆB‚ˆš]˜]H[ˆØ[Ý[]QY™™XÝ]™U›Û[YJˆ›Û[YNˆ›Ø]H^Y\•›Û[YK˜[YKˆ]]Yˆ›ÛÛX[ˆH\Ó]]Y˜[YKˆÛY\[Y\“][\Y\Žˆ›Ø]HÛY\[Y\•›Û[YS][\Y\‹˜[YKˆ›ØÝ\Ó][\Y\Žˆ›Ø]H]Y[Ñ›ØÝ\Õ›Û[YS][\Y\‹˜[YKˆ
+Nˆ›Ø]ÂˆYˆ
+]]Y
+H™]\›ˆ‚ˆ™]\›ˆ
+›Û[YH
+ˆÛY\[Y\“][\Y\ˆ
+ˆ›ØÝ\Ó][\Y\ŠK˜ÛÙ\˜ÙR[Š‹YŠBˆB‚ˆš]˜]H[ˆ\QY™™XÝ]™U›Û[YJ
+HÂˆYˆ
+NŽœ^Y\‹š\Ò[š]X[^™Y\ÐÜ›ÜÜÙ˜Y[™ÊH™]\›‚ˆ^Y\‹›Û[YHHØ[Ý[]QY™™XÝ]™U›Û[YJ
+BˆB‚ˆ[ˆ™\\™SX[X[^X˜XÚÕ˜[œÚ][ÛŠ
+HÂˆÜ›ÜÜÙ˜YUšYÙÙ\’›ØË˜Ø[˜Ù[
+
+BˆÜ›ÜÜÙ˜YUšYÙÙ\’›ØˆH[ˆÜ›ÜÜÙ˜YT™\\™R›ØË˜Ø[˜Ù[
+
+BˆÜ›ÜÜÙ˜YT™\\™R›ØˆH[ˆÜ›ÜÜÙ˜YR›ØË˜Ø[˜Ù[
+
+BˆÜ›ÜÜÙ˜YR›ØˆH[ˆ[™[™ÓY]›ÓZ^›Ùš[HH[ˆXÝ]™SY]›ÓZ^[[YT™\Ù]H[ˆXÝ]™SY]›ÓZ^[[YT›Ùš[HH[‚ˆYˆ
+ÙXÛÛ™\žT^Y\ˆOH[
+HÂˆÛX[\ÙXÛÛ™\žPÜ›ÜÜÙ˜YT^Y\ŠØÚY[S™^H˜[ÙJBˆB‚ˆYˆ
+˜Y[™Ô^Y\ˆOH[\ÐÜ›ÜÜÙ˜Y[™ÊHÂˆÛX[\Ü›ÜÜÙ˜YJˆ˜Y[™Ô^Y\”Ù\ÜÚ[Û’YH˜Y[™Ô^Y\Ë˜]Y[ÔÙ\ÜÚ[Û’YÎˆËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑUˆØÚY[S™^H˜[ÙKˆ
+BˆB‚ˆ\ÐÜ›ÜÜÙ˜Y[™ÈH˜[ÙBˆ\QY™™XÝ]™U›Û[YJ
+BˆB‚ˆ]Z[š]˜\ˆÛY\[Y\ŽˆÛY\[Y\‚‚ˆ[š™XÝˆ^Y\ØXÚBˆ]Z[š]˜\ˆ^Y\ØXÚNˆÚ[\PØXÚB‚ˆ[š™XÝˆÝÛ›ØYØXÚBˆ]Z[š]˜\ˆÝÛ›ØYØXÚNˆÚ[\PØXÚB‚ˆ]Z[š]˜\ˆ^Y\Žˆ^Ô^Y\‚ˆš]˜]HÙ]ˆš]˜]H˜\ˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜŽˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜÈH[ˆš]˜]H˜\ˆÙXÛÛ™\žT^Y\Žˆ^Ô^Y\ÈH[ˆš]˜]H˜\ˆ˜Y[™Ô^Y\Žˆ^Ô^Y\ÈH[ˆš]˜]H˜\ˆ\ÐÜ›ÜÜÙ˜Y[™ÈH˜[ÙBˆš]˜]H˜\ˆÜ›ÜÜÙ˜YR›ØŽˆ›ØÈH[‚ˆš]˜]H]Z[š]˜\ˆYYXTÙ\ÜÚ[ÛŽˆYYXSXœ˜\žTÙ\ÜÚ[Û‚‚ˆËÈ˜XÚÜÈYˆ^Y\ˆ\È™Y[ˆ›Ü\›H[š][^™Yˆš]˜]H˜[^Y\’[š]X[^™YH]]X›TÝ]Q›ÝÊ˜[ÙJBˆ˜[\Ô^Y\”™XYNˆÛÝ[ž˜ÛÜ›Ý][™\Ë™›ÝË”Ý]Q›ÝÏ›ÛÛX[ˆH^Y\’[š]X[^™Y˜\ÔÝ]Q›ÝÊ
+B‚ˆËÈ^ÜÙHXÝ]™H^Y\ˆ›ÝÈ›ÜˆRKÐÛÛ›™XÝ[Ûˆ\]\Âˆš]˜]H˜[Ü^Y\‘›ÝÈH]]X›TÝ]Q›ÝÏ^Ô^Y\ÏŠ[
+Bˆ˜[^Y\‘›ÝÈHÜ^Y\‘›ÝË˜\ÔÝ]Q›ÝÊ
+B‚ˆ[š]ÂˆØÛÜK›][˜ÚÂˆÛÛXš[™JˆÝ\œ™[\U[Ø[˜\Õ\›ˆÝ\œ™[\PØ[˜\Õ\›ˆÝ\œ™[Y[Ø[˜\Õ\›ˆÝ\œ™[[X™YYØ[˜\Õ\›ˆÝ\œ™[™Y™\œ™Y\ÛÜšÕ\›ˆ
+HÈ\U[\TÜ]X\™KY[[X™YY\ÛÜšÈO‚ˆ
+\U[Îˆ\TÜ]X\™HÎˆY[Îˆ[X™YY
+HÈ\ÛÜšÂˆK˜ÛÛXÝÈ
+\›\ÛÜšÊHO‚ˆœ›ØYØ\ÝØ[\\•\]J\›\ÛÜšÊBˆBˆBˆB‚ˆš]˜]H[ˆœ›ØYØ\ÝØ[\\•\]Jˆ\›ˆÝš[™ÏËˆ\ÛÜšÎˆÝš[™ÏËˆ
+HÂˆYˆ
+]TÝÜ™K™Ù]
+^\š[Y[[]™UØ[\\’Ù^K˜[ÙJJHÂˆÙ[™œ›ØYØ\Ý
+ˆ[[
+Ø[˜\ÕØ[\\”Ù\šXÙKPÕSÓ—ÕTUWÕÐSTTŠK˜\HÂˆÙ]XÚØYÙJXÚØYÙS˜[YJBˆ]^˜JØ[˜\ÕØ[\\”Ù\šXÙK‘VWÐÐS•T×ÕT“\›
+Bˆ]^˜JØ[˜\ÕØ[\\”Ù\šXÙK‘VWÐÐS•T×ÐT•ÓÔ’×ÕT“\ÛÜšÊBˆKˆ
+BˆBˆB‚ˆš]˜]H˜[^Y\”Ú[[˜ÙT›ØÙ\ÜÛÜœÈH\ÚX\^Y\‹Ú[[˜ÙQ]XÝÜ]Y[Ô›ØÙ\ÜÛÜŠ
+Bˆš]˜]H˜[^Y\‘\T›ØÙ\ÜÛÜœÈH\ÚX\^Y\‹Ý\ÝÛQ\]X[^™\]Y[Ô›ØÙ\ÜÛÜŠ
+B‚ˆš]˜]H˜[[œÝ[Ú[[˜ÙTÚÚ\[˜X›YH]]X›TÝ]Q›ÝÊ˜[ÙJB‚ˆš]˜]H]HÛ\ÜÈ]Y]YTØ]™TÛ˜\ÚÝ
+ˆ˜[]Y]YNˆ\œÚ\Ý]Y]YKˆ˜[]]ÛZ^ˆ\œÚ\Ý]Y]YKˆ˜[^Y\”Ý]Nˆ\œÚ\Ý^Y\”Ý]Kˆ
+B‚ˆš]˜]H˜\ˆ\Ð]Y[ÑY™™XÝÙ\ÜÚ[Û“Ü[™YH˜[ÙBˆš]˜]H˜\ˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’Yˆ[HËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑUˆš]˜]H˜\ˆÝY™\ÜÑ[š[˜Ù\ŽˆÝY™\ÜÑ[š[˜Ù\ÈH[‚ˆš]˜]H˜\ˆÝY™\ÜÔÙ]\›ØŽˆ›ØÈH[ˆš]˜]H˜\ˆÝY™\ÜÔÙ]\Ù[™\˜][ÛŽˆÛ™ÈHˆš]˜]H˜\ˆ]]Û[Ý]™S\šXÜÑÙ[™\˜][ÛŽˆÛ™ÈH‚ˆ›Û][Bˆš]˜]H˜\ˆ›Ü›X[^˜][Û‘[˜X›YØXÚYˆ›ÛÛX[ˆH˜[ÙB‚ˆ›Û][Bˆš]˜]H˜\ˆÝY™\ÜÓ]™[ØXÚYˆÝY™\ÜÓ]™[HÝY™\ÜÓ]™[SSÑQ‚ˆš]˜]H˜\ˆØXÚY›Ü›X[^˜][Û‘ØZ[“XŽˆ[ÈH[ˆš]˜]H˜\ˆØXÚY›Ü›X[^˜][Û‘[˜X›Yˆ›ÛÛX[ˆH˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆØXÚY[œÝYÜ˜[PÛÛÚÚYNˆÝš[™ÈHˆ‚ˆ›Û][Bˆš]˜]H˜\ˆØXÚYÜÝYžPÛÛÚÚYNˆÝš[™ÈHˆ‚ˆ›Û][Bˆš]˜]H˜\ˆØXÚY[œÝYÜ˜[U\Ù\YÙ[ˆÝš[™ÈH[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÕTÑT—ÐQÑS•‚ˆ›Û][Bˆš]˜]H˜\ˆÜÝYžR\ÝÜžT™\Ù[˜ÙPXÝ]™U˜[YHH˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆÜÝYžS\Ý[š[™Ò\ÝÜžQ[˜X›Y˜[YHH˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆÜÝYžS\Ý[š[™Ò\ÝÜžQÛØ˜[˜[YHH˜[ÙBˆš]˜]H˜\ˆÜÝYžS\Ý[š[™Ò\ÝÜžTÛÝ\˜ÙP[ÝÙYH˜[ÙBˆš]˜]H˜[ÜÜÝYžR\ÝÜžT™\Ù[˜ÙPXÝ]™HH]]X›TÝ]Q›ÝÊ˜[ÙJBˆ˜[ÜÝYžR\ÝÜžT™\Ù[˜ÙPXÝ]™HHÜÜÝYžR\ÝÜžT™\Ù[˜ÙPXÝ]™K˜\ÔÝ]Q›ÝÊ
+B‚ˆ›Û][Bˆš]˜]H˜\ˆ]\ÝYYXS›ÝYšXØ][ÛŽˆ›ÝYšXØ][ÛÈH[‚ˆš]˜]H˜\ˆØÜ›Ø˜›SX[˜YÙ\ŽˆØÜ›Ø˜›SX[˜YÙ\ÈH[ˆš]˜]H˜\ˆ\ØÛÜ™œÑ[˜X›YH˜[ÙBˆš]˜]H˜\ˆ\ØÛÜ™YUÚ[”ÜÝYžR\ÝÜžHH˜[ÙBˆš]˜]H˜\ˆ\Ý^X˜XÚÔÜYYHKŒ‚ˆš]˜]H˜\ˆ\ØÛÜ™\]R›ØŽˆ›ØÈH[ˆš]˜]H˜[\ØÛÜ™\]QÙ[™\˜][ÛˆH]ÛZXÓÛ™Ê
+Bˆš]˜]H˜[\ØÛÜ™[š[X]Y\ÛÜšÔ™Yœ™\Ú›ØœÈHÛÛ˜Ý\œ™[\ÚX\Ýš[™Ë›ØŠ
+Bˆš]˜]H˜\ˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ŽˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ÈH[‚ˆ˜[]]ÛZ^][\ÈH]]X›TÝ]Q›ÝÏ\ÝYYXR][OŠ[\S\Ý
+
+JB‚ˆËÈ˜XÚÜÈHÜšYÚ[˜[]Y]YHÚ^™HÈ\Ý[™ÝZ\ÚÜšYÚ[˜[][\Èœ›ÛH]]ËXYYÛ™\Âˆš]˜]H˜\ˆÜšYÚ[˜[]Y]YTÚ^™Nˆ[H‚ˆš]˜]H˜\ˆÛÛœÙXÝ]]™T^X˜XÚÑ\œˆHˆš]˜]H˜\ˆ™]žR›ØŽˆ›ØÈH[ˆš]˜]H˜\ˆ™]žPÛÝ[Hˆš]˜]H˜\ˆÚ[[˜ÙTÚÚ\›ØŽˆ›ØÈH[‚ˆš]˜]H]HÛ\ÜÈØXÚYÛÛ™ÔÝ™X[Jˆ˜[\šNˆÝš[™Ëˆ˜[^\™\Ð]\ÎˆÛ™Ëˆ˜[ØXÚRÙ^NˆÝš[™Ëˆ˜[Ù[XÝ[Û’Ù^NˆÝš[™Ëˆ˜[›Ü›X]ˆ›Ü›X][]Kˆ˜[Z[YU\NˆÝš[™ÏÈH[ˆ˜[›SXÙ[œÙU\šNˆÝš[™ÏÈH[ˆ˜[ÚYˆÝš[™ÏÈH[ˆ˜[XÜž\[Û’Ù^NˆÝš[™ÏÈH[ˆ
+B‚ˆš]˜]H]HÛ\ÜÈ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ˜[\šNˆÝš[™Ëˆ˜[^\™\Ð]\ÎˆÛ™Ëˆ˜[ØXÚRÙ^NˆÝš[™Ëˆ˜[›Ü›X]ˆ›Ü›X][]Kˆ˜[Z[YU\NˆÝš[™ÏÈH[ˆ˜[›SXÙ[œÙU\šNˆÝš[™ÏÈH[ˆ˜[[\š[T]ˆÝš[™ÏÈH[ˆ˜[ÚYˆÝš[™ÏÈH[ˆ˜[XÜž\[Û’Ù^NˆÝš[™ÏÈH[ˆ
+B‚ˆËÈØXÚY™Y™\™[˜Ù\ÈÈ]›ÚY[›ØÚÚ[™È]TÝÜ™H™XYÈ[ˆÝ]Âˆ›Û][Bˆš]˜]H˜\ˆØXÚY\œÚ\Ý[]Y]YHHYBˆ›Û][Bˆš]˜]H˜\ˆØXÚY]]Ü^HHYBˆ›Û][Bˆš]˜]H˜\ˆØXÚY\ØX›SØY[Ü™UÚ[”™\X][H˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆØXÚYYQ^XÚ]H˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆØXÚYYUšY[ÔÛÛ™ÜÈH˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆØXÚYÚY™›T^[\Ýš\œÝH˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆØXÚY]]ÓØY[Ü™HHYBˆ›Û][Bˆš]˜]H˜\ˆØXÚYÜÝYžPØ[˜\Ñ[˜X›YH˜[ÙBˆ›Û][Bˆš]˜]H˜\ˆØXÚYÝÛ›ØYØ[˜\Ó[ÙHHÝÛ›ØYØ[˜\Ó[ÙK“Ñ‘‚‚ˆËÈT“ØXÚH›ÜˆÝ™X[HT“ÈHÛ\ÜË[]™[ÛÈ]Ø[ˆ™H[˜[Y]YÛˆ\œ›ÜœÂˆš]˜]H˜[ÛÛ™Õ\›ØXÚHHÛÛXÝ[ÛœËœÞ[˜Ú›Ûš^™YX\
+ˆØš™XÝˆ[šÙY\ÚX\Ýš[™ËØXÚYÛÛ™ÔÝ™X[OŠÍY‹YJHÂˆÝ™\œšYH[ˆ™[[Ý™Q[\Ý[žJ[\Ýˆ]]X›SX\“]]X›Q[žOÝš[™ËØXÚYÛÛ™ÔÝ™X[OŠNˆ›ÛÛX[ˆÂˆ™]\›ˆÚ^™HˆLˆBˆBˆ
+Bˆš]˜]H˜[]Y[Ñ›Ü›X]™]žR›ØœÈHÛÛ˜Ý\œ™[\ÚX\Ýš[™Ë›ØŠ
+Bˆš]˜]H˜[]Y[Ñ›Ü›X]™Yœ™\Ú›ØœÈHÛÛ˜Ý\œ™[\ÚX\Ýš[™Ë›ØŠ
+B‚ˆËÈ›YÈÈž\\ÜÈØXÚHÚ[ˆ]X[]HÚ[™Ù\ÈH›Ü˜Ù\Èœ™\ÚÝ™X[H™]Úˆš]˜]H˜[ž\\ÜÐØXÚQ›Ü”]X[]PÚ[™ÙHH]]X›TÙ]ÙÝš[™ÏŠ
+Bˆš]˜]H˜[ÚÚ\Y[]™SX[šY™\ÝÛ˜ÙSYYXRYÈHÛÛ˜Ý\œ™[\ÚX\›™]ÒÙ^TÙ]Ýš[™ÏŠ
+Bˆš]˜]H˜[Y[›ÙÜ™\ÜÚ]™T™Y™\œ™YYYXRYÈHÛÛ˜Ý\œ™[\ÚX\›™]ÒÙ^TÙ]Ýš[™ÏŠ
+Bˆ›Û][Hš]˜]H˜\ˆ\ÔØÜ™Y[’[\˜XÝ]™Q›Ü“]™Pš]˜]HHYB‚ˆËÈ[š[˜ÙY\œ›Üˆ˜XÚÚ[™È›ÜˆÝšXÝ™]žHX[˜YÙ[Y[ˆš]˜]H˜\ˆÝ\œ™[YYXRY™]žPÛÝ[H]]X›SX\ÙÝš[™Ë[Š
+Bˆš]˜]H˜[PVÔ‘U–WÔT—ÔÓÓ‘ÈHÂˆš]˜]H˜[‘U–WÑSVWÓTÈHL‚ˆËÈ˜XÚÈ˜Z[YÛÛ™ÜÈÈ™]™[[™š[š]H™]žHÛÜÂˆš]˜]H˜[™XÙ[Q˜Z[YÛÛ™ÜÈH]]X›TÙ]ÙÝš[™ÏŠ
+Bˆš]˜]H˜\ˆ˜Z[YÛÛ™ÜÐÛX\’›ØŽˆ›ØÈH[‚ˆËÈÛÛÙÛHØ\ÝÝ\Üˆ˜\ˆØ\ÝÛÛ›™XÝ[Û’[™\ŽˆØ\ÝÛÛ›™XÝ[Û’[™\ÈH[ˆš]˜]HÙ]‚ˆš]˜]H˜[ØÜ™Y[”Ý]T™XÙZ]™\ˆBˆØš™XÝˆœ›ØYØ\Ý™XÙZ]™\Š
+HÂˆÝ™\œšYH[ˆÛ”™XÙZ]™JˆÛÛ^ˆÛÛ^ˆ[[ˆ[[ˆ
+HÂˆÚ[ˆ
+[[˜XÝ[ÛŠHÂˆ[[PÕSÓ—ÔÐÔ‘QS—ÓÑ‘ˆOˆÂˆ\ÔØÜ™Y[’[\˜XÝ]™Q›Ü“]™Pš]˜]HH˜[ÙBˆÝÜ]™T^X˜XÚÐš]˜]UXÚÙ\ŠÛX\•˜[YHHYKÛX\”Ø[\\ÈH˜[ÙJBˆB‚ˆ[[PÕSÓ—ÔÐÔ‘QS—ÓÓˆOˆÂˆ\ÔØÜ™Y[’[\˜XÝ]™Q›Ü“]™Pš]˜]HHYBˆYˆ
+]TÝÜ™K™Ù]
+]™T^X˜XÚÐš]˜]RÙ^K˜[ÙJJHÂˆÝ\]™T^X˜XÚÐš]˜]UXÚÙ\Š
+BˆBˆBˆBˆBˆB‚ˆš]˜]H˜[Ø[\\”™\]Y\Ý™XÙZ]™\ˆBˆØš™XÝˆœ›ØYØ\Ý™XÙZ]™\Š
+HÂˆÝ™\œšYH[ˆÛ”™XÙZ]™JˆÛÛ^ˆÛÛ^ˆ[[ˆ[[ˆ
+HÂˆYˆ
+[[˜XÝ[ÛˆOHØ[˜\ÕØ[\\”Ù\šXÙKPÕSÓ—Ô‘TUQTÕÕTUJHÂˆ˜[\›BˆÝ\œ™[\U[Ø[˜\Õ\›˜[YBˆÎˆÝ\œ™[\PØ[˜\Õ\›˜[YBˆÎˆÝ\œ™[Y[Ø[˜\Õ\›˜[YBˆÎˆÝ\œ™[[X™YYØ[˜\Õ\›˜[YBˆ˜[\ÛÜšÈHÝ\œ™[™Y™\œ™Y\ÛÜšÕ\›˜[YBˆœ›ØYØ\ÝØ[\\•\]J\›\ÛÜšÊBˆBˆBˆB‚ˆš]˜]H˜[]Y[Ñ]šXÙPØ[˜XÚÈBˆØš™XÝˆ]Y[Ñ]šXÙPØ[˜XÚÊ
+HÂˆÝ™\œšYH[ˆÛ]Y[Ñ]šXÙ\ÐYY
+YY]šXÙ\Îˆ\œ˜^OÝ]]Y[Ñ]šXÙR[™›ÏÊHÂˆÝ\\‹›Û]Y[Ñ]šXÙ\ÐYY
+YY]šXÙ\ÊBˆ˜[\Ð›Y]ÛÝBˆYY]šXÙ\ÏË˜[žHÂˆ]\HOH]Y[Ñ]šXÙR[™›Ë•TWÐ“QUÓÕÐL‘ˆ]\HOH]Y[Ñ]šXÙR[™›Ë•TWÐ“QUÓÕÔÐÓÂˆHOHYB‚ˆYˆ
+\Ð›Y]ÛÝ
+HÂˆYˆ
+]TÝÜ™K™Ù]
+™\Ý[YSÛ›Y]ÛÝÛÛ›™XÝÙ^K˜[ÙJJHÂˆYˆ
+^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰ˆ\^Y\‹š\Ô^Z[™ÊHÂˆ^Y\‹œ^J
+BˆBˆBˆBˆBˆB‚ˆÝ™\œšYH[ˆÛÜ™X]J
+HÂˆÝ\\‹›ÛÜ™X]J
+Bˆ\Ô[›š[™ÈHYB‚ˆËÈ[š]X[^™HÛØ˜[™Y™\™[˜ÙHØXÚHÈ]›ÚY[›ØÚÚ[™È]TÝÜ™H™XYÈ[ˆÝ]Âˆ™Y™\™[˜ÙPØXÚKš[š]X[^™J\ËØÛÜJB‚ˆËÈ[š]X[^™HH[X^›Ûˆ‘›\YÈXÜž\ÜˆØXÚH\™XÝÜžHÛÈ]Ø[‚ˆËÈ™H]Y\šYYœ›ÛH›Û‹PÛÛ^]È
+[˜[Y]KØXÚHÛÚÝ\ÊK‚ˆ[X^›Û‘™›\YÑXÜž\Ü‹š[š]
+\ÊBˆ[X^›Û][ÜÑXÜž\Ü‹š[š]
+\ÊB‚ˆÙ]\Ý[™\ŠˆØš™XÝˆYYXTÙ\ÜÚ[Û”Ù\šXÙK“\Ý[™\ˆÂˆÝ™\œšYH[ˆÛ‘›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[ÛŠ
+HÂˆ[™Q›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY
+[
+BˆBˆKˆ
+B‚ˆËÈ^Y\ˆ™Y[™\ÜÈ™\Ù]È˜[ÙBˆ^Y\’[š]X[^™Y˜[YHH˜[ÙB‚ˆËÈËˆÛÛ›™XÝH›ØÙ\ÜÛÜˆÈHÙ\šXÙBˆËÈ[™Y[ˆÜ™X]Q^Ô^Y\‚‚ˆÙYYÝY™\ÜÐØXÚQœ›ÛT™YœÊ
+BˆØXÚY[œÝYÜ˜[PÛÛÚÚYHH]TÝÜ™K™Ù]
+[œÝYÜ˜[PÛÛÚÚYRÙ^KˆŠBˆØXÚYÜÝYžPÛÛÚÚYHH]TÝÜ™K™Ù]
+ÜÝYžPÛÛÚÚYRÙ^KˆŠBˆØXÚY[œÝYÜ˜[U\Ù\YÙ[Bˆ]TÝÜ™K™Ù]
+[œÝYÜ˜[U\Ù\YÙ[Ù^K[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÕTÑT—ÐQÑS•
+BˆZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÕTÑT—ÐQÑS•‚ˆYˆ
+Y[œÝ\™TÝ\Y\Ñ›Ü™YÜ›Ý[™Ü”ÝÜ
+
+JHÂˆ™]\›‚ˆB‚ˆ˜[Y˜][YYXS›ÝYšXØ][Û”›ÝšY\ˆBˆY˜][YYXS›ÝYšXØ][Û”›ÝšY\Šˆ\ËˆÈ“ÕQ’PÐUSÓ—ÒQKˆÒS“‘SÒQˆ‹œÝš[™Ë›]\ÚX×Ü^Y\‹ˆ
+K˜\HÂˆÙ]ÛX[XÛÛŠ‹™˜]ØX›KœÛX[ÚXÛÛŠBˆB‚ˆÙ]YYXS›ÝYšXØ][Û”›ÝšY\ŠˆØš™XÝˆYYXS›ÝYšXØ][Û‹”›ÝšY\ˆÂˆÝ™\œšYH[ˆÜ™X]S›ÝYšXØ][ÛŠˆYYXTÙ\ÜÚ[ÛŽˆYYXTÙ\ÜÚ[Û‹ˆYYXP]Û”™Y™\™[˜Ù\Îˆ[[]]X›S\ÝÛÛ[X[™]Û‹ˆXÝ[Û‘˜XÝÜžNˆYYXS›ÝYšXØ][Û‹XÝ[Û‘˜XÝÜžKˆÛ“›ÝYšXØ][ÛÚ[™ÙYØ[˜XÚÎˆYYXS›ÝYšXØ][Û‹”›ÝšY\‹Ø[˜XÚËˆ
+NˆYYXS›ÝYšXØ][ÛˆÂˆ˜[˜XÚÚ[™ÐØ[˜XÚÈBˆYYXS›ÝYšXØ][Û‹”›ÝšY\‹Ø[˜XÚÈÈ›ÝYšXØ][ÛˆO‚ˆ]\ÝYYXS›ÝYšXØ][ÛˆH›ÝYšXØ][Û‹››ÝYšXØ][Û‚ˆ[™\ŠÛÜ\‹™Ù]XZ[“ÛÜ\Š
+JKœÜÝÂˆ[Ø]Ú[™ÈÂˆ˜[›ÝYšXØ][Û“X[˜YÙ\ˆH›ÝYšXØ][Û“X[˜YÙ\ÛÛ\]™œ›ÛJ\Ð]\ÚXÔÙ\šXÙJBˆYˆ
+›ÝYšXØ][Û“X[˜YÙ\‹˜\™S›ÝYšXØ][ÛœÑ[˜X›Y
+
+JHÂˆ›ÝYšXØ][Û“X[˜YÙ\‹››ÝYžJ›ÝYšXØ][Û‹››ÝYšXØ][Û’Y›ÝYšXØ][Û‹››ÝYšXØ][ÛŠBˆBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘˜Z[YÈÜÝ\Þ[˜ÈYYXH›ÝYšXØ][Ûˆ\]HŠBˆBˆBˆB‚ˆ™]\›ˆY˜][YYXS›ÝYšXØ][Û”›ÝšY\‚ˆ˜Ü™X]S›ÝYšXØ][ÛŠˆYYXTÙ\ÜÚ[Û‹ˆYYXP]Û”™Y™\™[˜Ù\ËˆXÝ[Û‘˜XÝÜžKˆ˜XÚÚ[™ÐØ[˜XÚËˆ
+K˜[ÛÈÈYYXS›ÝYšXØ][ÛˆO‚ˆ]\ÝYYXS›ÝYšXØ][ÛˆHYYXS›ÝYšXØ][Û‹››ÝYšXØ][Û‚ˆBˆB‚ˆÝ™\œšYH[ˆ[™PÝ\ÝÛPÛÛ[X[™
+ˆÙ\ÜÚ[ÛŽˆYYXTÙ\ÜÚ[Û‹ˆXÝ[ÛŽˆÝš[™Ëˆ^˜\Îˆ[™Kˆ
+Nˆ›ÛÛX[ˆHY˜][YYXS›ÝYšXØ][Û”›ÝšY\‹š[™PÝ\ÝÛPÛÛ[X[™
+Ù\ÜÚ[Û‹XÝ[Û‹^˜\ÊB‚ˆÝ™\œšYH[ˆÙ]›ÝYšXØ][ÛÚ[›™[[™›Ê
+NˆYYXS›ÝYšXØ][Û‹”›ÝšY\‹“›ÝYšXØ][ÛÚ[›™[[™›ÈBˆY˜][YYXS›ÝYšXØ][Û”›ÝšY\‹››ÝYšXØ][ÛÚ[›™[[™›ÂˆKˆ
+Bˆ^Y\ˆHÜ™X]Q^Ô^Y\Š
+Bˆ^Y\‹˜Y\Ý[™\Š\Ð]\ÚXÔÙ\šXÙJBˆØœÙ\™S]™T^X˜XÚÐš]˜]TÙ][™Ê
+BˆÛY\[Y\ˆBˆÛY\[Y\ŠØÛÜK^Y\ŠHÈ][\Y\ˆO‚ˆÛY\[Y\•›Û[YS][\Y\‹˜[YHH][\Y\‚ˆBˆ^Y\‹˜Y\Ý[™\ŠÛY\[Y\ŠB‚ˆËÈX\šÈ^Y\ˆ\È[š]X[^™YY\ˆÝXØÙ\ÜÙ[Ü™X][Û‚ˆ^Y\’[š]X[^™Y˜[YHHYBˆ[X™\‹YÊQÊK™
+”^Y\ˆÝXØÙ\ÜÙ[H[š]X[^™YŠB‚ˆ]Y[ÓX[˜YÙ\ˆHÙ]Þ\Ý[TÙ\šXÙJÛÛ^UQS×ÔÑT•’PÑJH\È]Y[ÓX[˜YÙ\‚ˆÙ]\]Y[Ñ›ØÝ\Ô™\]Y\Ý
+
+B‚ˆYYXSXœ˜\žTÙ\ÜÚ[ÛØ[˜XÚË˜\HÂˆÙ\šXÙHH\Ð]\ÚXÔÙ\šXÙBˆÙÙÛSZÙHHŽÙÙÛSZÙBˆÙÙÛTÝ\˜Y[ÈHŽÙÙÛTÝ\˜Y[ÂˆÙÙÛSXœ˜\žHHŽÙÙÛSXœ˜\žBˆYÕ\™Ù]^[\ÝHŽ˜YÕ\™Ù]^[\ÝˆBˆYYXTÙ\ÜÚ[ÛˆBˆYYXSXœ˜\žTÙ\ÜÚ[Û‚ˆZ[\Š\Ë^Y\‹YYXSXœ˜\žTÙ\ÜÚ[ÛØ[˜XÚÊBˆœÙ]Ù\ÜÚ[ÛXÝ]š]Jˆ[™[™Ò[[™Ù]XÝ]š]Jˆ\Ëˆˆ[[
+\ËXZ[XÝ]š]NŽ˜Û\ÜËš˜]˜JKˆ[™[™Ò[[‘“Q×ÒSSUUP“Kˆ
+Kˆ
+KœÙ]š]X\ØY\ŠÛÚ[š]X\ØY\Š\ËØÛÜJJBˆ˜Z[
+
+Bˆ^Y\‹œ™\X][ÙHH]TÝÜ™K™Ù]
+™\X][ÙRÙ^K‘TPUÓSÑWÓÑ‘ŠB‚ˆËÈ™\ÝÜ™HÚY™›H[ÙHYˆ™[Y[X™\ˆÜ[Ûˆ\È[˜X›YˆYˆ
+]TÝÜ™K™Ù]
+™[Y[X™\”ÚY™›P[™™\X]Ù^KYJJHÂˆ^Y\‹œÚY™›S[ÙQ[˜X›YH]TÝÜ™K™Ù]
+ÚY™›S[ÙRÙ^K˜[ÙJBˆB‚ˆËÈÙY\HÛÛ›™XÝYÛÛ›Û\ˆÛÈ]›ÝYšXØ][ÛˆÛÜšÜÂˆ˜[Ù\ÜÚ[Û•ÚÙ[ˆHÙ\ÜÚ[Û•ÚÙ[Š\ËÛÛ\Û™[˜[YJ\Ë]\ÚXÔÙ\šXÙNŽ˜Û\ÜËš˜]˜JJBˆ˜[ÛÛ›Û\‘]\™HHYYXPÛÛ›Û\‹Z[\Š\ËÙ\ÜÚ[Û•ÚÙ[ŠK˜Z[\Þ[˜Ê
+BˆÛÛ›Û\‘]\™K˜Y\Ý[™\ŠÈÛÛ›Û\‘]\™K™Ù]
+
+HK[Ü™Q^XÝ]ÜœË™\™XÝ^XÝ]ÜŠ
+JB‚ˆÛÛ›™XÝ]š]SX[˜YÙ\ˆHÙ]Þ\Ý[TÙ\šXÙJ
+HHBˆÛÛ›™XÝ]š]SØœÙ\™\ˆH™]ÛÜšÐÛÛ›™XÝ]š]SØœÙ\™\Š\ÊBˆ\Ó™]ÛÜšÐÛÛ›™XÝY˜[YHHÛÛ›™XÝ]š]SØœÙ\™\‹š\ÐÝ\œ™[PÛÛ›™XÝY
+
+Bˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜˆBˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜŠˆ\™[ØÛÜHHØÛÜKˆ^Y\ˆH^Y\‹ˆØ[”™[ØYHÂˆ\Ó™]ÛÜšÐÛÛ›™XÝY˜[YH	‰‚ˆ^Y\‹š\Ô^Z[™È	‰‚ˆ]TÝÜ™K™Ù]
+[˜X›TÛÛ™ÐØXÚRÙ^KYJBˆKˆ\Ô™\\™Y[Ù]Ú\™HHÈYYXRYO‚ˆÙXÛÛ™\žT^Y\Ë˜Ý\œ™[YYXR][OË›YYXRYOHYYXRYˆKˆ™[ØYHŽœ™[ØY™^˜XÚËˆ
+B‚ˆ˜[ØÜ™Y[”Ý]Qš[\ˆBˆ[[š[\Š
+K˜\HÂˆYXÝ[ÛŠ[[PÕSÓ—ÔÐÔ‘QS—ÓÓŠBˆYXÝ[ÛŠ[[PÕSÓ—ÔÐÔ‘QS—ÓÑ‘ŠBˆBˆ™YÚ\Ý\”™XÙZ]™\ŠØÜ™Y[”Ý]T™XÙZ]™\‹ØÜ™Y[”Ý]Qš[\ŠBˆ™YÚ\Ý\”™XÙZ]™\ŠˆØ[\\”™\]Y\Ý™XÙZ]™\‹ˆ[[š[\ŠØ[˜\ÕØ[\\”Ù\šXÙKPÕSÓ—Ô‘TUQTÕÕTUJKˆYˆ
+Z[•‘T”ÒSÓ‹”Ñ×ÒS•HZ[•‘T”ÒSÓ—ÐÓÑTË•TSRTÕJHÛÛ^”‘PÑRU‘T—Ó“ÕÑVÔ•Q[ÙHˆ
+B‚ˆ]Y[ÓX[˜YÙ\‹œ™YÚ\Ý\]Y[Ñ]šXÙPØ[˜XÚÊ]Y[Ñ]šXÙPØ[˜XÚË[
+B‚ˆ]Y[Ô]X[]HH]TÝÜ™K™Ù]Ýš[™ÏŠ]Y[Ô]X[]RÙ^JKÑ[[JÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô]X[]KUUÊBˆ^Y\•›Û[YHH]]X›TÝ]Q›ÝÊ]TÝÜ™K™Ù]
+^Y\•›Û[YRÙ^KYŠK˜ÛÙ\˜ÙR[Š‹YŠJBˆ]TÝÜ™K™]Bˆ›X\È]Ò[œÝYÜ˜[PÛÛÚÚYRÙ^WHÎˆˆˆBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈØXÚY[œÝYÜ˜[PÛÛÚÚYHH]Bˆ]TÝÜ™K™]Bˆ›X\È]ÔÜÝYžPÛÛÚÚYRÙ^WHÎˆˆˆBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈØXÚYÜÝYžPÛÛÚÚYHH]Bˆ]TÝÜ™K™]Bˆ›X\È™YœÈO‚ˆ™YœÖÒ[œÝYÜ˜[U\Ù\YÙ[Ù^WBˆËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÕTÑT—ÐQÑS•ˆBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈØXÚY[œÝYÜ˜[U\Ù\YÙ[H]B‚ˆËÈ[š]X[^™HÛÛÙÛHØ\Ýˆ[š]X[^™PØ\Ý
+
+B‚ˆËÈ\]H\šXÜÈ›ÝšY\ˆÜ™\ˆ™Y™\™[˜ÙBˆËÈÛÛXÝ[™È\È›ÝÈXÝ]˜]\ÈH[\›˜[X\]\]\È\šXÜÔ›ÝšY\œÈ[ˆ\šXÜÒ[\‚ˆ\šXÜÒ[\‹œ™Y™\œ™Y˜ÛÛXÝ]\Ý
+ØÛÜJHßB‚ˆÝ\œ™[YYXSY]Y]Bˆ™\Ý[˜Ý[[Ú[™ÙYžHÈ]ËšYBˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈY]Y]HO‚ˆ™\Ù]]™T^X˜XÚÐš]˜]JY]Y]OËšY
+BˆÛÜ›Ý][™TØÛÜHÂˆ][˜Ú
+\Ü]Ú\œË’SÈ
+ÈÚ[[[™\ŠHÈ\]UY[Ø[˜\ÊY]Y]JHBˆ][˜Ú
+\Ü]Ú\œË’SÈ
+ÈÚ[[[™\ŠHÈ\]P\S]\ÚXÓ[Ý[Û˜XÚÙÜ›Ý[™
+Y]Y]JHBˆ][˜Ú
+\Ü]Ú\œË’SÈ
+ÈÚ[[[™\ŠHÈ\]T™Y™\œ™Y\ÛÜšÊY]Y]JHBˆYˆ
+Y]Y]HOH[	‰ˆ[Y]Y]Kš\Ñ\\ÛÙH	‰ˆ[Y]Y]Kš\ÕšY[ÔÛÛ™ÊHÂˆ][˜Ú
+\Ü]Ú\œË“XZ[ˆ
+ÈÚ[[[™\ŠHÂˆÝ\œ™[[X™YYØ[˜\Õ\›˜[YHH[ˆYˆ
+\ÓØØ[YYXJY]Y]JJHÂˆØY[X™YYØ[˜\Ò[˜XÚÙÜ›Ý[™
+Y]Y]KšY
+BˆBˆBˆH[ÙHÂˆÝ\œ™[[X™YYØ[˜\Õ\›˜[YHH[ˆBˆBˆB‚ˆ]TÝÜ™K™]Bˆ›X\È™YœÈO‚ˆZ\Šˆ™YœÖÔÜÝYžPØ[˜\Ñ[˜X›YÙ^WHÎˆ˜[ÙKˆ™YœÖÑÝÛ›ØYØ[˜\Ó[ÙRÙ^WKÑ[[JÝÛ›ØYØ[˜\Ó[ÙK“Ñ‘ŠKˆ
+BˆBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈ™YœÈO‚ˆØXÚYÜÝYžPØ[˜\Ñ[˜X›YH™YœË™š\œÝˆØXÚYÝÛ›ØYØ[˜\Ó[ÙHH™YœËœÙXÛÛ™ˆB‚ˆËÈˆØ]Ú›ÜˆTH›Ùš[HÚ[™Ù\ÂˆØÛÜK›][˜ÚÂˆ\T›Ùš[T™\ÜÚ]ÜžK˜XÝ]™T›Ùš[K˜ÛÛXÝÈ›Ùš[HO‚ˆYˆ
+›Ùš[HOH[
+HÂˆ˜[™\Ý[H\]X[^™\”Ù\šXÙK˜\T›Ùš[J›Ùš[JBˆYˆ
+™\Ý[š\ÔÝXØÙ\ÜÈ	‰ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰ˆ^Y\‹š\Ô^Z[™ÊHÂˆËÈ[œÝ[\]Nˆ›\ÚY™™\œÈ[™ÙYZÈÛYÚHÈ™K\›ØÙ\ÜÈ]Y[ÂˆËÈÛX[ÙYZÈÈ›Ü˜ÙH™KXY™™\ˆ›ÝYÚH™]ÈTHÙ][™ÜÂˆËÈÙYZÈÈÝ\œ™[ÜÚ][ÛˆY™™XÝ]™[H™\Ù]ÈH\[[™Bˆ^Y\‹œÙYZÕÊ^Y\‹˜Ý\œ™[ÜÚ][ÛŠBˆBˆH[ÙHÂˆ\]X[^™\”Ù\šXÙK™\ØX›J
+BˆYˆ
+^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰ˆ^Y\‹š\Ô^Z[™ÊHÂˆ^Y\‹œÙYZÕÊ^Y\‹˜Ý\œ™[ÜÚ][ÛŠBˆBˆBˆBˆB‚ˆØÛÜK›][˜ÚÂˆÛÛ›™XÝ]š]SØœÙ\™\‹›™]ÛÜšÔÝ]\Ë˜ÛÛXÝÈ\ÐÛÛ›™XÝYO‚ˆ\Ó™]ÛÜšÐÛÛ›™XÝY˜[YHH\ÐÛÛ›™XÝYˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜËœ™\]Y\Ý™Yœ™\Ú
+
+BˆYˆ
+\ÐÛÛ›™XÝY	‰ˆØZ][™Ñ›Ü“™]ÛÜšÐÛÛ›™XÝ[Û‹˜[YJHÂˆšYÙÙ\”™]žJ
+BˆBˆYˆ
+\ÐÛÛ›™XÝY	‰ˆ\ØÛÜ™œÑ[˜X›Y	‰ˆ^Y\‹š\Ô^Z[™ÊHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆBˆB‚ˆ˜\ˆ\Ý™[ØYÙ[XÝ[Û”ÚYÛ˜]\™Nˆ[ÈH[ˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]Bˆ›X\È™YœÈO‚ˆ˜[Ù[XÝ[Û”ÚYÛ˜]\™HBˆ\ÝÙŠˆ™YœÖÐ]Y[Ô]X[]RÙ^WKˆ™YœÖÕY[]Y[Ô]X[]RÙ^WKˆ™YœÖÕY[™\ÛÛ™\‘[™Ú[ÒÙ^WKˆ™YœÖÑY^™\]Y[Ô]X[]RÙ^WKˆ™YœÖÑY^™\”™\ÛÛ™\•\›Ù^WKˆ™YœÖÑY^™\‘˜\Ý[ÙRÙ^WKˆ™YœÖÑY^™\”›ÞS[ÙRÙ^WKˆ™YœÖÑY^™\”›ÞU\›Ù^WKˆ™YœÖÔÛÝ[™ÛÝY]Y[Ô]X[]RÙ^WKˆ™YœÖÔÛÝ[™ÛÝY]]ÚÙ[’Ù^WKˆ™YœÖÐ\P]Y[Ô]X[]RÙ^WKˆ™YœÖÐ[X^›Û]Y[Ô]X[]RÙ^WKˆ™YœÖÔ[Ø^˜XÚÙ[™Ù^WKˆ™YœÖÔ[Ø^ÛÝ[žRÙ^WKˆ™YœÖÐ]Y[Ô›ÝšY\“Ü™\’Ù^WKˆ™YœÖÐ]Y[Ô›ÝšY\“X]ÚÝ™\œšY\ÒÙ^WKˆ™YœÖÒ[œÝYÜ˜[PÛÛÚÚYRÙ^WKˆ™YœÖÒ[œÝYÜ˜[U\Ù\YÙ[Ù^WKˆ™YœÖÒ[œÝYÜ˜[P\YÙ^WKˆ™YœÖÒ[œÝYÜ˜[U]ZYÙ^WKˆ™YœÖÔ›ÞQ[˜X›YÙ^WKˆ™YœÖÔÝÜÛ”›ÝšY\‘\œ›Ü’Ù^WKˆ
+Kš\ÚÛÙJ
+Bˆ
+™YœÖÓ™^˜XÚÔ™[ØYÛÝ[Ù^WHÎˆ™^˜XÚÔ™[ØYÛXÞK‘QUSÐÓÕS•
+HÈÙ[XÝ[Û”ÚYÛ˜]\™BˆK™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝÈ
+ÛÝ[Ù[XÝ[Û”ÚYÛ˜]\™JHO‚ˆ˜[ÛÛÜ™[˜]ÜˆH™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜˆÎˆ™]\›ÛÛXÝˆYˆ
+ˆ\Ý™[ØYÙ[XÝ[Û”ÚYÛ˜]\™HOH[	‰‚ˆ\Ý™[ØYÙ[XÝ[Û”ÚYÛ˜]\™HOHÙ[XÝ[Û”ÚYÛ˜]\™Bˆ
+HÂˆÛX[\ÙXÛÛ™\žPÜ›ÜÜÙ˜YT^Y\ŠØÚY[S™^H˜[ÙJBˆÛÛÜ™[˜]Ü‹š[˜[Y]TÙ[XÝ[ÛŠ
+K™›Ü‘XXÚ
+Žš[˜[Y]T™\ÛÛ™Y›ÝšY\”Ý™X[JBˆBˆ\Ý™[ØYÙ[XÝ[Û”ÚYÛ˜]\™HHÙ[XÝ[Û”ÚYÛ˜]\™BˆÛÛÜ™[˜]Ü‹\]PÛÝ[
+ÛÝ[
+BˆÛÛÜ™[˜]Ü‹œ™\]Y\Ý™Yœ™\Ú
+
+BˆBˆB‚ˆËÈØ]Ú›Üˆ]Y[È]X[]HÙ][™ÈÚ[™Ù\Âˆ˜\ˆ\Ñš\œÝ]X[]Q[Z]HYBˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]Bˆ›X\Âˆ]Ð]Y[Ô]X[]RÙ^WOË›]È˜[YHO‚ˆÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô]X[]K™[šY\Âˆ™š[™È]›˜[YHOH˜[YHBˆHÎˆÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë]Y[Ô]X[]KUUÂˆK™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝÈ™]Ô]X[]HO‚ˆ˜[Û]X[]HH]Y[Ô]X[]Bˆ]Y[Ô]X[]HH™]Ô]X[]B‚ˆËÈÚÚ\™[ØYÛˆš\œÝ[Z]
+\Ý\\
+BˆYˆ
+\Ñš\œÝ]X[]Q[Z]
+HÂˆ\Ñš\œÝ]X[]Q[Z]H˜[ÙBˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ”UPSUHS’Uˆ	™]Ô]X[]HŠBˆ™]\›ÛÛXÝˆB‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ”UPSUHÒS‘ÑQˆ	Û]X[]HOˆ	™]Ô]X[]HŠB‚ˆËÈ™[ØYÝ\œ™[ÛÛ™ÈÚ]™]È]X[]Bˆ˜[YYXRYH^Y\‹˜Ý\œ™[YYXR][OË›YYXRYÎˆ™]\›ÛÛXÝˆ˜[Ý\œ™[ÜÚ][ÛˆH^Y\‹˜Ý\œ™[ÜÚ][Û‚ˆ˜[Ø\Ô^Z[™ÈH^Y\‹š\Ô^Z[™Âˆ˜[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ”‘SÐQS‘ÈÕ‘PSNˆ	YYXRY]ÜÚ][Ûˆ	ØÝ\œ™[ÜÚ][ÛŸ[\ÈŠB‚ˆËÈÛX\ˆØXÚYT“È›Ü˜ÙHœ™\Ú™]ÚˆÛÛ™Õ\›ØXÚKœ™[[Ý™JYYXRY
+Bˆ[Ø^]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+BˆY[]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+BˆY^™\]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+BˆÛÝ[™ÛÝY]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+Bˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+Bˆ[ÝUX™P]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+B‚ˆ˜[™\Ù\™PØXÚY]Y[ÈBˆ]TÝÜ™K™Ù]
+^\š[Y[[™\Ù\™TÛÛ™ÐØXÚSÛ”]X[]PÚ[™ÙRÙ^KYJBˆYˆ
+^\š[Y[[^X˜XÚÐØXÚTÛXÞKœÚÝ[ÛX\ØXÚSÛ”]X[]PÚ[™ÙJ™\Ù\™PØXÚY]Y[ÊJHÂˆËÈÛX\ˆØXÚH›ÜˆH˜\ÙH™Z]š[Üˆ™XØ]\ÙH›Ü›X]Èœ›ÛHY™™\™[ÛÝ\˜Ù\ÈØ[ˆ™H[˜ÛÛ\]X›K‚ˆ[›ØÚÚ[™Ê\Ü]Ú\œË’SÊHÂˆžHÂˆ™[[Ý™PØXÚY]Y[ÊYYXRY
+Bˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+ÛX\™Y^Y\ˆ[™ÝÛ›ØYØXÚH›Üˆ	YYXRYŠBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™JK‘˜Z[YÈÛX\ˆØXÚH›Üˆ	YYXRYŠBˆBˆBˆž\\ÜÐØXÚQ›Ü”]X[]PÚ[™ÙK˜Y
+YYXRY
+Bˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+”Ù]ž\\ÜÈØXÚH›YÈ›Üˆ	YYXRYŠBˆH[ÙHÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+’ÙY\[™ÈØXÚY]Y[È›Üˆ	YYXRYY\ˆ]X[]HÚ[™ÙHŠBˆB‚ˆËÈ™[ØY^Y\ˆ]Ø[YHÜÚ][Û‚ˆ^Y\‹œÝÜ
+
+Bˆ^Y\‹œÙYZÕÊÝ\œ™[[™^Ý\œ™[ÜÚ][ÛŠBˆ^Y\‹œ™\\™J
+BˆYˆ
+Ø\Ô^Z[™ÊHÂˆ^Y\‹œ^J
+BˆBˆBˆB‚ˆÛÛXš[™Jˆ^Y\•›Û[YKˆ\Ó]]YˆÛY\[Y\•›Û[YS][\Y\‹ˆ]Y[Ñ›ØÝ\Õ›Û[YS][\Y\‹ˆ
+HÈ›Û[YK]]Y[Y\“][\Y\‹›ØÝ\Ó][\Y\ˆO‚ˆØ[Ý[]QY™™XÝ]™U›Û[YJˆ›Û[YHH›Û[YKˆ]]YH]]YˆÛY\[Y\“][\Y\ˆH[Y\“][\Y\‹ˆ›ØÝ\Ó][\Y\ˆH›ØÝ\Ó][\Y\‹ˆ
+BˆK˜ÛÛXÝ]\Ý
+ØÛÜJHÂˆYˆ
+Z\ÐÜ›ÜÜÙ˜Y[™ÊHÂˆ^Y\‹›Û[YHH]ˆBˆB‚ˆ^Y\•›Û[YK™X›Ý[˜ÙJL
+K˜ÛÛXÝ
+ØÛÜJHÈ›Û[YHO‚ˆ]TÝÜ™K™Y]ÈÙ][™ÜÈO‚ˆÙ][™ÜÖÔ^Y\•›Û[YRÙ^WHH›Û[YBˆBˆB‚ˆÝ\œ™[ÛÛ™Ë™X›Ý[˜ÙJL
+K˜ÛÛXÝ
+ØÛÜJHÈÛÛ™ÈO‚ˆ\]S›ÝYšXØ][ÛŠ
+Bˆ\]UÚYÙ]RJ^Y\‹š\Ô^Z[™ÊBˆB‚ˆÝ\œ™[›Ü›X]˜ÛÛXÝ
+ØÛÜJHÈ›Ü›X]O‚ˆ˜[YYXRYHÝ\œ™[YYXSY]Y]K˜[YOËšYÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆ˜[^X˜XÚÑ›Ü›X]H›Ü›X]ËZÙRYˆÈYYXRYOH[]šYOHYYXRYBˆÝ\œ™[^X˜XÚÑ›Ü›X]˜[YHH^X˜XÚÑ›Ü›X]ˆB‚ˆÛÛXš[™JˆÝ\œ™[YYXSY]Y]K™\Ý[˜Ý[[Ú[™ÙYžHÈ]ËšYKˆ]TÝÜ™K™]K›X\È]ÔÚÝÓ\šXÜÒÙ^WHÎˆ˜[ÙHK™\Ý[˜Ý[[Ú[™ÙY
+
+Kˆ]TÝÜ™K™]K›X\È]Ð[™›ÚY]]ÔÞ[˜ÙY\šXÜÒÙ^WHÎˆ˜[ÙHK™\Ý[˜Ý[[Ú[™ÙY
+
+KˆYYXSXœ˜\žTÙ\ÜÚ[ÛØ[˜XÚËš\Ð]]Û[Ý]™PÛÛ›Û\ÛÛ›™XÝYˆ
+HÈYYXSY]Y]KÚÝÓ\šXÜËÚÝÐ[™›ÚY]]Ó\šXÜË]]Û[Ý]™PÛÛ›™XÝYO‚ˆš\JYYXSY]Y]KÚÝÓ\šXÜËÚÝÐ[™›ÚY]]Ó\šXÜÈ	‰ˆ]]Û[Ý]™PÛÛ›™XÝY
+BˆK˜ÛÛXÝ]\Ý
+ØÛÜJHÈ
+YYXSY]Y]KÚÝÓ\šXÜËÚÝÐ[™›ÚY]]Ó\šXÜÊHO‚ˆYˆ
+
+ÚÝÓ\šXÜÈÚÝÐ[™›ÚY]]Ó\šXÜÊH	‰ˆYYXSY]Y]HOH[	‰ˆ]X˜\ÙBˆ›\šXÜÊYYXSY]Y]KšY
+Bˆ™š\œÝ
+
+HOH[ˆ
+HÂˆ˜[\šXÜÕÚ]›ÝšY\ˆH\šXÜÒ[\‹™Ù]\šXÜÊYYXSY]Y]JBˆ]X˜\ÙKœ]Y\žHÂˆ\Ù\
+ˆ\šXÜÑ[]JˆYHYYXSY]Y]KšYˆ\šXÜÈH\šXÜÕÚ]›ÝšY\‹›\šXÜËˆ›ÝšY\ˆH\šXÜÕÚ]›ÝšY\‹œ›ÝšY\‹ˆ
+Kˆ
+BˆBˆBˆB‚ˆÛÛXš[™JˆÝ\œ™[YYXSY]Y]K™\Ý[˜Ý[[Ú[™ÙYžHÈ]ËšYKˆ]TÝÜ™K™]K›X\È]Ð[™›ÚY]]ÔÞ[˜ÙY\šXÜÒÙ^WHÎˆ˜[ÙHK™\Ý[˜Ý[[Ú[™ÙY
+
+KˆYYXSXœ˜\žTÙ\ÜÚ[ÛØ[˜XÚËš\Ð]]Û[Ý]™PÛÛ›Û\ÛÛ›™XÝYˆ
+HÈYYXSY]Y]K[˜X›Y]]Û[Ý]™PÛÛ›™XÝYO‚ˆš\JYYXSY]Y]K[˜X›Y]]Û[Ý]™PÛÛ›™XÝY
+BˆK˜ÛÛXÝ]\Ý
+ØÛÜJHÈ
+YYXSY]Y]K[˜X›Y]]Û[Ý]™PÛÛ›™XÝY
+HO‚ˆ
+ÊØ]]Û[Ý]™S\šXÜÑÙ[™\˜][Û‚ˆYˆ
+Y[˜X›YX]]Û[Ý]™PÛÛ›™XÝYYYXSY]Y]HOH[YYXSY]Y]Kš\Ñ\\ÛÙJHÂˆ™]\›ÛÛXÝ]\ÝˆB‚ˆ˜[YYXRYHYYXSY]Y]KšYˆ˜[ÜšYÚ[˜[ÝX]NˆÚ\”Ù\]Y[˜ÙOÈH^Y\‹˜Ý\œ™[YYXR][BˆËZÙRYˆÈ]›YYXRYOHYYXRYBˆË›YYXSY]Y]BˆËœÝX]B‚ˆÚ][Y[Ý]Ü“[
+ÌÌ
+HÂˆ]X˜\ÙK›\šXÜÊYYXRY
+K™š\œÝÈ]OH[BˆHÎˆ™]\›ÛÛXÝ]\Ý‚ˆ]X˜\ÙK›\šXÜÊYYXRY
+Bˆ™š[\“›Ý[
+
+Bˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\ÝÝ\Ü[™[™ÈÈ\šXÜÑ[]HO‚ˆ˜[Ù[™\˜][ÛˆH
+ÊØ]]Û[Ý]™S\šXÜÑÙ[™\˜][Û‚ˆYˆ
+\šXÜÑ[]K›\šXÜÈOHT’PÔ×Ó“ÕÑ“ÕS‘
+H™]\›ÛÛXÝ]\ÝÝ\Ü[™[™Â‚ˆžHÂˆ˜[[™\ÈH\šXÜÕ][Ëœ\œÙS\šXÜÊ\šXÜÑ[]K›\šXÜÊBˆYˆ
+[™\Ëš\Ñ[\J
+JH™]\›ÛÛXÝ]\ÝÝ\Ü[™[™Â‚ˆ˜\ˆ\ÝÙYÛY[Ù^NˆZ\[[ÈH[ˆ˜\ˆ\ÝÝX]NˆÚ\”Ù\]Y[˜ÙOÈH[ˆ˜\ˆ\ÝÙÙÙY[™R[™^ˆ[ÈH[‚ˆÚ[H
+ˆÛÜ›Ý][™PÛÛ^š\ÐXÝ]™H	‰‚ˆÙ[™\˜][ÛˆOH]]Û[Ý]™S\šXÜÑÙ[™\˜][Ûˆ	‰‚ˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOHYYXRYˆ
+HÂˆ˜[\šXÜÓÙ™œÙ]\ÈHÝ\œ™[ÛÛ™Ë˜[YBˆËZÙRYˆÈ]šYOHYYXRYBˆËœÛÛ™ÂˆË›\šXÜÓÙ™œÙ]ˆËÓÛ™Ê
+BˆÎˆˆ˜[˜XÚÑ\˜][Û“\ÈH^Y\‹™\˜][Û‹ZÙRYˆÈ]OHË•SQWÕS”ÑU	‰ˆ]ˆBˆ˜[Ø[\YÜÚ][Û“\ÈH^Y\‹˜Ý\œ™[ÜÚ][Û‹˜ÛÙ\˜ÙP]X\Ý
+
+Bˆ˜\ˆÝ\œ™[[™HH[™›ÚY]]Ó\šXÜË˜Ý\œ™[[™Jˆ[™\ÈH[™\ËˆÜÚ][Û“\ÈHØ[\YÜÚ][Û“\ËˆÙ™œÙ]\ÈH\šXÜÓÙ™œÙ]\Ëˆ˜XÚÑ\˜][Û“\ÈH˜XÚÑ\˜][Û“\Ëˆ
+B‚ˆ˜[ÛÛ™š\›YYÜÚ][Û“\ÈH^Y\‹˜Ý\œ™[ÜÚ][Û‹˜ÛÙ\˜ÙP]X\Ý
+
+BˆYˆ
+ÛÛ™š\›YYÜÚ][Û“\ÈOHØ[\YÜÚ][Û“\ÊHÂˆÝ\œ™[[™HH[™›ÚY]]Ó\šXÜË˜Ý\œ™[[™Jˆ[™\ÈH[™\ËˆÜÚ][Û“\ÈHÛÛ™š\›YYÜÚ][Û“\ËˆÙ™œÙ]\ÈH\šXÜÓÙ™œÙ]\Ëˆ˜XÚÑ\˜][Û“\ÈH˜XÚÑ\˜][Û“\Ëˆ
+BˆBˆYˆ
+ˆÙ[™\˜][ÛˆOH]]Û[Ý]™S\šXÜÑÙ[™\˜][Ûˆˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOHYYXRYˆ
+HÂˆœ™XZÂˆB‚ˆ˜[ÝX]HHÝ\œ™[[™OË^ÎˆÜšYÚ[˜[ÝX]Bˆ˜[ÙYÛY[Ù^HHÝ\œ™[[™OË›]È]š[™^È]œÙYÛY[[™^BˆYˆ
+ˆÝ\œ™[[™HOH[	‰‚ˆÝ\œ™[[™KœÙYÛY[ËœÚ^™HˆH	‰‚ˆÝ\œ™[[™Kš[™^OH\ÝÙÙÙY[™R[™^ˆ
+HÂˆ[X™\‹YÊ]]Û[Ý]™S\šXÜÈŠK™
+ˆ”ÙYÛY[YYYXRYI\È[™OIYÚ[™ÝÏIY‹‰YÙYÛY[ÏI\È˜[œÚ][ÛœÏI\È‹ˆYYXRYˆÝ\œ™[[™Kš[™^ˆÝ\œ™[[™KÚ[™ÝÔÝ\\ËˆÝ\œ™[[™KÚ[™ÝÑ[™\ËˆÝ\œ™[[™KœÙYÛY[Ëš›Ú[•ÔÝš[™ÊˆŠHÈ]^KˆÝ\œ™[[™KœÙYÛY[Ëš›Ú[•ÔÝš[™Ê‹ŠHÈ]œÝ\[YS\ËÔÝš[™Ê
+HKˆ
+Bˆ\ÝÙÙÙY[™R[™^HÝ\œ™[[™Kš[™^ˆBˆYˆ
+ÙYÛY[Ù^HOH\ÝÙYÛY[Ù^HÝX]HOH\ÝÝX]JHÂˆ™\XÙPÝ\œ™[YYXTÝX]JYYXRYÝX]JBˆ\ÝÙYÛY[Ù^HHÙYÛY[Ù^Bˆ\ÝÝX]HHÝX]BˆBˆ[^J[™›ÚY]]Ó\šXÜË•TUWÒS•T•SÓTÊBˆBˆHØ]Ú
+\œ›ÜŽˆØ[˜Ù[][Û‘^Ù\[ÛŠHÂˆ›ÝÈ\œ›Ü‚ˆHØ]Ú
+\œ›ÜŽˆ^Ù\[ÛŠHÂˆ[X™\‹YÊ]]Û[Ý]™S\šXÜÈŠKÊˆ\œ›Ü‹ˆ‘˜Z[YÈ\]HÞ[˜ÙY\šXÜÈ›ÜˆYYXRYI\È‹ˆYYXRYˆ
+BˆHš[˜[HÂˆYˆ
+ˆÙ[™\˜][ÛˆOH]]Û[Ý]™S\šXÜÑÙ[™\˜][Ûˆ	‰‚ˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOHYYXRYˆ
+HÂˆ™\XÙPÝ\œ™[YYXTÝX]JYYXRYÜšYÚ[˜[ÝX]JBˆBˆBˆBˆBˆ]TÝÜ™K™]Bˆ›X\È
+]ÔÚÚ\Ú[[˜ÙRÙ^WHÎˆ˜[ÙJHÈ
+]ÔÚÚ\Ú[[˜ÙR[œÝ[Ù^WHÎˆ˜[ÙJHBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈ
+ÚÚ\Ú[[˜ÙK[œÝ[ÚÚ\
+HO‚ˆ^Y\‹œÚÚ\Ú[[˜ÙQ[˜X›YHÚÚ\Ú[[˜ÙBˆÙXÛÛ™\žT^Y\ËœÚÚ\Ú[[˜ÙQ[˜X›YHÚÚ\Ú[[˜ÙB‚ˆ˜[[˜X›R[œÝ[HÚÚ\Ú[[˜ÙH	‰ˆ[œÝ[ÚÚ\ˆ[œÝ[Ú[[˜ÙTÚÚ\[˜X›Y˜[YHH[˜X›R[œÝ[‚ˆ^Y\”Ú[[˜ÙT›ØÙ\ÜÛÜœË˜[Y\Ë™›Ü‘XXÚÈ›ØÙ\ÜÛÜˆO‚ˆ›ØÙ\ÜÛÜ‹š[œÝ[[ÙQ[˜X›YH[˜X›R[œÝ[ˆYˆ
+Y[˜X›R[œÝ[
+HÂˆ›ØÙ\ÜÛÜ‹œ™\Ù]˜XÚÚ[™Ê
+BˆBˆB‚ˆYˆ
+Y[˜X›R[œÝ[
+HÂˆÚ[[˜ÙTÚÚ\›ØË˜Ø[˜Ù[
+
+BˆBˆB‚ˆÛÛXš[™JˆÝ\œ™[›Ü›X]ˆ]TÝÜ™K™]Bˆ›X\È]Ð]Y[Ó›Ü›X[^˜][Û’Ù^WHÎˆYHBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Kˆ]TÝÜ™K™]Bˆ›X\È™YœÈOˆ™YœÖÓÝY™\ÜÓ]™[Ù^WKÑ[[JÝY™\ÜÓ]™[SSÑQ
+HBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Kˆ
+HÈ›Ü›X]›Ü›X[^™P]Y[ËÝY™\ÜÓ]™[O‚ˆš\J›Ü›X]›Ü›X[^™P]Y[ËÝY™\ÜÓ]™[
+BˆK˜ÛÛXÝ]\Ý
+ØÛÜJHÈ
+›Ü›X]›Ü›X[^™P]Y[ËÝY™\ÜÓ]™[
+HO‚ˆ›Ü›X[^˜][Û‘[˜X›YØXÚYH›Ü›X[^™P]Y[ÂˆÝY™\ÜÓ]™[ØXÚYHÝY™\ÜÓ]™[ˆÙ]\ÝY™\ÜÑ[š[˜Ù\Š
+BˆB‚ˆÛÛXš[™Jˆ]TÝÜ™K™]K›X\È]Ð]Y[ÓÙ™›ØYHÎˆ˜[ÙHKˆ]TÝÜ™K™]K›X\È]ÐÜ›ÜÜÙ˜YQ[˜X›YÙ^WHÎˆ˜[ÙHKˆ]TÝÜ™K™]K›X\È]ÓY]›ÓZ^[˜X›YÙ^WHÎˆ˜[ÙHKˆ
+HÈÙ™›ØY™Y‹Ü›ÜÜÙ˜YQ[˜X›YY]›ÓZ^[˜X›YO‚ˆÚÝ[[˜X›P]Y[ÓÙ™›ØY
+Ù™›ØY™Y‹Ü›ÜÜÙ˜YQ[˜X›YY]›ÓZ^[˜X›Y
+BˆK™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈ\ÙSÙ™›ØYO‚ˆ^Y\‹œÙ]Ù™›ØY[˜X›Y
+\ÙSÙ™›ØY
+BˆÙXÛÛ™\žT^Y\ËœÙ]Ù™›ØY[˜X›Y
+\ÙSÙ™›ØY
+BˆB‚ˆ\ØÛÜ™œÓX[˜YÙ\‹š[š]
+
+Bˆ]TÝÜ™K™]Bˆ›X\È]Ñ\ØÛÜ™XØÙ\ÜÕÚÙ[’Ù^WK›Ü‘[\J
+HÈ
+]Ñ[˜X›Q\ØÛÜ™”ÒÙ^WHÎˆYJHBˆ™X›Ý[˜ÙJÌ
+Bˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÈ
+XØÙ\ÜÕÚÙ[‹[˜X›Y
+HO‚ˆ\ØÛÜ™œÑ[˜X›YHXØÙ\ÜÕÚÙ[‹š\Ó›Ý›[šÊ
+H	‰ˆ[˜X›YˆYˆ
+\ØÛÜ™œÑ[˜X›Y
+HÂˆYˆ
+Q\ØÛÜ™œÓX[˜YÙ\‹š\Ô™XYJ
+JHÂˆ\ØÛÜ™œÓX[˜YÙ\‹œ™XÛÛ›™XÝÚ]ÚÙ[ŠXØÙ\ÜÕÚÙ[ŠBˆBˆYˆ
+^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰ˆ^Y\‹œ^UÚ[”™XYJHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ËÚÝÑ™YY˜XÚÈHYJBˆBˆBˆH[ÙHÂˆ\ØÛÜ™œÓX[˜YÙ\‹™\ØÛÛ›™XÝ
+
+BˆBˆB‚ˆ]TÝÜ™K™]Bˆ›X\Âˆ\ÝÙŠˆ]Ñ\ØÛÜ™\ÙQ]Z[ÒÙ^WKˆ]Ñ\ØÛÜ™ÚÝÔ›ÝšY\’Ù^WKˆ]Ñ\ØÛÜ™YUÚ[”ÜÝYžR\ÝÜžRÙ^WKˆ]Ñ\ØÛÜ™Y˜[˜ÙY[ÙRÙ^WKˆ]Ñ\ØÛÜ™Ý]\ÒÙ^WKˆ]Ñ\ØÛÜ™]ÛŒU^Ù^WKˆ]Ñ\ØÛÜ™]ÛŒUš\ÚX›RÙ^WKˆ]Ñ\ØÛÜ™]ÛŒ•^Ù^WKˆ]Ñ\ØÛÜ™]ÛŒ•š\ÚX›RÙ^WKˆ]Ñ\ØÛÜ™XÝ]š]U\RÙ^WKˆ]Ñ\ØÛÜ™XÝ]š]S˜[YRÙ^WKˆ]Ñ\ØÛÜ™[š[X]YØ[˜\ÒÙ^WKˆ]Ñ\ØÛÜ™[š[X]YØ[˜\Ô]X[]RÙ^WKˆ
+BˆK™X›Ý[˜ÙJÌ
+Bˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÂˆYˆ
+^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQJHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ËÚÝÑ™YY˜XÚÈHYJBˆBˆBˆB‚ˆÛÛXš[™JˆÝ\œ™[\PØ[˜\Õ\›ˆÝ\œ™[\U[Ø[˜\Õ\›ˆÝ\œ™[™Y™\œ™Y\ÛÜšÕ\›ˆ
+HÈ\TÜ]X\™K\U[\ÛÜšÈO‚ˆ\ÝÙŠ\TÜ]X\™K\U[\ÛÜšÊBˆK™X›Ý[˜ÙJÌ
+Bˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÂˆYˆ
+\ØÛÜ™œÑ[˜X›Y	‰ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰ˆ^Y\‹š\Ô^Z[™ÊHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆB‚ˆ]TÝÜ™K™]Bˆ›X\È]Ñ\ØÛÜ™YUÚ[”ÜÝYžR\ÝÜžRÙ^WHÎˆ˜[ÙHBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÈ[˜X›YO‚ˆ\ØÛÜ™YUÚ[”ÜÝYžR\ÝÜžHH[˜X›YˆYˆ
+ÚÝ[Ý\™\ÜÑ\ØÛÜ™œÑ›Ü”ÜÝYžR\ÝÜžJ
+JHÂˆÝ\™\ÜÑ\ØÛÜ™œÑ›Ü”ÜÝYžR\ÝÜžJ
+BˆH[ÙHYˆ
+^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰ˆ^Y\‹š\Ô^Z[™ÊHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆB‚ˆØÛÜK›][˜ÚÂˆ\ØÛÜ™œÓX[˜YÙ\‹˜ÛÛ›™XÝ[Û”Ý]\Ë˜ÛÛXÝÈÝ]\ÈO‚ˆYˆ
+Ý]\ÈOH\ØÛÜ™œÓX[˜YÙ\‹”Ý]\ËÛÛ›™XÝY	‰ˆ\ØÛÜ™œÑ[˜X›Y	‰ˆ^Y\‹š\Ô^Z[™ÊHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ËÚÝÑ™YY˜XÚÈHYJBˆBˆBˆBˆB‚ˆØÛÜK›][˜ÚÂˆ\ØÛÜ™œÓX[˜YÙ\‹™\œ›ÜœË˜ÛÛXÝÈY\ÜØYÙHO‚ˆÚÝÔ^X˜XÚÕØ\Ý
+Y\ÜØYÙJBˆBˆB‚ˆ]TÝÜ™K™]Bˆ›X\È]Ñ[˜X›S\Ý“TØÜ›Ø˜›[™ÒÙ^WHÎˆ˜[ÙHBˆ™X›Ý[˜ÙJÌ
+Bˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÈ[˜X›YO‚ˆYˆ
+[˜X›Y	‰ˆØÜ›Ø˜›SX[˜YÙ\ˆOH[
+HÂˆ˜[[^T\˜Ù[H]TÝÜ™K™Ù]
+ØÜ›Ø˜›Q[^T\˜Ù[Ù^K\Ý“K‘QUSÔÐÔ“Ð“WÑSVWÔTÑS•
+Bˆ˜[Z[”ÛÛ™Ñ\˜][ÛˆBˆ]TÝÜ™K™Ù]
+ØÜ›Ø˜›SZ[”ÛÛ™Ñ\˜][Û’Ù^K\Ý“K‘QUSÔÐÔ“Ð“WÓRS—ÔÓÓ‘×ÑTUSÓŠBˆ˜[[^TÙXÛÛ™ÈH]TÝÜ™K™Ù]
+ØÜ›Ø˜›Q[^TÙXÛÛ™ÒÙ^K\Ý“K‘QUSÔÐÔ“Ð“WÑSVWÔÑPÓÓ‘ÊBˆØÜ›Ø˜›SX[˜YÙ\ˆBˆØÜ›Ø˜›SX[˜YÙ\ŠˆØÛÜKˆZ[”ÛÛ™Ñ\˜][ÛˆHZ[”ÛÛ™Ñ\˜][Û‹ˆØÜ›Ø˜›Q[^T\˜Ù[H[^T\˜Ù[ˆØÜ›Ø˜›Q[^TÙXÛÛ™ÈH[^TÙXÛÛ™Ëˆ
+BˆØÜ›Ø˜›SX[˜YÙ\Ë\ÙS›ÝÔ^Z[™ÈH]TÝÜ™K™Ù]
+\Ý“U\ÙS›ÝÔ^Z[™Ë˜[ÙJBˆH[ÙHYˆ
+Y[˜X›Y	‰ˆØÜ›Ø˜›SX[˜YÙ\ˆOH[
+HÂˆØÜ›Ø˜›SX[˜YÙ\Ë™\Ý›ÞJ
+BˆØÜ›Ø˜›SX[˜YÙ\ˆH[ˆBˆB‚ˆ]TÝÜ™K™]Bˆ›X\È]Ó\Ý“U\ÙS›ÝÔ^Z[™×HÎˆ˜[ÙHBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÂˆØÜ›Ø˜›SX[˜YÙ\Ë\ÙS›ÝÔ^Z[™ÈH]ˆB‚ˆ]TÝÜ™K™]Bˆ›X\È]ÔÜÝYžS\Ý[š[™Ò\ÝÜžQ[˜X›YÙ^WHÎˆ˜[ÙHBˆ™X›Ý[˜ÙJÌ
+Bˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÈ[˜X›YO‚ˆÜÝYžS\Ý[š[™Ò\ÝÜžQ[˜X›Y˜[YHH[˜X›YˆYˆ
+[˜X›Y	‰ˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ˆOH[
+HÂˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÊHÂˆÜÝYžPØ[˜\ÐÛY[œ™Yœ™\Ú\Ý[š[™Ò\ÝÜžU™\œÚ[Û™\ÝY™›Ü
+
+BˆBˆÜÝYžPØ[˜\ÐÛY[œÙ]\Ý[š[™Ò\ÝÜžQ˜Z[\™T™\Ü\ˆÈ™X\ÛÛˆO‚ˆ˜[]Z[H™X\ÛÛ‹šY›[šÈÈÙ]Ýš[™Ê‹œÝš[™ËœÜÝYžWÛ\Ý[š[™×Ú\ÝÜžWÝ[šÛ›ÝÛ—Ù\œ›ÜŠHBˆÚÝÔ^X˜XÚÕØ\Ý
+Ù]Ýš[™Ê‹œÝš[™ËœÜÝYžWÛ\Ý[š[™×Ú\ÝÜžWÙ˜Z[Y]Z[
+JBˆBˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ˆBˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ŠˆØÛÜHHØÛÜKˆÛÛÚÚYT›ÝšY\ˆHÂˆ]TÝÜ™K™Ù]
+ÜÝYžPÛÛÚÚYRÙ^KˆŠKZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆKˆ]šXÙS˜[YT›ÝšY\ˆHÂˆÙ]Ýš[™Ê‹œÝš[™ËœÜÝYžWÛ\Ý[š[™×Ú\ÝÜžWÙ]šXÙWÛ˜[YJBˆKˆÛ”ÜÝYžT™\Ù[˜ÙPXÝ]™PÚ[™ÙYHŽœÙ]ÜÝYžR\ÝÜžT™\Ù[˜ÙPXÝ]™KˆÛ”ÜÝYžP]]Ü^T]Y]YT™XYHHŽœÞ[˜ÔÜÝYžP]]Ü^T]Y]YKˆZ[”ÛÛ™Ñ\˜][ÛˆH\Ý“K‘QUSÔÐÔ“Ð“WÓRS—ÔÓÓ‘×ÑTUSÓ‹ˆ™\Ü[^T\˜Ù[H\Ý“K‘QUSÔÐÔ“Ð“WÑSVWÔTÑS•ˆ™\Ü[^TÙXÛÛ™ÈHÌˆ
+BˆÝ\ÜÝYžS\Ý[š[™Ò\ÝÜžRY[ÝÙY
+ˆY]Y]HH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]HÎˆÝ\œ™[YYXSY]Y]K˜[YHÎˆ^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][ÛˆHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+BˆH[ÙHYˆ
+Y[˜X›Y	‰ˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ˆOH[
+HÂˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\Ë™\Ý›ÞJ
+BˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ˆH[ˆÜÝYžS\Ý[š[™Ò\ÝÜžTÛÝ\˜ÙP[ÝÙYH˜[ÙBˆÙ]ÜÝYžR\ÝÜžT™\Ù[˜ÙPXÝ]™J˜[ÙJBˆÜÝYžPØ[˜\ÐÛY[œÙ]\Ý[š[™Ò\ÝÜžQ˜Z[\™T™\Ü\Š[
+BˆBˆB‚ˆ]TÝÜ™K™]Bˆ›X\È]ÔÜÝYžS\Ý[š[™Ò\ÝÜžQÛØ˜[Ù^WHÎˆ˜[ÙHBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÈ[˜X›YO‚ˆÜÝYžS\Ý[š[™Ò\ÝÜžQÛØ˜[˜[YHH[˜X›Yˆ˜[Y]Y]HH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]HÎˆÝ\œ™[YYXSY]Y]K˜[YHÎˆ^Y\‹˜Ý\œ™[Y]Y]BˆYˆ
+\ÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠY]Y]JJHÂˆÝÜÜÝYžS\Ý[š[™Ò\ÝÜžJ
+BˆBˆB‚ˆ]TÝÜ™K™]Bˆ›X\È™YœÈO‚ˆš\Jˆ™YœÖÔØÜ›Ø˜›Q[^T\˜Ù[Ù^WHÎˆ\Ý“K‘QUSÔÐÔ“Ð“WÑSVWÔTÑS•ˆ™YœÖÔØÜ›Ø˜›SZ[”ÛÛ™Ñ\˜][Û’Ù^WHÎˆ\Ý“K‘QUSÔÐÔ“Ð“WÓRS—ÔÓÓ‘×ÑTUSÓ‹ˆ™YœÖÔØÜ›Ø˜›Q[^TÙXÛÛ™ÒÙ^WHÎˆ\Ý“K‘QUSÔÐÔ“Ð“WÑSVWÔÑPÓÓ‘Ëˆ
+BˆK™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÈ
+[^T\˜Ù[Z[”ÛÛ™Ñ\˜][Û‹[^TÙXÛÛ™ÊHO‚ˆØÜ›Ø˜›SX[˜YÙ\Ë›]Âˆ]œØÜ›Ø˜›Q[^T\˜Ù[H[^T\˜Ù[ˆ]›Z[”ÛÛ™Ñ\˜][ÛˆHZ[”ÛÛ™Ñ\˜][Û‚ˆ]œØÜ›Ø˜›Q[^TÙXÛÛ™ÈH[^TÙXÛÛ™ÂˆBˆB‚ˆÛÛXš[™Jˆ]TÝÜ™K™]K›X\È™YœÈO‚ˆÜ›ÜÜÙ˜YT™Y™\™[˜ÙTÝ]JˆÜ›ÜÜÙ˜YQ[˜X›YH™YœÖÐÜ›ÜÜÙ˜YQ[˜X›YÙ^WHÎˆ˜[ÙKˆÜ›ÜÜÙ˜YQ\˜][ÛˆH™YœÖÐÜ›ÜÜÙ˜YQ\˜][Û’Ù^WHÎˆY‹ˆÜ›ÜÜÙ˜YQØ\\ÜÈH™YœÖÐÜ›ÜÜÙ˜YQØ\\ÜÒÙ^WHÎˆYKˆY]›ÓZ^[˜X›YH™YœÖÓY]›ÓZ^[˜X›YÙ^WHÎˆ˜[ÙKˆY]›ÓZ^™\Ù]H™YœÖÓY]›ÓZ^™\Ù]Ù^WKÑ[[JY˜][˜[YHHY]›ÓZ^™\Ù]UUÊKˆY]›ÓZ^˜\œÈH™YœÖÓY]›ÓZ^˜\œÒÙ^WHÎˆˆY]›ÓZ^›Û[YPÝ\™HH™YœÖÓY]›ÓZ^›Û[YPÝ\™RÙ^WKÑ[[JY˜][˜[YHHY]›ÓZ^›Û[YPÝ\™KUUÊKˆY]›ÓZ^\PÝ\™HH™YœÖÓY]›ÓZ^\PÝ\™RÙ^WKÑ[[JY˜][˜[YHHY]›ÓZ^\PÝ\™KUUÊKˆY]›ÓZ^Y™™XÝÝ\™HH™YœÖÓY]›ÓZ^Y™™XÝÝ\™RÙ^WKÑ[[JY˜][˜[YHHY]›ÓZ^Y™™XÝÝ\™KUUÊKˆ
+BˆKˆ\Ý[•ÙÙ]\“X[˜YÙ\‹œ›ÛÛTÝ]Kˆ
+HÈ™YœË›ÛÛTÝ]HO‚ˆËÈ\ØX›HÜ›ÜÜÙ˜YHYˆ\Ù\ˆ\È[ˆH\Ý[ˆÙÙ]\ˆ›ÛÛBˆÜ›ÜÜÙ˜YT™Y™\™[˜ÙTÝ]JˆÜ›ÜÜÙ˜YQ[˜X›YH
+™YœË˜Ü›ÜÜÙ˜YQ[˜X›Y™YœË›Y]›ÓZ^[˜X›Y
+H	‰ˆ›ÛÛTÝ]HOH[ˆÜ›ÜÜÙ˜YQ\˜][ÛˆHYˆ
+™YœË›Y]›ÓZ^[˜X›Y
+H™YœË›Y]›ÓZ^™\Ù]™\˜][Û”ÙXÛÛ™È[ÙH™YœË˜Ü›ÜÜÙ˜YQ\˜][Û‹ˆÜ›ÜÜÙ˜YQØ\\ÜÈHYˆ
+™YœË›Y]›ÓZ^[˜X›Y
+H˜[ÙH[ÙH™YœË˜Ü›ÜÜÙ˜YQØ\\ÜËˆY]›ÓZ^[˜X›YH™YœË›Y]›ÓZ^[˜X›Y	‰ˆ›ÛÛTÝ]HOH[ˆY]›ÓZ^™\Ù]H™YœË›Y]›ÓZ^™\Ù]ˆY]›ÓZ^˜\œÈH™YœË›Y]›ÓZ^˜\œËˆY]›ÓZ^›Û[YPÝ\™HH™YœË›Y]›ÓZ^›Û[YPÝ\™KˆY]›ÓZ^\PÝ\™HH™YœË›Y]›ÓZ^\PÝ\™KˆY]›ÓZ^Y™™XÝÝ\™HH™YœË›Y]›ÓZ^Y™™XÝÝ\™Kˆ
+BˆK™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ
+ØÛÜJHÈ™YœÈO‚ˆÜ›ÜÜÙ˜YQ[˜X›YH™YœË˜Ü›ÜÜÙ˜YQ[˜X›YˆÜ›ÜÜÙ˜YQ\˜][ÛˆH™YœË˜Ü›ÜÜÙ˜YQ\˜][Ûˆ
+ˆLˆËÈÛÛ™\È\ÂˆÜ›ÜÜÙ˜YQØ\\ÜÈH™YœË˜Ü›ÜÜÙ˜YQØ\\ÜÂˆXÝ]™SY]›ÓZ^™\Ù]H™YœË›Y]›ÓZ^™\Ù]ZÙRYˆÈ™YœË›Y]›ÓZ^[˜X›YBˆXÝ]™SY]›ÓZ^˜\œÈH™YœË›Y]›ÓZ^˜\œË˜ÛÙ\˜ÙR[Š‹ÌŠBˆXÝ]™SY]›ÓZ^›Û[YPÝ\™HH™YœË›Y]›ÓZ^›Û[YPÝ\™BˆXÝ]™SY]›ÓZ^\PÝ\™HH™YœË›Y]›ÓZ^\PÝ\™BˆXÝ]™SY]›ÓZ^Y™™XÝÝ\™HH™YœË›Y]›ÓZ^Y™™XÝÝ\™BˆØÚY[PÜ›ÜÜÙ˜YJ
+BˆB‚ˆËÈØœÙ\™H[™ØXÚHÛÛ[[Ûˆ™Y™\™[˜Ù\ÈÈ]›ÚY[›ØÚÚ[™È™XYÈ[ˆ^X˜XÚÈØ[˜XÚÜÂˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]K›X\È]Ô\œÚ\Ý[]Y]YRÙ^WHÎˆYHK™\Ý[˜Ý[[Ú[™ÙY
+
+K˜ÛÛXÝÈØXÚY\œÚ\Ý[]Y]YHH]BˆBˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]K›X\È]Ð]]Ü^RÙ^WHÎˆYHK™\Ý[˜Ý[[Ú[™ÙY
+
+K˜ÛÛXÝÈØXÚY]]Ü^HH]BˆBˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]K›X\È]Ñ\ØX›SØY[Ü™UÚ[”™\X][Ù^WHÎˆ˜[ÙHK™\Ý[˜Ý[[Ú[™ÙY
+
+K˜ÛÛXÝÈØXÚY\ØX›SØY[Ü™UÚ[”™\X][H]BˆBˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]K›X\È]ÒYQ^XÚ]Ù^WHÎˆ˜[ÙHK™\Ý[˜Ý[[Ú[™ÙY
+
+K˜ÛÛXÝÈØXÚYYQ^XÚ]H]BˆBˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]K›X\È]ÒYUšY[ÔÛÛ™ÜÒÙ^WHÎˆ˜[ÙHK™\Ý[˜Ý[[Ú[™ÙY
+
+K˜ÛÛXÝÈØXÚYYUšY[ÔÛÛ™ÜÈH]BˆBˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]K›X\È]ÔÚY™›T^[\Ýš\œÝÙ^WHÎˆ˜[ÙHK™\Ý[˜Ý[[Ú[™ÙY
+
+K˜ÛÛXÝÈØXÚYÚY™›T^[\Ýš\œÝH]BˆBˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™]K›X\È]Ð]]ÓØY[Ü™RÙ^WHÎˆYHK™\Ý[˜Ý[[Ú[™ÙY
+
+K˜ÛÛXÝÈØXÚY]]ÓØY[Ü™HH]BˆB‚ˆYˆ
+]TÝÜ™K™Ù]
+\œÚ\Ý[]Y]YRÙ^KYJJHÂˆ˜[]Y]YQš[HHš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÔUQUQWÑ’SJBˆYˆ
+]Y]YQš[K™^\ÝÊ
+JHÂˆ[Ø]Ú[™ÈÂˆ]Y]YQš[Kš[œ]Ý™X[J
+K\ÙHÈš\ÈO‚ˆØš™XÝ[œ]Ý™X[Jš\ÊK\ÙHÈÛÜÈO‚ˆÛÜËœ™XYØš™XÝ
+
+H\È\œÚ\Ý]Y]YBˆBˆBˆK›Û”ÝXØÙ\ÜÈÈ]Y]YHO‚ˆ[Ø]Ú[™ÈÂˆËÈÛÛ™\˜XÚÈÈ›Ü\ˆ]Y]YH\Bˆ˜[™\ÝÜ™Y]Y]YHH]Y]YKÔ]Y]YJ
+BˆËÈØZ]›Üˆ^Y\ˆ[š]X[^˜][Ûˆ™Y›Ü™H^Z[™ÂˆØÛÜK›][˜ÚÂˆ^Y\’[š]X[^™Y™š\œÝÈ]BˆYˆ
+\ÐXÝ]™JHÂˆ^T]Y]YJˆ]Y]YHH™\ÝÜ™Y]Y]YKˆ^UÚ[”™XYHH˜[ÙKˆ
+BˆBˆBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘˜Z[YÈ™\ÝÜ™H\œÚ\ÝY]Y]YKÛX\š[™È]HŠBˆÛX\”\œÚ\ÝY]Y]YQš[\Ê
+BˆBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘˜Z[YÈ™XY\œÚ\ÝY]Y]YKÛX\š[™È]HŠBˆÛX\”\œÚ\ÝY]Y]YQš[\Ê
+BˆBˆB‚ˆ˜[]]ÛZ^š[HHš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÐUUÓRVÑ’SJBˆYˆ
+]]ÛZ^š[K™^\ÝÊ
+JHÂˆ[Ø]Ú[™ÈÂˆ]]ÛZ^š[Kš[œ]Ý™X[J
+K\ÙHÈš\ÈO‚ˆØš™XÝ[œ]Ý™X[Jš\ÊK\ÙHÈÛÜÈO‚ˆÛÜËœ™XYØš™XÝ
+
+H\È\œÚ\Ý]Y]YBˆBˆBˆK›Û”ÝXØÙ\ÜÈÈ]Y]YHO‚ˆ[Ø]Ú[™ÈÂˆ]]ÛZ^][\Ë˜[YHH]Y]YKš][\Ë›X\È]ÓYYXR][J
+HBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘˜Z[YÈ™\ÝÜ™H]]ÛZ^]Y]YKÛX\š[™È]HŠBˆÛX\”\œÚ\ÝY]Y]YQš[\Ê
+BˆBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘˜Z[YÈ™XY]]ÛZ^]Y]YKÛX\š[™È]HŠBˆÛX\”\œÚ\ÝY]Y]YQš[\Ê
+BˆBˆB‚ˆËÈ™\ÝÜ™H^Y\ˆÝ]Bˆ˜[^Y\”Ý]Qš[HHš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÔVQT—ÔÕUWÑ’SJBˆYˆ
+^Y\”Ý]Qš[K™^\ÝÊ
+JHÂˆ[Ø]Ú[™ÈÂˆ^Y\”Ý]Qš[Kš[œ]Ý™X[J
+K\ÙHÈš\ÈO‚ˆØš™XÝ[œ]Ý™X[Jš\ÊK\ÙHÈÛÜÈO‚ˆÛÜËœ™XYØš™XÝ
+
+H\È\œÚ\Ý^Y\”Ý]BˆBˆBˆK›Û”ÝXØÙ\ÜÈÈ^Y\”Ý]HO‚ˆËÈ™\ÝÜ™H^Y\ˆÙ][™ÜÈY\ˆ]Y]YH\ÈØYYˆØÛÜK›][˜ÚÂˆ[^JL
+HËÈØZ]›Üˆ]Y]YHÈ™HØYYˆËÈÛ‰Ý™\ÝÜ™H™\X]ÜÚY™›Hœ›ÛH^Y\”Ý]H\È^H\™H[™XYHÙ]œ›ÛH]TÝÜ™H
+ÛÝ\˜ÙHÙˆ]
+BˆËÈ^Y\‹œ™\X][ÙHH^Y\”Ý]Kœ™\X][ÙBˆËÈ^Y\‹œÚY™›S[ÙQ[˜X›YH^Y\”Ý]KœÚY™›S[ÙQ[˜X›Yˆ^Y\•›Û[YK˜[YHH^Y\”Ý]K›Û[YB‚ˆËÈ™\ÝÜ™HÜÚ][ÛˆYˆ]	ÜÈÝ[˜[YˆYˆ
+^Y\”Ý]K˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[
+HÂˆ^Y\‹œÙYZÕÊ^Y\”Ý]K˜Ý\œ™[YYXR][R[™^^Y\”Ý]K˜Ý\œ™[ÜÚ][ÛŠBˆBˆBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘˜Z[YÈ™XY^Y\ˆÝ]KÛX\š[™È]HŠBˆÛX\”\œÚ\ÝY]Y]YQš[\Ê
+BˆBˆBˆB‚ˆËÈØ]™H]Y]YH\š[ÙXØ[HÈ™]™[]Y]YHÜÜÈœ›ÛHÜ˜\ÚÜˆ›Ü˜ÙHÚ[ˆØÛÜK›][˜ÚÂˆÚ[H
+\ÐXÝ]™JHÂˆ[^JÌœÙXÛÛ™ÊBˆYˆ
+ØXÚY\œÚ\Ý[]Y]YJHÂˆØ]™T]Y]YUÑ\ÚÊ
+BˆBˆËÈ[ÛÈØ]™H\\ÛÙHÜÚ][Ûˆ\š[ÙXØ[Bˆ˜[Ý\œ™[Y]Y]HH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]BˆYˆ
+Ý\œ™[Y]Y]OËš\Ñ\\ÛÙHOHYH	‰ˆ^Y\‹š\Ô^Z[™È	‰ˆ^Y\‹˜Ý\œ™[ÜÚ][Ûˆˆ
+HÂˆ™]š[Ý\Ñ\\ÛÙTÜÚ][ÛˆH^Y\‹˜Ý\œ™[ÜÚ][Û‚ˆØ]™Q\\ÛÙTÜÚ][ÛŠÝ\œ™[Y]Y]KšY^Y\‹˜Ý\œ™[ÜÚ][ÛŠBˆBˆBˆB‚ˆB‚ˆš]˜]H[ˆÜ™X]Q^Ô^Y\ŠX›\ÚÕZNˆ›ÛÛX[ˆHYJNˆ^Ô^Y\ˆÂˆ˜[\T›ØÙ\ÜÛÜˆHÝ\ÝÛQ\]X[^™\]Y[Ô›ØÙ\ÜÛÜŠ
+Bˆ\]X[^™\”Ù\šXÙK˜Y]Y[Ô›ØÙ\ÜÛÜŠ\T›ØÙ\ÜÛÜŠB‚ˆ˜[Ú[[˜ÙT›ØÙ\ÜÛÜˆHÚ[[˜ÙQ]XÝÜ]Y[Ô›ØÙ\ÜÛÜˆÈ[™SÛ™ÔÚ[[˜ÙQ]XÝY
+
+HB‚ˆËÈÙ][š]X[Ý]Bˆ[›ØÚÚ[™ÈÂˆ˜[ÚÚ\Ú[[˜ÙHH]TÝÜ™K™Ù]
+ÚÚ\Ú[[˜ÙRÙ^K˜[ÙJBˆ˜[[œÝ[ÚÚ\H]TÝÜ™K™Ù]
+ÚÚ\Ú[[˜ÙR[œÝ[Ù^K˜[ÙJBˆÚ[[˜ÙT›ØÙ\ÜÛÜ‹š[œÝ[[ÙQ[˜X›YHÚÚ\Ú[[˜ÙH	‰ˆ[œÝ[ÚÚ\ˆB‚ˆ˜[^Y\ˆBˆ^Ô^Y\‚ˆZ[\Š\ÊBˆœÙ]YYXTÛÝ\˜ÙQ˜XÝÜžJÜ™X]SYYXTÛÝ\˜ÙQ˜XÝÜžJ
+JBˆœÙ]™[™\™\œÑ˜XÝÜžJÜ™X]T™[™\™\œÑ˜XÝÜžJ\T›ØÙ\ÜÛÜ‹Ú[[˜ÙT›ØÙ\ÜÛÜŠJBˆœÙ]˜XÚÔÙ[XÝÜŠÜ™X]P]Y[Õ˜XÚÔÙ[XÝÜŠ
+JBˆœÙ]ØYÛÛ›Û
+Ü™X]SØYÛÛ›Û
+
+JBˆœÙ][™P]Y[Ð™XÛÛZ[™Ó›Ú\ÞJYJBˆœÙ]ØZÙS[ÙJË•ÐRÑWÓSÑWÓ‘UÓÔ’ÊBˆœÙ]]Y[Ð]šX]\Êˆ]Y[Ð]šX]\ÂˆZ[\Š
+BˆœÙ]\ØYÙJË•TÐQÑWÓQQPJBˆœÙ]ÛÛ[\JËUQS×ÐÓÓ•S•ÕTWÓUTÒPÊBˆ˜Z[
+
+Kˆ˜[ÙKˆ
+KœÙ]ÙYZÐ˜XÚÒ[˜Ü™[Y[\ÊL
+BˆœÙ]ÙYZÑ›ÜØ\™[˜Ü™[Y[\ÊL
+BˆœÙ]]šXÙU›Û[YPÛÛ›Û[˜X›Y
+YJBˆ˜Z[
+
+B‚ˆ^Y\”Ú[[˜ÙT›ØÙ\ÜÛÜœÖÜ^Y\—HHÚ[[˜ÙT›ØÙ\ÜÛÜ‚‚ˆ^Y\‹˜\HÂˆ[›ØÚÚ[™ÈÂˆ˜[Ù™›ØYH]TÝÜ™K™Ù]
+]Y[ÓÙ™›ØY˜[ÙJBˆ˜[Ü›ÜÜÙ˜YHH]TÝÜ™K™Ù]
+Ü›ÜÜÙ˜YQ[˜X›YÙ^K˜[ÙJBˆ˜[Y]›ÓZ^H]TÝÜ™K™Ù]
+Y]›ÓZ^[˜X›YÙ^K˜[ÙJBˆ˜[\ÙSÙ™›ØYHÚÝ[[˜X›P]Y[ÓÙ™›ØY
+Ù™›ØYÜ›ÜÜÙ˜YHY]›ÓZ^
+BˆÙ]Ù™›ØY[˜X›Y
+\ÙSÙ™›ØY
+BˆÚÚ\Ú[[˜ÙQ[˜X›YH]TÝÜ™K™Ù]
+ÚÚ\Ú[[˜ÙRÙ^K˜[ÙJBˆBˆY[˜[]XÜÓ\Ý[™\Š^X˜XÚÔÝ]Ó\Ý[™\Š˜[ÙK\Ð]\ÚXÔÙ\šXÙJJBˆY[˜[]XÜÓ\Ý[™\Š\Ð]\ÚXÔÙ\šXÙJB‚ˆËÈÛX[\[™YX[X[H[ˆÛ‘\Ý›ÞKÜ™[X\ÙBˆBˆYˆ
+X›\ÚÕZJHÂˆÜ^Y\‘›ÝË˜[YHH^Y\‚ˆBˆ™]\›ˆ^Y\‚ˆB‚ˆš]˜]H[ˆÜ™X]P]Y[Õ˜XÚÔÙ[XÝÜŠ
+NˆY˜][˜XÚÔÙ[XÝÜˆBˆY˜][˜XÚÔÙ[XÝÜŠ\ÊK˜\HÂˆÙ]\˜[Y]\œÊˆZ[\Û”\˜[Y]\œÊ
+BˆœÙ]˜XÚÕ\Q\ØX›Y
+Ë•PÒ×ÕTWÕ’QSËYJBˆœÙ]˜XÚÕ\Q\ØX›Y
+Ë•PÒ×ÕTWÕVYJBˆœÙ]›Ü˜ÙRYÚ\ÝÝ\ÜYš]˜]JYJBˆ˜Z[
+
+Kˆ
+BˆB‚ˆš]˜]H[ˆÙ]\]Y[Ñ›ØÝ\Ô™\]Y\Ý
+
+HÂˆ]Y[Ñ›ØÝ\Ô™\]Y\ÝBˆ]Y[Ñ›ØÝ\Ô™\]Y\ÝˆZ[\Š]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×ÑÐRSŠBˆœÙ]]Y[Ð]šX]\Êˆ[™›ÚY›YYXK]Y[Ð]šX]\ÂˆZ[\Š
+BˆœÙ]\ØYÙJ[™›ÚY›YYXK]Y[Ð]šX]\Ë•TÐQÑWÓQQPJBˆœÙ]ÛÛ[\J[™›ÚY›YYXK]Y[Ð]šX]\ËÓÓ•S•ÕTWÓUTÒPÊBˆ˜Z[
+
+Kˆ
+KœÙ]Û]Y[Ñ›ØÝ\ÐÚ[™ÙS\Ý[™\ˆÈ›ØÝ\ÐÚ[™ÙHO‚ˆ[™P]Y[Ñ›ØÝ\ÐÚ[™ÙJ›ØÝ\ÐÚ[™ÙJBˆKœÙ]XØÙ\Ñ[^YY›ØÝ\ÑØZ[ŠYJBˆ˜Z[
+
+BˆB‚ˆš]˜]H[ˆ[™P]Y[Ñ›ØÝ\ÐÚ[™ÙJ›ØÝ\ÐÚ[™ÙNˆ[
+HÂˆÚ[ˆ
+›ØÝ\ÐÚ[™ÙJHÂˆ]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×ÑÐRS‹ˆ]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×ÑÐRS—ÕS”ÒQS•ˆOˆÂˆ\Ð]Y[Ñ›ØÝ\ÈHYBˆ]Y[Ñ›ØÝ\Õ›Û[YS][\Y\‹˜[YHHY‚‚ˆYˆ
+Ø\Ô^Z[™Ð™Y›Ü™P]Y[Ñ›ØÝ\ÓÜÜÈ	‰ˆ\^Y\‹š\Ô^Z[™È	‰ˆ\™Y[˜[›ØÝ\ÑØZ[ŠHÂˆ™Y[˜[›ØÝ\ÑØZ[ˆHYBˆØÛÜK›][˜ÚÂˆ[^JÌ
+BˆYˆ
+\Ð]Y[Ñ›ØÝ\È	‰ˆØ\Ô^Z[™Ð™Y›Ü™P]Y[Ñ›ØÝ\ÓÜÜÈ	‰ˆ\^Y\‹š\Ô^Z[™ÊHÂˆËÈÛ‰ÝÝ\ØØ[^X˜XÚÈYˆØ\Ý[™ÂˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJHÂˆ^Y\‹œ^J
+BˆBˆØ\Ô^Z[™Ð™Y›Ü™P]Y[Ñ›ØÝ\ÓÜÜÈH˜[ÙBˆBˆ™Y[˜[›ØÝ\ÑØZ[ˆH˜[ÙBˆBˆB‚ˆ\QY™™XÝ]™U›Û[YJ
+Bˆ\Ý]Y[Ñ›ØÝ\ÔÝ]HH›ØÝ\ÐÚ[™ÙBˆB‚ˆ]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×ÓÔÔÈOˆÂˆ\Ð]Y[Ñ›ØÝ\ÈH˜[ÙBˆ]Y[Ñ›ØÝ\Õ›Û[YS][\Y\‹˜[YHHY‚ˆØ\Ô^Z[™Ð™Y›Ü™P]Y[Ñ›ØÝ\ÓÜÜÈH^Y\‹š\Ô^Z[™ÂˆYˆ
+^Y\‹š\Ô^Z[™ÊHÂˆ^Y\‹œ]\ÙJ
+BˆBˆX˜[™Û]Y[Ñ›ØÝ\Ê
+Bˆ\Ý]Y[Ñ›ØÝ\ÔÝ]HH›ØÝ\ÐÚ[™ÙBˆB‚ˆ]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×ÓÔÔ×ÕS”ÒQS•OˆÂˆ\Ð]Y[Ñ›ØÝ\ÈH˜[ÙBˆ]Y[Ñ›ØÝ\Õ›Û[YS][\Y\‹˜[YHHY‚ˆØ\Ô^Z[™Ð™Y›Ü™P]Y[Ñ›ØÝ\ÓÜÜÈH^Y\‹š\Ô^Z[™ÂˆYˆ
+^Y\‹š\Ô^Z[™ÊHÂˆ^Y\‹œ]\ÙJ
+BˆBˆ\Ý]Y[Ñ›ØÝ\ÔÝ]HH›ØÝ\ÐÚ[™ÙBˆB‚ˆ]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×ÓÔÔ×ÕS”ÒQS•ÐÐS—ÑPÒÈOˆÂˆ\Ð]Y[Ñ›ØÝ\ÈH˜[ÙBˆ]Y[Ñ›ØÝ\Õ›Û[YS][\Y\‹˜[YHHŒ™‚ˆØ\Ô^Z[™Ð™Y›Ü™P]Y[Ñ›ØÝ\ÓÜÜÈH^Y\‹š\Ô^Z[™ÂˆYˆ
+^Y\‹š\Ô^Z[™ÊHÂˆ\QY™™XÝ]™U›Û[YJ
+BˆBˆ\Ý]Y[Ñ›ØÝ\ÔÝ]HH›ØÝ\ÐÚ[™ÙBˆB‚ˆ]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×ÑÐRS—ÕS”ÒQS•ÓPVWÑPÒÈOˆÂˆ\Ð]Y[Ñ›ØÝ\ÈHYBˆ]Y[Ñ›ØÝ\Õ›Û[YS][\Y\‹˜[YHHY‚ˆ\QY™™XÝ]™U›Û[YJ
+Bˆ\Ý]Y[Ñ›ØÝ\ÔÝ]HH›ØÝ\ÐÚ[™ÙBˆBˆBˆB‚ˆš]˜]H[ˆ™\]Y\Ý]Y[Ñ›ØÝ\Ê
+Nˆ›ÛÛX[ˆÂˆYˆ
+\Ð]Y[Ñ›ØÝ\ÊH™]\›ˆYB‚ˆ]Y[Ñ›ØÝ\Ô™\]Y\ÝË›]È™\]Y\ÝO‚ˆ˜[™\Ý[H]Y[ÓX[˜YÙ\‹œ™\]Y\Ý]Y[Ñ›ØÝ\Ê™\]Y\Ý
+Bˆ\Ð]Y[Ñ›ØÝ\ÈH™\Ý[OH]Y[ÓX[˜YÙ\‹UQSÑ“ÐÕT×Ô‘TUQTÕÑÔS•Qˆ™]\›ˆ\Ð]Y[Ñ›ØÝ\ÂˆBˆ™]\›ˆ˜[ÙBˆB‚ˆš]˜]H[ˆX˜[™Û]Y[Ñ›ØÝ\Ê
+HÂˆYˆ
+\Ð]Y[Ñ›ØÝ\ÊHÂˆ]Y[Ñ›ØÝ\Ô™\]Y\ÝË›]È™\]Y\ÝO‚ˆ]Y[ÓX[˜YÙ\‹˜X˜[™Û]Y[Ñ›ØÝ\Ô™\]Y\Ý
+™\]Y\Ý
+Bˆ\Ð]Y[Ñ›ØÝ\ÈH˜[ÙBˆBˆBˆB‚ˆš]˜]H[ˆÛX\”\œÚ\ÝY]Y]YQš[\Ê
+HÂˆ[Ø]Ú[™ÈÈš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÔUQUQWÑ’SJK™[]J
+HBˆ[Ø]Ú[™ÈÈš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÐUUÓRVÑ’SJK™[]J
+HBˆ[Ø]Ú[™ÈÈš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÔVQT—ÔÕUWÑ’SJK™[]J
+HBˆB‚ˆ[ˆ\Ð]Y[Ñ›ØÝ\Ñ›Ü”^X˜XÚÊ
+Nˆ›ÛÛX[ˆH\Ð]Y[Ñ›ØÝ\Â‚ˆš]˜]H[ˆØZ]Û“™]ÛÜšÑ\œ›ÜŠ
+HÂˆYˆ
+ØZ][™Ñ›Ü“™]ÛÜšÐÛÛ›™XÝ[Û‹˜[YJH™]\›‚‚ˆËÈÚXÚÈYˆÙIÝ™H^ÙYYYX^™]žH][\ÂˆYˆ
+™]žPÛÝ[HPVÔ‘U–WÐÓÕS•
+HÂˆ[X™\‹YÊQÊKÊ“X^™]žHÛÝ[
+	PVÔ‘U–WÐÓÕS•
+H™XXÚYÝÜ[™È^X˜XÚÈŠBˆÝÜÛ‘\œ›ÜŠ
+Bˆ™]žPÛÝ[Hˆ™]\›‚ˆB‚ˆØZ][™Ñ›Ü“™]ÛÜšÐÛÛ›™XÝ[Û‹˜[YHHYB‚ˆËÈÝ\H™]žH[Y\ˆÚ]^Û™[X[˜XÚÛÙ™‚ˆ™]žR›ØË˜Ø[˜Ù[
+
+Bˆ™]žR›ØˆBˆØÛÜK›][˜ÚÂˆËÈ^Û™[X[˜XÚÛÙ™ŽˆÜËœËLœËË‹‹ˆX^ÌÂˆ˜[[^S\ÈHZ[“ÙŠÌ
+ˆ
+HÚ™]žPÛÝ[
+KÌ
+Bˆ[X™\‹YÊQÊK™
+•ØZ][™È	Ù[^S\ß[\È™Y›Ü™H™]žH][\	Ü™]žPÛÝ[
+È_KÉPVÔ‘U–WÐÓÕS•ŠBˆ[^J[^S\ÊB‚ˆYˆ
+\Ó™]ÛÜšÐÛÛ›™XÝY˜[YH	‰ˆØZ][™Ñ›Ü“™]ÛÜšÐÛÛ›™XÝ[Û‹˜[YJHÂˆ™]žPÛÝ[
+ÊÂˆšYÙÙ\”™]žJ
+BˆBˆBˆB‚ˆš]˜]H[ˆšYÙÙ\”™]žJ
+HÂˆØZ][™Ñ›Ü“™]ÛÜšÐÛÛ›™XÝ[Û‹˜[YHH˜[ÙBˆ™]žR›ØË˜Ø[˜Ù[
+
+B‚ˆYˆ
+^Y\‹˜Ý\œ™[YYXR][HOH[
+HÂˆËÈY\ˆÊÈ˜Z[Y™]šY\ËžHÈ™Yœ™\ÚHÝ™X[HT“žHÙYZÚ[™ÈÈÝ\œ™[ÜÚ][Û‚ˆËÈ\È›Ü˜Ù\È^Ô^Y\ˆÈ™K\™\ÛÛ™HH]HÛÝ\˜ÙH[™Ù]Hœ™\ÚT“ˆYˆ
+™]žPÛÝ[ˆÊHÂˆ[X™\‹YÊQÊK™
+”™]žHÛÝ[ˆË][\[™ÈÈ™Yœ™\ÚÝ™X[HT“ŠBˆ˜[Ý\œ™[ÜÚ][ÛˆH^Y\‹˜Ý\œ™[ÜÚ][Û‚ˆ^Y\‹œÙYZÕÊ^Y\‹˜Ý\œ™[YYXR][R[™^Ý\œ™[ÜÚ][ÛŠBˆBˆ^Y\‹œ™\\™J
+BˆËÈÛ‰ÝØ[^J
+H\™HH]H^Y\ˆ]]Ë\™\Ý[YHšXH^UÚ[”™XYBˆËÈ\È]›ÚYÈÝX[[™È]Y[È›ØÝ\È\š[™È™]žH][\ÂˆBˆB‚ˆš]˜]H[ˆÚÚ\Û‘\œ›ÜŠ
+HÂˆÊŠ‚ˆ
+ˆ]]ÈÚÚ\ÈH™^YYXH][HÛˆ\œ›Ü‹‚ˆ
+‚ˆ
+ˆÈ™]™[Hœ[˜]Ø^HY\Ù[[™Ú[™HˆØÙ[˜\š[Ë›Ü˜ÙHH\Ù\ˆÈZÙHXÝ[ÛˆY\‚ˆ
+ˆÛÈX[žH\œ›ÜœÈÛÛYH\ÛÈ]ZXÚÛKˆ]\ÙHÈÚÝÈ^Y\ˆœÝÜYˆÝ]Bˆ
+‹ÂˆÛÛœÙXÝ]]™T^X˜XÚÑ\œˆ
+ÏH‚ˆ˜[™^Ú[™ÝÒ[™^H^Y\‹›™^YYXR][R[™^‚ˆYˆ
+ÛÛœÙXÝ]]™T^X˜XÚÑ\œˆHPVÐÓÓ”ÑPÕUU‘WÑT”ˆ	‰ˆ™^Ú[™ÝÒ[™^OHË’S‘VÕS”ÑU
+HÂˆ^Y\‹œÙYZÕÊ™^Ú[™ÝÒ[™^Ë•SQWÕS”ÑU
+Bˆ^Y\‹œ™\\™J
+BˆËÈÛ‰ÝÝ\ØØ[^X˜XÚÈYˆØ\Ý[™ÂˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJHÂˆ^Y\‹œ^J
+BˆBˆ™]\›‚ˆB‚ˆ^Y\‹œ]\ÙJ
+BˆÛÛœÙXÝ]]™T^X˜XÚÑ\œˆHˆB‚ˆ[ˆÚÚ\Y\‘^\š[Y[[˜Z[\™J
+HÂˆÚÚ\Û‘\œ›ÜŠ
+BˆB‚ˆš]˜]H[ˆÝÜÛ‘\œ›ÜŠ
+HÂˆ^Y\‹œ]\ÙJ
+BˆB‚ˆš]˜]H[ˆ\]S›ÝYšXØ][ÛŠ
+HÂˆ˜[›ÝYšXØ][Û“Y]Y]HHÝ\œ™[YYXSY]Y]K˜[YHÎˆ^Y\‹˜Ý\œ™[Y]Y]Bˆ˜[›ÝYšXØ][Û”ÛÛ™ÈHÝ\œ™[ÛÛ™Ë˜[YOËœÛÛ™Âˆ˜[›ÝYšXØ][Û“ZÙYHYˆ
+›ÝYšXØ][Û”ÛÛ™ÏËš\Ñ\\ÛÙHOHYJHÂˆ›ÝYšXØ][Û”ÛÛ™Ëš[“Xœ˜\žHOH[ˆH[ÙHÂˆ›ÝYšXØ][Û”ÛÛ™ÏË›ZÙYÎˆ›ÝYšXØ][Û“Y]Y]OË›ZÙYOHYBˆBˆYYXTÙ\ÜÚ[Û‹œÙ]Ý\ÝÛS^[Ý]
+ˆ\ÝÙŠˆÛÛ[X[™]Û‚ˆZ[\Š
+BˆœÙ]\Ü^S˜[YJˆÙ]Ýš[™ÊˆYˆ
+›ÝYšXØ][Û“ZÙY
+HÂˆ‹œÝš[™Ë˜XÝ[Û—Ü™[[Ý™WÛZÙBˆH[ÙHÂˆ‹œÝš[™Ë˜XÝ[Û—ÛZÙBˆKˆ
+Kˆ
+KœÙ]XÛÛ”™\ÒY
+Yˆ
+›ÝYšXØ][Û“ZÙY
+H‹™˜]ØX›KšX×ÚX\[ÙH‹™˜]ØX›KšX×ÚX\ÛÝ][™JBˆœÙ]Ù\ÜÚ[ÛÛÛ[X[™
+ÛÛ[X[™ÙÙÛSZÙJBˆœÙ][˜X›Y
+›ÝYšXØ][Û“Y]Y]HOH[›ÝYšXØ][Û”ÛÛ™ÈOH[
+Bˆ˜Z[
+
+KˆÛÛ[X[™]Û‚ˆZ[\Š
+BˆœÙ]\Ü^S˜[YJˆÙ]Ýš[™ÊˆÚ[ˆ
+^Y\‹œ™\X][ÙJHÂˆ‘TPUÓSÑWÓÑ‘ˆOˆ‹œÝš[™Ëœ™\X]Û[ÙWÛÙ™‚ˆ‘TPUÓSÑWÓÓ‘HOˆ‹œÝš[™Ëœ™\X]Û[ÙWÛÛ™Bˆ‘TPUÓSÑWÐSOˆ‹œÝš[™Ëœ™\X]Û[ÙWØ[ˆ[ÙHOˆ›ÝÈ[YØ[Ý]Q^Ù\[ÛŠ
+BˆKˆ
+Kˆ
+KœÙ]XÛÛ”™\ÒY
+ˆÚ[ˆ
+^Y\‹œ™\X][ÙJHÂˆ‘TPUÓSÑWÓÑ‘ˆOˆ‹™˜]ØX›Kœ™\X]ˆ‘TPUÓSÑWÓÓ‘HOˆ‹™˜]ØX›Kœ™\X]ÛÛ™WÛÛ‚ˆ‘TPUÓSÑWÐSOˆ‹™˜]ØX›Kœ™\X]ÛÛ‚ˆ[ÙHOˆ›ÝÈ[YØ[Ý]Q^Ù\[ÛŠ
+BˆKˆ
+KœÙ]Ù\ÜÚ[ÛÛÛ[X[™
+ÛÛ[X[™ÙÙÛT™\X][ÙJBˆ˜Z[
+
+KˆÛÛ[X[™]Û‚ˆZ[\Š
+BˆœÙ]\Ü^S˜[YJÙ]Ýš[™ÊYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+H‹œÝš[™Ë˜XÝ[Û—ÜÚY™›WÛÙ™ˆ[ÙH‹œÝš[™Ë˜XÝ[Û—ÜÚY™›WÛÛŠJBˆœÙ]XÛÛ”™\ÒY
+Yˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+H‹™˜]ØX›KœÚY™›WÛÛˆ[ÙH‹™˜]ØX›KœÚY™›JBˆœÙ]Ù\ÜÚ[ÛÛÛ[X[™
+ÛÛ[X[™ÙÙÛTÚY™›JBˆ˜Z[
+
+KˆÛÛ[X[™]Û‚ˆZ[\Š
+BˆœÙ]\Ü^S˜[YJÙ]Ýš[™Ê‹œÝš[™ËœÝ\Ü˜Y[ÊJBˆœÙ]XÛÛ”™\ÒY
+‹™˜]ØX›Kœ˜Y[ÊBˆœÙ]Ù\ÜÚ[ÛÛÛ[X[™
+ÛÛ[X[™ÙÙÛTÝ\˜Y[ÊBˆœÙ][˜X›Y
+Ý\œ™[ÛÛ™Ë˜[YHOH[
+Bˆ˜Z[
+
+KˆÛÛ[X[™]Û‚ˆZ[\Š
+BˆœÙ]\Ü^S˜[YJÙ]Ýš[™Ê‹œÝš[™Ë˜[™›ÚYØ]]×Ý\™Ù]Ü^[\Ý
+JBˆœÙ]XÛÛ”™\ÒY
+‹™˜]ØX›Kœ^[\ÝØY
+BˆœÙ]Ù\ÜÚ[ÛÛÛ[X[™
+ÛÛ[X[™YÕ\™Ù]^[\Ý
+BˆœÙ][˜X›Y
+Ý\œ™[ÛÛ™Ë˜[YHOH[
+Bˆ˜Z[
+
+Kˆ
+Kˆ
+BˆB‚ˆš]˜]HÝ\Ü[™[ˆ™XÛÝ™\”ÛÛ™ÊˆYYXRYˆÝš[™Ëˆ
+HÂˆ˜[ÛÛ™ÈH]X˜\ÙKœÛÛ™ÊYYXRY
+K™š\œÝ
+
+Bˆ˜[YYXSY]Y]HBˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆ^Y\‹™š[™™^YYXR][PžRY
+YYXRY
+OË›Y]Y]BˆHÎˆ™]\›‚ˆ˜[\˜][ÛˆBˆÛÛ™ÏËœÛÛ™ÏË™\˜][ÛËZÙRYˆÈ]OHLHBˆÎˆYYXSY]Y]K™\˜][Û‹ZÙRYˆÈ]OHLHBˆÎˆLBˆ]X˜\ÙKœ]Y\žHÂˆYˆ
+ÛÛ™ÈOH[
+HÂˆ[œÙ\
+YYXSY]Y]K˜ÛÜJ\˜][ÛˆH\˜][ÛŠJBˆH[ÙHÂˆ˜\ˆ\]YÛÛ™ÈHÛÛ™ËœÛÛ™ÂˆYˆ
+ÛÛ™ËœÛÛ™Ë™\˜][ÛˆOHLJHÂˆ\]YÛÛ™ÈH\]YÛÛ™Ë˜ÛÜJ\˜][ÛˆH\˜][ÛŠBˆBˆËÈ\]H\ÕšY[È›YÈYˆ]	ÜÈY™™\™[œ›ÛHHÝ\œ™[˜[YBˆYˆ
+ÛÛ™ËœÛÛ™Ëš\ÕšY[ÈOHYYXSY]Y]Kš\ÕšY[ÔÛÛ™ÊHÂˆ\]YÛÛ™ÈH\]YÛÛ™Ë˜ÛÜJ\ÕšY[ÈHYYXSY]Y]Kš\ÕšY[ÔÛÛ™ÊBˆBˆYˆ
+\]YÛÛ™ÈOHÛÛ™ËœÛÛ™ÊHÂˆ\]J\]YÛÛ™ÊBˆBˆBˆBˆYˆ
+Y]X˜\ÙKš\Ô™[]YÛÛ™ÜÊYYXRY
+JHÂˆYˆ
+YYXRYœÝ\ÕÚ]
+šÎ‹ËÜÛÝ[™ÛÝY˜ÛÛKÈŠJHÂˆ˜[ÚÙ[ˆH]TÝÜ™K™Ù]
+ÛÝ[™ÛÝY]]ÚÙ[’Ù^KˆŠBˆ˜[™[]Y˜XÚÜÈHÛÝ[™ÛÝYÛYQ™YY›ÝšY\‹™™]Ú™[]Y˜XÚÜÊYYXRYÚÙ[ŠBˆYˆ
+™[]Y˜XÚÜËš\Ó›Ý[\J
+JHÂˆ]X˜\ÙKœ]Y\žHÂˆ™[]Y˜XÚÜÂˆ›X\
+ÛÛ™Ò][NŽÓYYXSY]Y]JBˆ›Û‘XXÚÈ[œÙ\
+]
+HBˆ›X\Âˆ™[]YÛÛ™ÓX\
+ˆÛÛ™ÒYHYYXRYˆ™[]YÛÛ™ÒYH]šYˆ
+BˆK™›Ü‘XXÚÈ[œÙ\
+]
+HBˆBˆBˆ™]\›‚ˆBˆ˜[™[]Y[™Ú[Bˆ[ÝUX™K›™^
+Ø]Ú[™Ú[
+šY[ÒYHYYXRY
+JK™Ù]Ü“[
+
+OËœ™[]Y[™Ú[ˆÎˆ™]\›‚ˆ˜[™[]YYÙHH[ÝUX™Kœ™[]Y
+™[]Y[™Ú[
+K™Ù]Ü“[
+
+HÎˆ™]\›‚ˆ]X˜\ÙKœ]Y\žHÂˆ™[]YYÙKœÛÛ™ÜÂˆ›X\
+ÛÛ™Ò][NŽÓYYXSY]Y]JBˆ›Û‘XXÚ
+Žš[œÙ\
+Bˆ›X\Âˆ™[]YÛÛ™ÓX\
+ˆÛÛ™ÒYHYYXRYˆ™[]YÛÛ™ÒYH]šYˆ
+BˆK™›Ü‘XXÚ
+Žš[œÙ\
+BˆBˆBˆB‚ˆ[ˆ^T]Y]YJˆ]Y]YNˆ]Y]YKˆ^UÚ[”™XYNˆ›ÛÛX[ˆHYKˆ
+HÂˆËÈØY™]HÚXÚÈˆ[œÝ\š[™È^Y\ˆ\È[š][^™YˆYˆ
+\^Y\’[š]X[^™Y˜[YJHÂˆ[X™\‹YÊQÊKÊœ^T]Y]YHØ[Y™Y›Ü™H^Y\ˆ[š]X[^˜][Û‹]Y]Z[™È™\]Y\ÝŠBˆØÛÜK›][˜ÚÂˆ^Y\’[š]X[^™Y™š\œÝÈ]Bˆ^T]Y]YJ]Y]YK^UÚ[”™XYJBˆBˆ™]\›‚ˆB‚ˆÝ\œ™[]Y]YHH]Y]YBˆ]Y]YU]HH[ˆÜÝYžP]]Ü^R›ØË˜Ø[˜Ù[
+
+BˆÜÝYžP]]Ü^T™]šY]Ò›ØË˜Ø[˜Ù[
+
+BˆÜÝYžP]]Ü^TÙYYÙ^HH[ˆ˜[\œÚ\ÝÚY™›PXÜ›ÜÜÔ]Y]Y\ÈH]TÝÜ™K™Ù]
+\œÚ\Ý[ÚY™›PXÜ›ÜÜÔ]Y]Y\ÒÙ^K˜[ÙJBˆ˜[™]š[Ý\ÔÚY™›Q[˜X›YH^Y\‹œÚY™›S[ÙQ[˜X›YˆYˆ
+\\œÚ\ÝÚY™›PXÜ›ÜÜÔ]Y]Y\ÊHÂˆ^Y\‹œÚY™›S[ÙQ[˜X›YH˜[ÙBˆBˆËÈ™\Ù]ÜšYÚ[˜[]Y]YHÚ^™HÚ[ˆÝ\[™ÈH™]È]Y]YBˆÜšYÚ[˜[]Y]YTÚ^™HHˆYˆ
+]Y]YKœ™[ØY][HOH[
+HÂˆ^Y\‹œÙ]YYXR][J]Y]YKœ™[ØY][HHKÓYYXR][J
+JBˆ^Y\‹œ™\\™J
+Bˆ^Y\‹œ^UÚ[”™XYHH^UÚ[”™XYBˆBˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆ˜[[š]X[Ý]\ÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ]Y]YBˆ™Ù][š]X[Ý]\Ê
+Bˆ™š[\‘^XÚ]
+]TÝÜ™K™Ù]
+YQ^XÚ]Ù^K˜[ÙJJBˆ™š[\•šY[ÔÛÛ™ÜÊ]TÝÜ™K™Ù]
+YUšY[ÔÛÛ™ÜÒÙ^K˜[ÙJJBˆBˆYˆ
+]Y]YKœ™[ØY][HOH[	‰ˆ^Y\‹œ^X˜XÚÔÝ]HOHÕUWÒQJH™]\›][˜ÚˆYˆ
+[š]X[Ý]\Ë]HOH[
+HÂˆ]Y]YU]HH[š]X[Ý]\Ë]BˆBˆYˆ
+[š]X[Ý]\Ëš][\Ëš\Ñ[\J
+JH™]\›][˜ÚˆËÈ˜XÚÈÜšYÚ[˜[]Y]YHÚ^™H›ÜˆÚY™›H^[\Ýš\œÝ™X]\™BˆÜšYÚ[˜[]Y]YTÚ^™HH[š]X[Ý]\Ëš][\ËœÚ^™BˆYˆ
+]Y]YKœ™[ØY][HOH[
+HÂˆ^Y\‹˜YYYXR][\Êˆˆ[š]X[Ý]\Ëš][\ËœÝX“\Ý
+[š]X[Ý]\Ë›YYXR][R[™^
+Kˆ
+Bˆ^Y\‹˜YYYXR][\Êˆ[š]X[Ý]\Ëš][\ËœÝX“\Ý
+ˆ[š]X[Ý]\Ë›YYXR][R[™^
+ÈKˆ[š]X[Ý]\Ëš][\ËœÚ^™Kˆ
+Kˆ
+BˆH[ÙHÂˆ^Y\‹œÙ]YYXR][\Êˆ[š]X[Ý]\Ëš][\ËˆYˆ
+[š]X[Ý]\Ë›YYXR][R[™^‚ˆˆ
+HÂˆ[š]X[Ý]\Ë›YYXR][R[™^ˆH[ÙHÂˆˆKˆ[š]X[Ý]\ËœÜÚ][Û‹ˆ
+Bˆ^Y\‹œ™\\™J
+Bˆ^Y\‹œ^UÚ[”™XYHH^UÚ[”™XYBˆB‚ˆËÈ™XZ[ÚY™›HÜ™\ˆYˆÚY™›H\È[˜X›YˆYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+HÂˆ˜[ÚY™›T^[\Ýš\œÝH]TÝÜ™K™Ù]
+ÚY™›T^[\Ýš\œÝÙ^K˜[ÙJBˆ\TÚY™›SÜ™\Š^Y\‹˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[ÚY™›T^[\Ýš\œÝ
+BˆBˆBˆB‚ˆ[ˆÝ\˜Y[ÔÙX[[\ÜÛJ
+HÂˆËÈØY™]HÚXÚÎˆ[œÝ\™H^Y\ˆ\È[š][^™YˆYˆ
+\^Y\’[š]X[^™Y˜[YJHÂˆ[X™\‹YÊQÊKÊœÝ\˜Y[ÔÙX[[\ÜÛHØ[Y™Y›Ü™H^Y\ˆ[š]X[^˜][ÛˆŠBˆ™]\›‚ˆB‚ˆ˜[Ý\œ™[YYXSY]Y]HH^Y\‹˜Ý\œ™[Y]Y]HÎˆ™]\›‚‚ˆ˜[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^ˆ˜[Ý\œ™[YYXRYHÝ\œ™[YYXSY]Y]KšY‚ˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆËÈ\ÙHÚ[\HšY[ÒYÈ][ÝUX™H\œÛÛ˜[^™H™XÛÛ[Y[™][ÛœÂˆ˜[˜Y[Ô]Y]YHBˆ[ÝUX™T]Y]YJˆ[™Ú[BˆØ]Ú[™Ú[
+ˆšY[ÒYHÝ\œ™[YYXRYˆ
+Kˆ
+B‚ˆžHÂˆ˜[[š]X[Ý]\ÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ˜Y[Ô]Y]YBˆ™Ù][š]X[Ý]\Ê
+Bˆ™š[\‘^XÚ]
+]TÝÜ™K™Ù]
+YQ^XÚ]Ù^K˜[ÙJJBˆ™š[\•šY[ÔÛÛ™ÜÊ]TÝÜ™K™Ù]
+YUšY[ÔÛÛ™ÜÒÙ^K˜[ÙJJBˆB‚ˆYˆ
+[š]X[Ý]\Ë]HOH[
+HÂˆ]Y]YU]HH[š]X[Ý]\Ë]BˆB‚ˆËÈš[\ˆ˜Y[È][\ÈÈ^ÛYHÝ\œ™[YYXH][Bˆ˜[˜Y[Ò][\ÈBˆ[š]X[Ý]\Ëš][\Ë™š[\ˆÈ][HO‚ˆ][K›YYXRYOHÝ\œ™[YYXRYˆB‚ˆYˆ
+˜Y[Ò][\Ëš\Ó›Ý[\J
+JHÂˆ˜[][PÛÝ[H^Y\‹›YYXR][PÛÝ[‚ˆYˆ
+][PÛÝ[ˆÝ\œ™[[™^
+ÈJHÂˆ^Y\‹œ™[[Ý™SYYXR][\ÊÝ\œ™[[™^
+ÈK][PÛÝ[
+BˆB‚ˆ^Y\‹˜YYYXR][\ÊÝ\œ™[[™^
+ÈK˜Y[Ò][\ÊBˆYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+HÂˆ˜[ÚY™›T^[\Ýš\œÝH]TÝÜ™K™Ù]
+ÚY™›T^[\Ýš\œÝÙ^K˜[ÙJBˆ\TÚY™›SÜ™\Š^Y\‹˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[ÚY™›T^[\Ýš\œÝ
+BˆBˆB‚ˆÝ\œ™[]Y]YHH˜Y[Ô]Y]YBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆËÈ˜[˜XÚÎˆžHÚ]™[]Y[™Ú[ˆžHÂˆ˜[™^™\Ý[BˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ[ÝUX™K›™^
+Ø]Ú[™Ú[
+šY[ÒYHÝ\œ™[YYXRY
+JK™Ù]Ü“[
+
+BˆBˆ™^™\Ý[Ëœ™[]Y[™Ú[Ë›]È™[]Y[™Ú[O‚ˆ˜[™[]YYÙHBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ[ÝUX™Kœ™[]Y
+™[]Y[™Ú[
+K™Ù]Ü“[
+
+BˆBˆ™[]YYÙOËœÛÛ™ÜÏË›]ÈÛÛ™ÜÈO‚ˆ˜[˜Y[Ò][\ÈBˆÛÛ™ÜÂˆ™š[\ˆÈ]šYOHÝ\œ™[YYXRYBˆ›X\È]ÓYYXR][J
+HBˆ™š[\‘^XÚ]
+ØXÚYYQ^XÚ]
+Bˆ™š[\•šY[ÔÛÛ™ÜÊØXÚYYUšY[ÔÛÛ™ÜÊB‚ˆYˆ
+˜Y[Ò][\Ëš\Ó›Ý[\J
+JHÂˆ˜[][PÛÝ[H^Y\‹›YYXR][PÛÝ[ˆYˆ
+][PÛÝ[ˆÝ\œ™[[™^
+ÈJHÂˆ^Y\‹œ™[[Ý™SYYXR][\ÊÝ\œ™[[™^
+ÈK][PÛÝ[
+BˆBˆ^Y\‹˜YYYXR][\ÊÝ\œ™[[™^
+ÈK˜Y[Ò][\ÊBˆYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+HÂˆ\TÚY™›SÜ™\Šˆ^Y\‹˜Ý\œ™[YYXR][R[™^ˆ^Y\‹›YYXR][PÛÝ[ˆØXÚYÚY™›T^[\Ýš\œÝˆ
+BˆBˆBˆBˆBˆHØ]Ú
+Îˆ^Ù\[ÛŠHÂˆËÈÚ[[˜Z[ˆBˆBˆBˆB‚ˆ[ˆÙ]]]ÛZ^[[J[[RYˆÝš[™ÊHÂˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆ[ÝUX™Bˆ˜[[J[[RY
+Bˆ›Û”ÝXØÙ\ÜÈÂˆÙ]]]ÛZ^
+]˜[[Kœ^[\ÝY
+BˆBˆBˆB‚ˆ[ˆÙ]]]ÛZ^
+^[\ÝYˆÝš[™ÊHÂˆYˆ
+]TÝÜ™K™Ù]
+Ú[Z[\ÛÛ[YJH	‰‚ˆJ]TÝÜ™K™Ù]
+\ØX›SØY[Ü™UÚ[”™\X][Ù^K˜[ÙJH	‰ˆ^Y\‹œ™\X][ÙHOH‘TPUÓSÑWÐS
+Bˆ
+HÂˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆžHÂˆËÈžHš[X\žHY]Ùˆ[ÝUX™Bˆ›™^
+Ø]Ú[™Ú[
+^[\ÝYH^[\ÝY
+JBˆ›Û”ÝXØÙ\ÜÈÈš\œÝ™\Ý[O‚ˆ[ÝUX™Bˆ›™^
+Ø]Ú[™Ú[
+^[\ÝYHš\œÝ™\Ý[™[™Ú[œ^[\ÝY
+JBˆ›Û”ÝXØÙ\ÜÈÈÙXÛÛ™™\Ý[O‚ˆ]]ÛZ^][\Ë˜[YHBˆÙXÛÛ™™\Ý[š][\Ë›X\ÈÛÛ™ÈO‚ˆÛÛ™ËÓYYXR][J
+BˆBˆK›Û‘˜Z[\™HÂˆËÈ˜[˜XÚÎˆ\ÙHš\œÝ™\Ý[][\ÂˆYˆ
+š\œÝ™\Ý[š][\Ëš\Ó›Ý[\J
+JHÂˆ]]ÛZ^][\Ë˜[YHBˆš\œÝ™\Ý[š][\Ë›X\ÈÛÛ™ÈO‚ˆÛÛ™ËÓYYXR][J
+BˆBˆBˆBˆK›Û‘˜Z[\™HÂˆËÈ˜[˜XÚÎˆžHÚ]˜Y[È›Ü›X]ˆ˜[Ý\œ™[ÛÛ™ÈH^Y\‹˜Ý\œ™[Y]Y]BˆYˆ
+Ý\œ™[ÛÛ™ÈOH[
+HÂˆËÈ\ÙHÚ[\HšY[ÒY›Üˆ™]\ˆ\œÛÛ˜[^™Y™XÛÛ[Y[™][ÛœÂˆ[ÝUX™Bˆ›™^
+ˆØ]Ú[™Ú[
+ˆšY[ÒYHÝ\œ™[ÛÛ™ËšYˆ
+Kˆ
+K›Û”ÝXØÙ\ÜÈÈ˜Y[Ô™\Ý[O‚ˆ˜[š[\™Y][\ÈBˆ˜Y[Ô™\Ý[š][\Âˆ™š[\ˆÈ]šYOHÝ\œ™[ÛÛ™ËšYBˆ›X\È]ÓYYXR][J
+HBˆYˆ
+š[\™Y][\Ëš\Ó›Ý[\J
+JHÂˆ]]ÛZ^][\Ë˜[YHHš[\™Y][\ÂˆBˆK›Û‘˜Z[\™HÂˆËÈš[˜[˜[˜XÚÎˆžH™[]Y[™Ú[ˆ[ÝUX™Bˆ›™^
+Ø]Ú[™Ú[
+šY[ÒYHÝ\œ™[ÛÛ™ËšY
+JBˆ™Ù]Ü“[
+
+BˆËœ™[]Y[™Ú[ˆË›]È™[]Y[™Ú[O‚ˆ[ÝUX™Kœ™[]Y
+™[]Y[™Ú[
+K›Û”ÝXØÙ\ÜÈÈ™[]YYÙHO‚ˆ˜[™[]Y][\ÈBˆ™[]YYÙKœÛÛ™ÜÂˆ™š[\ˆÈ]šYOHÝ\œ™[ÛÛ™ËšYBˆ›X\È]ÓYYXR][J
+HBˆYˆ
+™[]Y][\Ëš\Ó›Ý[\J
+JHÂˆ]]ÛZ^][\Ë˜[YHH™[]Y][\ÂˆBˆBˆBˆBˆBˆBˆHØ]Ú
+Îˆ^Ù\[ÛŠHÂˆËÈÚ[[˜Z[ˆBˆBˆBˆB‚ˆ[ˆYÔ]Y]YP]]ÛZ^
+ˆ][NˆYYXR][KˆÜÚ][ÛŽˆ[ˆ
+HÂˆ]]ÛZ^][\Ë˜[YHBˆ]]ÛZ^][\Ë˜[YKÓ]]X›S\Ý
+
+K˜\HÂˆ™[[Ý™P]
+ÜÚ][ÛŠBˆBˆYÔ]Y]YJ\ÝÙŠ][JJBˆB‚ˆ[ˆ^S™^]]ÛZ^
+ˆ][NˆYYXR][KˆÜÚ][ÛŽˆ[ˆ
+HÂˆ]]ÛZ^][\Ë˜[YHBˆ]]ÛZ^][\Ë˜[YKÓ]]X›S\Ý
+
+K˜\HÂˆ™[[Ý™P]
+ÜÚ][ÛŠBˆBˆ^S™^
+\ÝÙŠ][JJBˆB‚ˆ[ˆÛX\]]ÛZ^
+
+HÂˆ]]ÛZ^][\Ë˜[YHH[\S\Ý
+
+BˆB‚ˆ[ˆ^S™^
+][\Îˆ\ÝYYXR][OŠHÂˆËÈYˆ]Y]YH\È[\HÜˆ^Y\ˆ\ÈYK^H[[YYX][H[œÝXYˆYˆ
+^Y\‹›YYXR][PÛÝ[OH^Y\‹œ^X˜XÚÔÝ]HOHÕUWÒQJHÂˆ^Y\‹œÙ]YYXR][\Ê][\ÊBˆ^Y\‹œ™\\™J
+BˆËÈÛ‰ÝÝ\ØØ[^X˜XÚÈYˆØ\Ý[™ÂˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJHÂˆ^Y\‹œ^J
+BˆBˆ™]\›‚ˆB‚ˆËÈ™[[Ý™H\XØ]\ÈYˆ[˜X›YˆYˆ
+]TÝÜ™K™Ù]
+™]™[\XØ]U˜XÚÜÒ[”]Y]YRÙ^K˜[ÙJJHÂˆ˜[][RYÈH][\Ë›X\È]›YYXRYKÔÙ]
+
+Bˆ˜[[™XÙ\ÕÔ™[[Ý™HH]]X›S\ÝÙ[Š
+Bˆ˜[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^‚ˆ›Üˆ
+H[ˆ[[^Y\‹›YYXR][PÛÝ[
+HÂˆYˆ
+HOHÝ\œ™[[™^	‰ˆ^Y\‹™Ù]YYXR][P]
+JK›YYXRY[ˆ][RYÊHÂˆ[™XÙ\ÕÔ™[[Ý™K˜Y
+JBˆBˆB‚ˆËÈ™[[Ý™Hœ›ÛHYÚ\Ý[™^ÈÝÙ\ÝÈXZ[Z[ˆ[™^ÝXš[]Bˆ[™XÙ\ÕÔ™[[Ý™KœÛÜY\ØÙ[™[™Ê
+K™›Ü‘XXÚÈ[™^O‚ˆ^Y\‹œ™[[Ý™SYYXR][J[™^
+BˆBˆB‚ˆ˜[[œÙ\[™^H^Y\‹˜Ý\œ™[YYXR][R[™^
+ÈBˆ˜[ÚY™›Q[˜X›YH^Y\‹œÚY™›S[ÙQ[˜X›Y‚ˆËÈ[œÙ\][\È[[YYX][HY\ˆHÝ\œ™[][H[ˆHÚ[™ÝËÚ[™^ÜXÙBˆ^Y\‹˜YYYXR][\Ê[œÙ\[™^][\ÊBˆ^Y\‹œ™\\™J
+B‚ˆYˆ
+ÚY™›Q[˜X›Y
+HÂˆËÈ™XZ[ÚY™›HÜ™\ˆÛÈ]™]ÛH[œÙ\Y][\È\™H^YY™^ˆ˜[[Y[[™HH^Y\‹˜Ý\œ™[[Y[[™BˆYˆ
+][Y[[™Kš\Ñ[\JHÂˆ˜[Ú^™HH[Y[[™KÚ[™ÝÐÛÝ[ˆ˜[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^‚ˆËÈ™]ÛH[œÙ\Y[™XÙ\È\™HHÛÛYÝ[Ý\È˜[™ÙHÚ[œÙ\[™^[œÙ\[™^
+È][\ËœÚ^™JBˆ˜[™]Ò[™XÙ\ÈH
+[œÙ\[™^[[
+[œÙ\[™^
+È][\ËœÚ^™JJKÔÙ]
+
+B‚ˆËÈÛÛXÝ^\Ý[™ÈÚY™›H˜]™\œØ[Ü™\ˆ^ÛY[™ÈÝ\œ™[[™^ˆ˜[Ü™\Y\ˆH]]X›S\ÝÙ[Š
+Bˆ˜\ˆYHÝ\œ™[[™^ˆÚ[H
+YJHÂˆYH[Y[[™K™Ù]™^Ú[™ÝÒ[™^
+Y^Y\‹”‘TPUÓSÑWÓÑ‘‹ÊœÚY™›S[ÙQ[˜X›YJ‹ÝYJBˆYˆ
+YOHË’S‘VÕS”ÑU
+Hœ™XZÂˆYˆ
+YOHÝ\œ™[[™^
+HÜ™\Y\‹˜Y
+Y
+BˆB‚ˆ˜[™]“\ÝH]]X›S\ÝÙ[Š
+Bˆ˜\ˆYHÝ\œ™[[™^ˆÚ[H
+YJHÂˆYH[Y[[™K™Ù]™]š[Ý\ÕÚ[™ÝÒ[™^
+Y^Y\‹”‘TPUÓSÑWÓÑ‘‹ÊœÚY™›S[ÙQ[˜X›YJ‹ÝYJBˆYˆ
+YOHË’S‘VÕS”ÑU
+Hœ™XZÂˆYˆ
+YOHÝ\œ™[[™^
+H™]“\Ý˜Y
+Y
+BˆBˆ™]“\Ýœ™]™\œÙJ
+HËÈ™\Ù\™HÜšYÚ[˜[›ÜØ\™Ü™\‚‚ˆ˜[^\Ý[™ÓÜ™\ˆH
+™]“\Ý
+ÈÜ™\Y\ŠK™š[\ˆÈ]OHÝ\œ™[[™^	‰ˆ]Z[ˆ™]Ò[™XÙ\ÈB‚ˆËÈZ[™]ÈÚY™›HÜ™\ŽˆÝ\œ™[Oˆ™]ÛH[œÙ\Y
+[ˆ[œÙ\[ÛˆÜ™\ŠHOˆ™\Ýˆ˜[™^›ØÚÈH
+[œÙ\[™^[[
+[œÙ\[™^
+È][\ËœÚ^™JJKÓ\Ý
+
+Bˆ˜[š[˜[Ü™\ˆH[\œ˜^JÚ^™JBˆ˜\ˆÜÈHˆ™]“\Ýˆ™š[\ˆÈ]Z[ˆ™]Ò[™XÙ\ÈBˆ™›Ü‘XXÚÈYˆ
+][ˆ[[Ú^™JHš[˜[Ü™\–ÜÜÊÊ×HH]Bˆš[˜[Ü™\–ÜÜÊÊ×HHÝ\œ™[[™^ˆ™^›ØÚË™›Ü‘XXÚÈYˆ
+][ˆ[[Ú^™JHš[˜[Ü™\–ÜÜÊÊ×HH]BˆÜ™\Y\‚ˆ™š[\ˆÈ]Z[ˆ™]Ò[™XÙ\ÈBˆ™›Ü‘XXÚÈYˆ
+ÜÈÚ^™JHš[˜[Ü™\–ÜÜÊÊ×HH]B‚ˆËÈš[[žHZ\ÜÚ[™È[™XÙ\È
+ØY™]JHÈ[œÝ\™HH[\›]]][Û‚ˆYˆ
+ÜÈÚ^™JHÂˆ›Üˆ
+H[ˆ[[Ú^™JHÂˆYˆ
+Yš[˜[Ü™\‹˜ÛÛZ[œÊJJHÂˆš[˜[Ü™\–ÜÜÊÊ×HHBˆYˆ
+ÜÈOHÚ^™JHœ™XZÂˆBˆBˆB‚ˆ^Y\‹œÙ]ÚY™›SÜ™\ŠY˜][ÚY™›SÜ™\Šš[˜[Ü™\‹Þ\Ý[K˜Ý\œ™[[YSZ[\Ê
+JJBˆBˆBˆB‚ˆ[ˆYÔ]Y]YJ][\Îˆ\ÝYYXR][OŠHÂˆËÈ™[[Ý™H\XØ]\ÈYˆ[˜X›YˆYˆ
+]TÝÜ™K™Ù]
+™]™[\XØ]U˜XÚÜÒ[”]Y]YRÙ^K˜[ÙJJHÂˆ˜[][RYÈH][\Ë›X\È]›YYXRYKÔÙ]
+
+Bˆ˜[[™XÙ\ÕÔ™[[Ý™HH]]X›S\ÝÙ[Š
+Bˆ˜[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^‚ˆ›Üˆ
+H[ˆ[[^Y\‹›YYXR][PÛÝ[
+HÂˆYˆ
+HOHÝ\œ™[[™^	‰ˆ^Y\‹™Ù]YYXR][P]
+JK›YYXRY[ˆ][RYÊHÂˆ[™XÙ\ÕÔ™[[Ý™K˜Y
+JBˆBˆB‚ˆËÈ™[[Ý™Hœ›ÛHYÚ\Ý[™^ÈÝÙ\ÝÈXZ[Z[ˆ[™^ÝXš[]Bˆ[™XÙ\ÕÔ™[[Ý™KœÛÜY\ØÙ[™[™Ê
+K™›Ü‘XXÚÈ[™^O‚ˆ^Y\‹œ™[[Ý™SYYXR][J[™^
+BˆBˆB‚ˆ^Y\‹˜YYYXR][\Ê][\ÊBˆYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+HÂˆ˜[ÚY™›T^[\Ýš\œÝH]TÝÜ™K™Ù]
+ÚY™›T^[\Ýš\œÝÙ^K˜[ÙJBˆ\TÚY™›SÜ™\Š^Y\‹˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[ÚY™›T^[\Ýš\œÝ
+BˆBˆ^Y\‹œ™\\™J
+BˆB‚ˆš]˜]H[ˆ™\XÙPÝ\œ™[YYXTÝX]JˆYYXRYˆÝš[™ËˆÝX]NˆÚ\”Ù\]Y[˜ÙOËˆ
+HÂˆ˜[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^ˆYˆ
+[™^OHË’S‘VÕS”ÑU[™^Z[ˆ[[^Y\‹›YYXR][PÛÝ[
+H™]\›‚‚ˆ˜[YYXR][HH^Y\‹™Ù]YYXR][P]
+[™^
+BˆYˆ
+YYXR][K›YYXRYOHYYXRYYYXR][K›YYXSY]Y]KœÝX]HOHÝX]JH™]\›‚‚ˆ^Y\‹œ™\XÙSYYXR][Jˆ[™^ˆYYXR][K˜Z[\ÛŠ
+BˆœÙ]YYXSY]Y]JˆYYXR][K›YYXSY]Y]K˜Z[\ÛŠ
+BˆœÙ]ÝX]JÝX]JBˆ˜Z[
+
+Kˆ
+Bˆ˜Z[
+
+Kˆ
+BˆB‚ˆ[ˆÙÙÛSXœ˜\žJ
+HÂˆØÛÜK›][˜ÚÂˆ˜[ÛÛ™ÕÕÙÙÛHHÝ\œ™[ÛÛ™Ë™š\œÝ
+
+BˆÛÛ™ÕÕÙÙÛOË›]Âˆ˜[\Ò[“Xœ˜\žHH]œÛÛ™Ëš[“Xœ˜\žHOH[ˆ˜[ÚÙ[ˆHYˆ
+\Ò[“Xœ˜\žJH]œÛÛ™Ë›Xœ˜\žT™[[Ý™UÚÙ[ˆ[ÙH]œÛÛ™Ë›Xœ˜\žPYÚÙ[‚‚ˆËÈØ[[ÝUX™HTHÚ]™YY˜XÚÈÚÙ[ˆYˆ]˜Z[X›BˆÚÙ[Ë›]È™YY˜XÚÕÚÙ[ˆO‚ˆ[ÝUX™K™™YY˜XÚÊ\ÝÙŠ™YY˜XÚÕÚÙ[ŠJBˆB‚ˆËÈ\]HØØ[]X˜\ÙBˆ]X˜\ÙKœ]Y\žHÂˆ\]J]œÛÛ™ËÙÙÛSXœ˜\žJ
+JBˆBˆÝ\œ™[YYXSY]Y]K˜[YHH^Y\‹˜Ý\œ™[Y]Y]BˆBˆBˆB‚ˆ[ˆÙÙÛSZÙJ
+HÂˆØÛÜK›][˜ÚÂˆ˜[ÛÛ™ÕÕÙÙÛHHÝ\œ™[ÛÛ™Ë™š\œÝ
+
+Bˆ˜[Y]Y]HH^Y\‹˜Ý\œ™[Y]Y]HÎˆÝ\œ™[YYXSY]Y]K˜[YBˆ˜[ÛÛ™Ñ[]HHÛÛ™ÕÕÙÙÛOËœÛÛ™ÈÎˆY]Y]OËÔÛÛ™Ñ[]J
+BˆÛÛ™Ñ[]OË›]È˜\ÙTÛÛ™ÈO‚‚ˆËÈ›ÜˆÙØ\Ý\\ÛÙ\ËÙÙÛHØ]™H›Üˆ]\ˆ[œÝXYÙˆZÙBˆYˆ
+˜\ÙTÛÛ™Ëš\Ñ\\ÛÙJHÂˆÙÙÛQ\\ÛÙTØ]™Q›Ü“]\Š˜\ÙTÛÛ™ÊBˆ™]\›]ˆB‚ˆ˜[ÛÛ™ÈH˜\ÙTÛÛ™ËÙÙÛSZÙJ
+Bˆ]X˜\ÙKœ]Y\žHÂˆYˆ
+ÛÛ™ÕÕÙÙÛHOH[	‰ˆY]Y]HOH[
+HÂˆ[œÙ\
+Y]Y]JHÈÛÛ™ÈBˆH[ÙHÂˆ\]JÛÛ™ÊBˆBˆÞ[˜Õ][Ë›ZÙTÛÛ™ÊÛÛ™ÊB‚ˆËÈÚXÚÈYˆ]]ËYÝÛ›ØYÛˆZÙH\È[˜X›Y[™HÛÛ™È\È›ÝÈZÙYˆYˆ
+]TÝÜ™K™Ù]
+]]ÑÝÛ›ØYÛ“ZÙRÙ^K˜[ÙJH	‰ˆÛÛ™Ë›ZÙY
+HÂˆËÈšYÙÙ\ˆÝÛ›ØY›ÜˆHZÙYÛÛ™Âˆ˜[ÝÛ›ØY™\]Y\ÝBˆ[™›ÚY›YYXLË™^Ü^Y\‹›Ù™›[™K‘ÝÛ›ØY™\]Y\ÝˆZ[\ŠÛÛ™ËšYÛÛ™ËšYÕ\šJ
+JBˆœÙ]Ý\ÝÛPØXÚRÙ^JÛÛ™ËšY
+BˆœÙ]]JÛÛ™Ë]KÐž]P\œ˜^J
+JBˆ˜Z[
+
+Bˆ[™›ÚY›YYXLË™^Ü^Y\‹›Ù™›[™K‘ÝÛ›ØYÙ\šXÙKœÙ[™YÝÛ›ØY
+ˆ\Ð]\ÚXÔÙ\šXÙKˆ^ÑÝÛ›ØYÙ\šXÙNŽ˜Û\ÜËš˜]˜KˆÝÛ›ØY™\]Y\Ýˆ˜[ÙKˆ
+BˆBˆBˆÝ\œ™[YYXSY]Y]K˜[YHH^Y\‹˜Ý\œ™[Y]Y]BˆBˆBˆB‚ˆ[ˆYÕ\™Ù]^[\Ý
+
+HÂˆØÛÜK›][˜ÚÂˆ˜[Ý\œ™[ÛÛ™ÈHÝ\œ™[ÛÛ™Ë™š\œÝ
+
+HÎˆ™]\›][˜Úˆ˜[\™Ù]^[\ÝYH]TÝÜ™K™Ù]
+[™›ÚY]]Õ\™Ù]^[\ÝÙ^KYYXTÙ\ÜÚ[ÛÛÛœÝ[Ë•T‘ÑUÔVSTÕÐUUÊB‚ˆYˆ
+\™Ù]^[\ÝYOHYYXTÙ\ÜÚ[ÛÛÛœÝ[Ë•T‘ÑUÔVSTÕÐUUÊHÂˆ[™\ŠÛÜ\‹™Ù]XZ[“ÛÜ\Š
+JKœÜÝÂˆØ\Ýˆ›XZÙU^
+ˆ\Ð]\ÚXÔÙ\šXÙKˆÙ]Ýš[™Ê‹œÝš[™Ë˜[™›ÚYØ]]×Ý\™Ù]Ü^[\ÝÛ›ÝÜÙ]
+KˆØ\Ý“S‘ÕÔÒÔ•ˆ
+KœÚÝÊ
+BˆBˆ™]\›][˜ÚˆB‚ˆ˜[\™Ù]^[\ÝH]X˜\ÙKœ^[\Ý
+\™Ù]^[\ÝY
+K™š\œÝ
+
+BˆYˆ
+\™Ù]^[\ÝOH[
+HÂˆ]X˜\ÙK˜YÛÛ™ÜÕÔ^[\Ý
+\™Ù]^[\Ý\ÝÙŠÝ\œ™[ÛÛ™ËšYÈ[
+K™\[™HYJBˆBˆBˆB‚ˆš]˜]HÝ\Ü[™[ˆÙÙÛQ\\ÛÙTØ]™Q›Ü“]\ŠÛÛ™Ñ[]NˆÛÛK›Y]›Û\Ý›]\ÚXË™‹™[]Y\Ë”ÛÛ™Ñ[]JHÂˆ˜[\ÐÝ\œ™[TØ]™YHÛÛ™Ñ[]Kš[“Xœ˜\žHOH[ˆ˜[ÚÝ[™TØ]™YHZ\ÐÝ\œ™[TØ]™Y‚ˆËÈ\]H]X˜\ÙHš\œÝ
+Ü[Z\ÝXÈ\]JBˆËÈ[ÛÈ[œÝ\™H\Ñ\\ÛÙHHYHÛÈ]\X\œÈ[ˆØ]™Y\\ÛÙ\È\Ýˆ]X˜\ÙKœ]Y\žHÂˆ\]JˆÛÛ™Ñ[]K˜ÛÜJˆ[“Xœ˜\žHHYˆ
+\ÐÝ\œ™[TØ]™Y
+H[[ÙH˜]˜K[YK“ØØ[]U[YK››ÝÊ
+Kˆ\Ñ\\ÛÙHHYKˆ
+Kˆ
+BˆBˆÝ\œ™[YYXSY]Y]K˜[YHH^Y\‹˜Ý\œ™[Y]Y]B‚ˆËÈÞ[˜ÈÚ][ÝUX™H
+[™\ÈÙÚ[ˆÚXÚÈ[\›˜[JBˆ˜[Ù]šY[ÒYHYˆ
+\ÐÝ\œ™[TØ]™Y
+H]X˜\ÙK™Ù]Ù]šY[ÒY
+ÛÛ™Ñ[]KšY
+OËœÙ]šY[ÒY[ÙH[ˆÞ[˜Õ][ËœØ]™Q\\ÛÙJÛÛ™Ñ[]KšYÚÝ[™TØ]™YÙ]šY[ÒY
+BˆB‚ˆ[ˆÙÙÛTÝ\˜Y[Ê
+HÂˆÝ\˜Y[ÔÙX[[\ÜÛJ
+BˆB‚ˆš]˜]H[ˆÙYYÝY™\ÜÐØXÚQœ›ÛT™YœÊ
+HÂˆ›Ü›X[^˜][Û‘[˜X›YØXÚYH]TÝÜ™K™Ù]
+]Y[Ó›Ü›X[^˜][Û’Ù^KYJBˆÝY™\ÜÓ]™[ØXÚYH]TÝÜ™VÓÝY™\ÜÓ]™[Ù^WKÑ[[JÝY™\ÜÓ]™[SSÑQ
+B‚ˆ[X™\‹YÊQÊK™
+ˆ”ÙYYYÝY™\ÜÈØXÚNˆ›Ü›X[^˜][ÛI›Ü›X[^˜][Û‘[˜X›YØXÚY]™[IÝY™\ÜÓ]™[ØXÚY‚ˆ
+BˆB‚ˆš]˜]H[ˆ\PØXÚYÝY™\ÜÑ[š[˜Ù\“›ÝÊ
+HÂˆ˜[[š[˜Ù\ˆHÝY™\ÜÑ[š[˜Ù\ˆÎˆ™]\›‚‚ˆžHÂˆ˜[ØZ[ˆHØXÚY›Ü›X[^˜][Û‘ØZ[“X‚‚ˆYˆ
+ØXÚY›Ü›X[^˜][Û‘[˜X›Y	‰ˆØZ[ˆOH[
+HÂˆ[š[˜Ù\‹œÙ]\™Ù]ØZ[ŠØZ[ŠBˆ[š[˜Ù\‹™[˜X›YHYBˆH[ÙHÂˆ[š[˜Ù\‹™[˜X›YH˜[ÙBˆBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ™\Ü^Ù\[ÛŠJBˆ™[X\ÙSÝY™\ÜÑ[š[˜Ù\Š
+BˆBˆB‚ˆš]˜]H[ˆÜ™X]SÝY™\ÜÑ[š[˜Ù\‘›Ü”Ù\ÜÚ[Û’Y
+]Y[ÔÙ\ÜÚ[Û’Yˆ[
+Nˆ›ÛÛX[ˆÂˆžHÂˆÝY™\ÜÑ[š[˜Ù\ˆHÝY™\ÜÑ[š[˜Ù\Š]Y[ÔÙ\ÜÚ[Û’Y
+Bˆ[X™\‹YÊQÊK™
+“ÝY™\ÜÑ[š[˜Ù\ˆÜ™X]Y›ÜˆÙ\ÜÚ[Û’YI]Y[ÔÙ\ÜÚ[Û’YŠB‚ˆ™]\›ˆYBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ™\Ü^Ù\[ÛŠJBˆÝY™\ÜÑ[š[˜Ù\ˆH[‚ˆ™]\›ˆ˜[ÙBˆBˆB‚ˆš]˜]H[ˆÙ]\ÝY™\ÜÑ[š[˜Ù\Š
+HÂˆ˜[]Y[ÔÙ\ÜÚ[Û’YH^Y\‹˜]Y[ÔÙ\ÜÚ[Û’Y‚ˆYˆ
+]Y[ÔÙ\ÜÚ[Û’YOHËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑU]Y[ÔÙ\ÜÚ[Û’YH
+HÂˆ[X™\‚ˆYÊQÊBˆÊœÙ]\ÝY™\ÜÑ[š[˜Ù\Žˆ[˜[Y]Y[ÔÙ\ÜÚ[Û’Y
+	]Y[ÔÙ\ÜÚ[Û’Y
+KØ[››ÝÜ™X]HY™™XÝY]ŠBˆ™]\›‚ˆB‚ˆËÈÜ™X]HÜˆ™XÜ™X]H[š[˜Ù\ˆYˆ™YYYˆYˆ
+ÝY™\ÜÑ[š[˜Ù\ˆOH[	‰ˆXÜ™X]SÝY™\ÜÑ[š[˜Ù\‘›Ü”Ù\ÜÚ[Û’Y
+]Y[ÔÙ\ÜÚ[Û’Y
+JHÂˆ™]\›‚ˆB‚ˆ˜[™\]Y\ÝÙ[™\˜][ÛˆH
+ÊÛÝY™\ÜÔÙ]\Ù[™\˜][Û‚ˆÝY™\ÜÔÙ]\›ØË˜Ø[˜Ù[
+
+B‚ˆÝY™\ÜÔÙ]\›ØˆHØÛÜK›][˜ÚÂˆžHÂˆ˜[Ý\œ™[YYXRYBˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆB‚ˆ˜[›Ü›X[^™P]Y[ÈH›Ü›X[^˜][Û‘[˜X›YØXÚY‚ˆYˆ
+›Ü›X[^™P]Y[È	‰ˆÝ\œ™[YYXRYOH[
+HÂˆ˜[›Ü›X]BˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ]X˜\ÙK™›Ü›X]
+Ý\œ™[YYXRY
+K™š\œÝ
+
+BˆB‚ˆ˜[\™Ù]YœÈHÝY™\ÜÓ]™[ØXÚY\™Ù]YœÂ‚ˆ[X™\‹YÊQÊK™
+]Y[È›Ü›X[^˜][Ûˆ[˜X›Yˆ	›Ü›X[^™P]Y[ÈŠBˆ[X™\‚ˆYÊQÊBˆ™
+‘›Ü›X]ÝY™\ÜÑŽˆ	Ù›Ü›X]Ë›ÝY™\ÜÑŸK\˜Ù\X[ÝY™\ÜÑŽˆ	Ù›Ü›X]Ëœ\˜Ù\X[ÝY™\ÜÑŸHŠB‚ˆËÈ\ÙH\˜Ù\X[ÝY™\ÜÑˆYˆ]˜Z[X›KÝ\Ú\ÙH˜[˜XÚÈÈÝY™\ÜÑˆ
+ÈÙ™œÙ]ˆ˜[YX\Ý\™YYœÎˆÝX›OÈH›Ü›X]Ëœ\˜Ù\X[ÝY™\ÜÑ‚ˆÎˆ›Ü›X]Ë›ÝY™\ÜÑË›]È]
+ÈÝY™\ÜÓ]™[QÑÔ‘TÔÒU‘K\™Ù]YœÈB‚ˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆYˆ
+Z\ÐXÝ]™H™\]Y\ÝÙ[™\˜][ÛˆOHÝY™\ÜÔÙ]\Ù[™\˜][ÛŠH™]\›Ú]ÛÛ^ˆYˆ
+^Y\‹˜]Y[ÔÙ\ÜÚ[Û’YOH]Y[ÔÙ\ÜÚ[Û’Y^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOHÝ\œ™[YYXRY
+H™]\›Ú]ÛÛ^‚ˆÚ[ˆÂˆYX\Ý\™YYœÈOH[OˆÂˆ˜[ÝY™\ÜÑˆHYX\Ý\™YYœÈH\™Ù]YœÂˆ˜[\™Ù]ØZ[ˆH
+[ÝY™\ÜÑˆ
+ˆLŒ
+KÒ[
+
+Bˆ˜[Û[\YØZ[ˆH\™Ù]ØZ[‹˜ÛÙ\˜ÙR[ŠRS—ÑÐRS—ÓP‹PVÑÐRS—ÓPŠB‚ˆ[X™\‹YÊQÊBˆ™
+“›Ü›X[^˜][Ûˆ\™Ù]Q”Îˆ	\™Ù]YœËYX\Ý\™YQ”Îˆ	YX\Ý\™YYœËØ[Ý[]YØZ[Žˆ	\™Ù]ØZ[ˆP‹Û[\YØZ[Žˆ	Û[\YØZ[ˆPˆŠB‚ˆ[X™\‹YÊQÊBˆ™
+Ø[Ý[]Y˜]È›Ü›X[^˜][ÛˆØZ[Žˆ	\™Ù]ØZ[ˆPˆ
+œ›ÛHÝY™\ÜÎˆ	ÝY™\ÜÑŠHŠB‚ˆØXÚY›Ü›X[^˜][Û‘ØZ[“XˆHÛ[\YØZ[‚ˆØXÚY›Ü›X[^˜][Û‘[˜X›YHYBˆÝY™\ÜÑ[š[˜Ù\ËœÙ]\™Ù]ØZ[ŠÛ[\YØZ[ŠBˆÝY™\ÜÑ[š[˜Ù\Ë™[˜X›YHYBˆB‚ˆ›Ü›X]OH[OˆÂˆËÈ›ÝÈ›Ý]˜Z[X›HY]›Üˆ™]È˜XÚÎˆÙY\Ø\œžK[Ý™\ˆØZ[ˆÈ]›ÚYH[\‚ˆ[X™\‹YÊQÊK™
+“ÝY™\ÜÈ›ÝÈ›Ý™XYHY]ÈÙY\[™ÈØXÚY›Ü›X[^˜][ÛˆÝ]HŠBˆB‚ˆ[ÙHOˆÂˆØXÚY›Ü›X[^˜][Û‘ØZ[“XˆH[ˆØXÚY›Ü›X[^˜][Û‘[˜X›YH˜[ÙBˆÝY™\ÜÑ[š[˜Ù\Ë™[˜X›YH˜[ÙBˆ[X™\‹YÊQÊKÊ“›ÈÝY™\ÜÈ]H]˜Z[X›H›Üˆ˜XÚÈH›Ü›X[^˜][Ûˆ\ØX›YŠBˆBˆBˆBˆH[ÙHÂˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆYˆ
+Z\ÐXÝ]™H™\]Y\ÝÙ[™\˜][ÛˆOHÝY™\ÜÔÙ]\Ù[™\˜][ÛŠH™]\›Ú]ÛÛ^ˆØXÚY›Ü›X[^˜][Û‘ØZ[“XˆH[ˆØXÚY›Ü›X[^˜][Û‘[˜X›YH˜[ÙBˆÝY™\ÜÑ[š[˜Ù\Ë™[˜X›YH˜[ÙBˆ[X™\‹YÊQÊK™
+œÙ]\ÝY™\ÜÑ[š[˜Ù\Žˆ›Ü›X[^˜][Ûˆ\ØX›YÜˆYYXRY[˜]˜Z[X›HŠBˆBˆBˆHØ]Ú
+NˆØ[˜Ù[][Û‘^Ù\[ÛŠHÂˆ[X™\‹YÊQÊK™
+œÙ]\ÝY™\ÜÑ[š[˜Ù\Žˆ›ØˆØ[˜Ù[YZÙ[HYHÈ™]ÈÙ]\™\]Y\ÝÜˆÙ\ÜÚ[ÛˆÚ[™ÙHŠBˆ›ÝÈBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ™\Ü^Ù\[ÛŠJBˆ™[X\ÙSÝY™\ÜÑ[š[˜Ù\Š
+BˆBˆBˆB‚ˆš]˜]H[ˆ™[X\ÙSÝY™\ÜÑ[š[˜Ù\ŠÛX\“›Ü›X[^˜][ÛØXÚNˆ›ÛÛX[ˆHYJHÂˆžHÂˆÝY™\ÜÑ[š[˜Ù\Ëœ™[X\ÙJ
+Bˆ[X™\‹YÊQÊK™
+“ÝY™\ÜÑ[š[˜Ù\ˆ™[X\ÙYŠBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ™\Ü^Ù\[ÛŠJBˆ[X™\‹YÊQÊK™JK‘\œ›Üˆ™[X\Ú[™ÈÝY™\ÜÑ[š[˜Ù\Žˆ	ÙK›Y\ÜØYÙ_HŠBˆHš[˜[HÂˆYˆ
+ÛX\“›Ü›X[^˜][ÛØXÚJHÂˆØXÚY›Ü›X[^˜][Û‘ØZ[“XˆH[ˆØXÚY›Ü›X[^˜][Û‘[˜X›YH˜[ÙBˆBˆÝY™\ÜÑ[š[˜Ù\ˆH[ˆBˆB‚ˆš]˜]H[ˆÜ[]Y[ÑY™™XÝÙ\ÜÚ[ÛŠ
+HÂˆ˜[]Y[ÔÙ\ÜÚ[Û’YH^Y\‹˜]Y[ÔÙ\ÜÚ[Û’YˆYˆ
+]Y[ÔÙ\ÜÚ[Û’YOHËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑU]Y[ÔÙ\ÜÚ[Û’YH
+HÂˆ[X™\‹YÊQÊKÊ›Ü[]Y[ÑY™™XÝÙ\ÜÚ[ÛŽˆ[˜[Y]Y[ÔÙ\ÜÚ[Û’YI]Y[ÔÙ\ÜÚ[Û’YŠBˆ™]\›‚ˆB‚ˆYˆ
+\Ð]Y[ÑY™™XÝÙ\ÜÚ[Û“Ü[™Y	‰‚ˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’YOH]Y[ÔÙ\ÜÚ[Û’Y	‰‚ˆÝY™\ÜÑ[š[˜Ù\ˆOH[ˆ
+HÂˆ\PØXÚYÝY™\ÜÑ[š[˜Ù\“›ÝÊ
+B‚ˆYˆ
+XØXÚY›Ü›X[^˜][Û‘[˜X›YØXÚY›Ü›X[^˜][Û‘ØZ[“XˆOH[
+HÂˆÙ]\ÝY™\ÜÑ[š[˜Ù\Š
+BˆB‚ˆ™]\›‚ˆB‚ˆYˆ
+\Ð]Y[ÑY™™XÝÙ\ÜÚ[Û“Ü[™Y	‰ˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’Yˆ
+HÂˆÛÜÙP]Y[ÑY™™XÝÙ\ÜÚ[ÛŠÙ\ÜÚ[Û’YÝ™\œšYHHÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’YÛX\“›Ü›X[^˜][ÛØXÚHH˜[ÙJBˆH[ÙHÂˆ™[X\ÙSÝY™\ÜÑ[š[˜Ù\ŠÛX\“›Ü›X[^˜][ÛØXÚHH˜[ÙJBˆB‚ˆ˜[[š[˜Ù\”™XYHHÝY™\ÜÑ[š[˜Ù\ˆOH[Ü™X]SÝY™\ÜÑ[š[˜Ù\‘›Ü”Ù\ÜÚ[Û’Y
+]Y[ÔÙ\ÜÚ[Û’Y
+B‚ˆYˆ
+Y[š[˜Ù\”™XYJHÂˆ\Ð]Y[ÑY™™XÝÙ\ÜÚ[Û“Ü[™YH˜[ÙBˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’YHËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑUˆ[X™\‹YÊQÊKÊ›Ü[]Y[ÑY™™XÝÙ\ÜÚ[ÛŽˆ˜Z[YÈÜ™X]HÝY™\ÜÑ[š[˜Ù\ˆ›ÜˆÙ\ÜÚ[Û’YI]Y[ÔÙ\ÜÚ[Û’Y]Y[ÈY™™XÝÈÚ[™H[˜]˜Z[X›HŠBˆ™]\›‚ˆB‚ˆ\Ð]Y[ÑY™™XÝÙ\ÜÚ[Û“Ü[™YHYBˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’YH]Y[ÔÙ\ÜÚ[Û’Y‚ˆ\PØXÚYÝY™\ÜÑ[š[˜Ù\“›ÝÊ
+B‚ˆYˆ
+XØXÚY›Ü›X[^˜][Û‘[˜X›YØXÚY›Ü›X[^˜][Û‘ØZ[“XˆOH[
+HÂˆÙ]\ÝY™\ÜÑ[š[˜Ù\Š
+BˆB‚ˆÙ[™œ›ØYØ\Ý
+ˆ[[
+]Y[ÑY™™XÝPÕSÓ—ÓÔS—ÐUQS×ÑQ‘‘PÕÐÓÓ•“ÓÔÑTÔÒSÓŠK˜\HÂˆ]^˜J]Y[ÑY™™XÝ‘VWÐUQS×ÔÑTÔÒSÓ‹]Y[ÔÙ\ÜÚ[Û’Y
+Bˆ]^˜J]Y[ÑY™™XÝ‘VWÔPÒÐQÑWÓSQKXÚØYÙS˜[YJBˆ]^˜J]Y[ÑY™™XÝ‘VWÐÓÓ•S•ÕTK]Y[ÑY™™XÝÓÓ•S•ÕTWÓUTÒPÊBˆKˆ
+BˆB‚ˆš]˜]H[ˆÛÜÙP]Y[ÑY™™XÝÙ\ÜÚ[ÛŠÙ\ÜÚ[Û’YÝ™\œšYNˆ[ÈH[ÛX\“›Ü›X[^˜][ÛØXÚNˆ›ÛÛX[ˆHYJHÂˆ˜[Ù\ÜÚ[Û’YÐÛÜÙHHÙ\ÜÚ[Û’YÝ™\œšYHÎˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’Y‚ˆÝY™\ÜÔÙ]\Ù[™\˜][ÛŠÊÂˆÝY™\ÜÔÙ]\›ØË˜Ø[˜Ù[
+
+BˆÝY™\ÜÔÙ]\›ØˆH[‚ˆËÈÝX\™ˆÛ›H™[X\ÙKÜ™\Ù]Ý]HYˆÛÜÚ[™ÈHÝ\œ™[HXÝ]™HÙ\ÜÚ[Û‚ˆ˜[\ÐÛÜÚ[™ÐÝ\œ™[Ù\ÜÚ[ÛˆBˆ\Ð]Y[ÑY™™XÝÙ\ÜÚ[Û“Ü[™Y	‰‚ˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’YOHËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑU	‰‚ˆÙ\ÜÚ[Û’YÐÛÜÙHOHÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’Y‚ˆYˆ
+\ÐÛÜÚ[™ÐÝ\œ™[Ù\ÜÚ[ÛŠHÂˆYˆ
+ÝY™\ÜÑ[š[˜Ù\ˆOH[
+HÂˆ™[X\ÙSÝY™\ÜÑ[š[˜Ù\ŠÛX\“›Ü›X[^˜][ÛØXÚHHÛX\“›Ü›X[^˜][ÛØXÚJBˆB‚ˆ\Ð]Y[ÑY™™XÝÙ\ÜÚ[Û“Ü[™YH˜[ÙBˆÜ[™Y]Y[ÑY™™XÝÙ\ÜÚ[Û’YHËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑUˆB‚ˆËÈœ›ØYØ\ÝÛÜÙH›ÜˆH™\]Y\ÝYÙ\ÜÚ[Ûˆ
+]™[ˆYˆÝ[JBˆYˆ
+Ù\ÜÚ[Û’YÐÛÜÙHOHËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑU	‰ˆÙ\ÜÚ[Û’YÐÛÜÙHˆ
+HÂˆÙ[™œ›ØYØ\Ý
+ˆ[[
+]Y[ÑY™™XÝPÕSÓ—ÐÓÔÑWÐUQS×ÑQ‘‘PÕÐÓÓ•“ÓÔÑTÔÒSÓŠK˜\HÂˆ]^˜J]Y[ÑY™™XÝ‘VWÐUQS×ÔÑTÔÒSÓ‹Ù\ÜÚ[Û’YÐÛÜÙJBˆ]^˜J]Y[ÑY™™XÝ‘VWÔPÒÐQÑWÓSQKXÚØYÙS˜[YJBˆKˆ
+BˆBˆB‚ˆš]˜]H˜\ˆ™]š[Ý\ÓYYXR][R[™^HË’S‘VÕS”ÑUˆš]˜]H˜\ˆ™]š[Ý\Ñ\\ÛÙRYˆÝš[™ÏÈH[ˆš]˜]H˜\ˆ™]š[Ý\Ñ\\ÛÙTÜÚ][ÛŽˆÛ™ÈH‚ˆÊŠ‚ˆ
+ˆØ]™HÙØ\Ý\\ÛÙH^X˜XÚÈÜÚ][ÛˆÈ]X˜\ÙK‚ˆ
+ˆÛ›HØ]™\ÈYˆH][H\È[ˆ\\ÛÙH[™ÜÚ][Ûˆ\ÈYX[š[™Ù[
+ˆÈÙXÛÛ™ÊK‚ˆ
+‹Âˆš]˜]H[ˆØ]™Q\\ÛÙTÜÚ][ÛŠˆ\\ÛÙRYˆÝš[™ËˆÜÚ][Û“\ÎˆÛ™Ëˆ
+HÂˆYˆ
+ÜÚ][Û“\ÈÌ
+H™]\›ˆËÈÛ‰ÝØ]™HYˆ\ÜÈ[ˆÈÙXÛÛ™È^YYˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÈ
+ÈÚ[[[™\ŠHÂˆ]X˜\ÙK\]T^X˜XÚÔÜÚ][ÛŠ\\ÛÙRYÜÚ][Û“\ÊBˆ[X™\‹YÊQÊK™
+”Ø]™Y\\ÛÙHÜÚ][ÛŽˆ	\\ÛÙRY]	ÜÜÚ][Û“\ß[\ÈŠBˆBˆB‚ˆÊŠ‚ˆ
+ˆ™\ÝÜ™HÙØ\Ý\\ÛÙH^X˜XÚÈÜÚ][Ûˆœ›ÛH]X˜\ÙK‚ˆ
+ˆÙYZÜÈÈØ]™YÜÚ][ÛˆYˆ]˜Z[X›K‚ˆ
+‹Âˆš]˜]H[ˆ™\ÝÜ™Q\\ÛÙTÜÚ][ÛŠ\\ÛÙRYˆÝš[™ÊHÂˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÈ
+ÈÚ[[[™\ŠHÂˆ˜[Ø]™YÜÚ][ÛˆH]X˜\ÙK™Ù]^X˜XÚÔÜÚ][ÛŠ\\ÛÙRY
+BˆYˆ
+Ø]™YÜÚ][ÛˆOH[	‰ˆØ]™YÜÚ][Ûˆˆ
+HÂˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆËÈÛ›HÙYZÈYˆÙIÜ™HÝ[ÛˆHØ[YH\\ÛÙBˆYˆ
+^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOH\\ÛÙRY
+HÂˆ^Y\‹œÙYZÕÊØ]™YÜÚ][ÛŠBˆ[X™\‹YÊQÊK™
+”™\ÝÜ™Y\\ÛÙHÜÚ][ÛŽˆ	\\ÛÙRYÈ	ÜØ]™YÜÚ][ÛŸ[\ÈŠBˆBˆBˆBˆBˆB‚ˆš]˜]H[ˆX^X™P\[™ÜÝYžP]]Ü^T™XÛÛ[Y[™][ÛœÊ^PY\\[™ˆ›ÛÛX[ŠNˆ›ÛÛX[ˆÂˆYˆ
+ÜÝYžP]]Ü^R›ØËš\ÐXÝ]™HOHYJH™]\›ˆYB‚ˆ˜[ÙYYY]Y]HH^Y\‹˜Ý\œ™[Y]Y]HÎˆÝ\œ™[YYXSY]Y]K˜[YHÎˆ™]\›ˆ˜[ÙBˆYˆ
+ÙYYY]Y]Kš\Ñ\\ÛÙHÙYYY]Y]Kš\ÕšY[ÔÛÛ™ÊH™]\›ˆ˜[ÙB‚ˆ˜[ÙYYÙ^HH‰ÜÙYYY]Y]KšYN‰Ü^Y\‹›YYXR][PÛÝ[N‰ÚYˆ
+^PY\\[™
+H™[™Yˆ[ÙHœ™[ØYŸH‚ˆYˆ
+ÜÝYžP]]Ü^TÙYYÙ^HOHÙYYÙ^JH™]\›ˆYBˆÜÝYžP]]Ü^TÙYYÙ^HHÙYYÙ^B‚ˆÜÝYžP]]Ü^R›ØˆBˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆ˜\ˆÝ\Y\[™Y^X˜XÚÈH˜[ÙBˆžHÂˆYˆ
+Y]TÝÜ™K™Ù]
+]]Ü^RÙ^KYJJH™]\›][˜ÚˆYˆ
+]TÝÜ™K™Ù]
+\ØX›SØY[Ü™UÚ[”™\X][Ù^K˜[ÙJH	‰ˆ^Y\‹œ™\X][ÙHOH‘TPUÓSÑWÐS
+H™]\›][˜ÚˆYˆ
+^Y\‹œ™\X][ÙHOH‘TPUÓSÑWÓÓ‘JH™]\›][˜Úˆ˜[ÛÛÚÚYHH]TÝÜ™K™Ù]
+ÜÝYžPÛÛÚÚYRÙ^KˆŠKZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ™]\›][˜Úˆ˜[ÙX”^Y\”™XÛÛ[Y[™][ÛœÓÛ›HHÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠÙYYY]Y]JBˆ˜[]Y]YPÛÛ^H^Y\‹›YYXR][\Ë›X\›Ý[È]›Y]Y]HBˆ˜[^\Ý[™ÒYÈH^Y\‹›YYXR][\Ë›X\È]›YYXRYKÔÙ]
+
+Bˆ˜[^\Ý[™Ñš[™Ù\œš[ÈH^Y\‹›YYXR][\Ë›X\›Ý[È]œÜÝYžP]]Ü^Qš[™Ù\œš[
+
+HKÔÙ]
+
+Bˆ˜[™XÛÛ[Y[™][ÛœÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆÜÝYžPØ[˜\ÐÛY[œ™\ÛÛ™P]]Ü^T™XÛÛ[Y[™][ÛœÊˆYYXSY]Y]HHÙYYY]Y]KˆÛÛÚÚYHHÛÛÚÚYKˆÛÛ^H]Y]YPÛÛ^ˆ]HH]Y]YU]Kˆ[Z]HÌˆÙX”^Y\“Û›HHÙX”^Y\”™XÛÛ[Y[™][ÛœÓÛ›Kˆ]šXÙS˜[YHHÙ]Ýš[™Ê‹œÝš[™ËœÜÝYžWÛ\Ý[š[™×Ú\ÝÜžWÙ]šXÙWÛ˜[YJKˆ
+BˆBˆ›X\
+ÛÛ™Ò][NŽÓYYXR][JBˆ™š[\‘^XÚ]
+]TÝÜ™K™Ù]
+YQ^XÚ]Ù^K˜[ÙJJBˆ™š[\•šY[ÔÛÛ™ÜÊ]TÝÜ™K™Ù]
+YUšY[ÔÛÛ™ÜÒÙ^K˜[ÙJJBˆ™š[\“›ÝÈYYXR][HO‚ˆYYXR][K›YYXRY[ˆ^\Ý[™ÒYÈˆYYXR][KœÜÝYžP]]Ü^Qš[™Ù\œš[
+
+OË›]È][ˆ^\Ý[™Ñš[™Ù\œš[ÈHOHYBˆB‚ˆYˆ
+™XÛÛ[Y[™][ÛœËš\Ñ[\J
+H^Y\‹œ^X˜XÚÔÝ]HOHÕUWÒQJH™]\›][˜Ú‚ˆ˜[š\œÝ™XÛÛ[Y[™][Û’[™^H^Y\‹›YYXR][PÛÝ[ˆ˜[ÚÝ[Ý\š\œÝ™XÛÛ[Y[™][ÛˆBˆ^PY\\[™	‰ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÑS‘Q	‰ˆ\^Y\‹š\Ó™^YYXR][J
+Bˆ^Y\‹˜YYYXR][\Ê™XÛÛ[Y[™][ÛœÊBˆYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+HÂˆ˜[ÚY™›T^[\Ýš\œÝH]TÝÜ™K™Ù]
+ÚY™›T^[\Ýš\œÝÙ^K˜[ÙJBˆ\TÚY™›SÜ™\Š^Y\‹˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[ÚY™›T^[\Ýš\œÝ
+BˆB‚ˆYˆ
+ÚÝ[Ý\š\œÝ™XÛÛ[Y[™][ÛŠHÂˆ^Y\‹œÙYZÕÊš\œÝ™XÛÛ[Y[™][Û’[™^
+Bˆ^Y\‹œ™\\™J
+BˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJHÂˆ^Y\‹œ^J
+BˆBˆÝ\Y\[™Y^X˜XÚÈHYBˆBˆHš[˜[HÂˆYˆ
+ˆ^PY\\[™	‰‚ˆ\Ý\Y\[™Y^X˜XÚÈ	‰‚ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÑS‘Q	‰‚ˆ\^Y\‹š\Ó™^YYXR][J
+Bˆ
+HÂˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\Ë›Û”ÛÛ™ÔÝÜ
+
+BˆBˆBˆBˆ™]\›ˆYBˆB‚ˆš]˜]H[ˆÞ[˜ÔÜÝYžP]]Ü^T]Y]YJÙYYY]Y]NˆYYXSY]Y]JHÂˆYˆ
+ÛÜ\‹›^SÛÜ\Š
+HOHÛÜ\‹™Ù]XZ[“ÛÜ\Š
+JHÂˆØÛÜK›][˜ÚÂˆÞ[˜ÔÜÝYžP]]Ü^T]Y]YJÙYYY]Y]JBˆBˆ™]\›‚ˆBˆYˆ
+ÜÝYžP]]Ü^R›ØËš\ÐXÝ]™HOHYJH™]\›‚ˆYˆ
+ÙYYY]Y]Kš\Ñ\\ÛÙHÙYYY]Y]Kš\ÕšY[ÔÛÛ™ÊH™]\›‚‚ˆ˜[ÙYYÙ^HH‰ÜÙYYY]Y]KšYN‰Ü^Y\‹˜Ý\œ™[YYXR][R[™^NÙX‹\^Y\‹\]Y]YH‚ˆYˆ
+ÜÝYžP]]Ü^TÙYYÙ^HOHÙYYÙ^JH™]\›‚ˆÜÝYžP]]Ü^TÙYYÙ^HHÙYYÙ^B‚ˆÜÝYžP]]Ü^R›ØˆBˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆYˆ
+Y]TÝÜ™K™Ù]
+]]Ü^RÙ^KYJJH™]\›][˜ÚˆYˆ
+\ÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠÙYYY]Y]JJH™]\›][˜ÚˆYˆ
+^Y\‹œ^X˜XÚÔÝ]HOHÕUWÒQH^Y\‹›YYXR][PÛÝ[OH
+H™]\›][˜Ú‚ˆ˜[ÙYYYYXRYHÙYYY]Y]KšYˆ˜[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^ˆYˆ
+Ý\œ™[[™^Z[ˆ[[^Y\‹›YYXR][PÛÝ[
+H™]\›][˜Ú‚ˆ˜[XÝ]™SYYXRYBˆÝ\œ™[YYXSY]Y]K˜[YOËšYˆÎˆ^Y\‹˜Ý\œ™[Y]Y]OËšYˆÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆYˆ
+XÝ]™SYYXRYOHÙYYYYXRY
+H™]\›][˜Ú‚ˆYˆ
+Ý\œ™[ÜÝYžT^X˜XÚÐÛÛ^\šJ
+HOH[	‰ˆ^Y\‹š\Ó™^YYXR][J
+JHÂˆ™]\›][˜ÚˆB‚ˆ˜[›ÝXÝY][\ÈBˆ
+‹˜Ý\œ™[[™^
+Bˆ›X\È^Y\‹™Ù]YYXR][P]
+]
+HBˆ˜[›ÝXÝYYÈH›ÝXÝY][\Ë›X\È]›YYXRYKÔÙ]
+
+Bˆ˜[›ÝXÝYš[™Ù\œš[ÈH›ÝXÝY][\Ë›X\›Ý[È]œÜÝYžP]]Ü^Qš[™Ù\œš[
+
+HKÔÙ]
+
+Bˆ˜[ÛÛÚÚYHH]TÝÜ™K™Ù]
+ÜÝYžPÛÛÚÚYRÙ^KˆŠKZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ™]\›][˜Úˆ˜[™XÛÛ[Y[™][ÛœÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆÜÝYžPØ[˜\ÐÛY[œ™\ÛÛ™P]]Ü^T™XÛÛ[Y[™][ÛœÊˆYYXSY]Y]HHÙYYY]Y]KˆÛÛÚÚYHHÛÛÚÚYKˆÛÛ^H›ÝXÝY][\Ë›X\›Ý[È]›Y]Y]HKˆ]HH]Y]YU]Kˆ[Z]HÌˆÙX”^Y\“Û›HHYKˆ]šXÙS˜[YHHÙ]Ýš[™Ê‹œÝš[™ËœÜÝYžWÛ\Ý[š[™×Ú\ÝÜžWÙ]šXÙWÛ˜[YJKˆ
+BˆK›X\
+ÛÛ™Ò][NŽÓYYXR][JBˆ™š[\‘^XÚ]
+]TÝÜ™K™Ù]
+YQ^XÚ]Ù^K˜[ÙJJBˆ™š[\•šY[ÔÛÛ™ÜÊ]TÝÜ™K™Ù]
+YUšY[ÔÛÛ™ÜÒÙ^K˜[ÙJJBˆ™š[\“›ÝÈYYXR][HO‚ˆYYXR][K›YYXRY[ˆ›ÝXÝYYÈˆYYXR][KœÜÝYžP]]Ü^Qš[™Ù\œš[
+
+OË›]È][ˆ›ÝXÝYš[™Ù\œš[ÈHOHYBˆK™\Ý[˜ÝžHÈ]œÜÝYžP]]Ü^Qš[™Ù\œš[
+
+HÎˆ]›YYXRYB‚ˆYˆ
+™XÛÛ[Y[™][ÛœËš\Ñ[\J
+H^Y\‹œ^X˜XÚÔÝ]HOHÕUWÒQJH™]\›][˜Ú‚ˆ˜[Ý[XÝ]™SYYXRYBˆÝ\œ™[YYXSY]Y]K˜[YOËšYˆÎˆ^Y\‹˜Ý\œ™[Y]Y]OËšYˆÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆ˜[Ý[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^ˆYˆ
+ˆÝ[XÝ]™SYYXRYOHÙYYYYXRYˆÝ[Ý\œ™[[™^Z[ˆ[[^Y\‹›YYXR][PÛÝ[ˆ
+HÂˆ™]\›][˜ÚˆB‚ˆ˜[[œÙ\[™^HÝ[Ý\œ™[[™^
+ÈBˆYˆ
+[œÙ\[™^^Y\‹›YYXR][PÛÝ[
+HÂˆ^Y\‹œ™[[Ý™SYYXR][\Ê[œÙ\[™^^Y\‹›YYXR][PÛÝ[
+BˆBˆ^Y\‹˜YYYXR][\Ê[œÙ\[™^™XÛÛ[Y[™][ÛœÊBˆ^Y\‹œ™\\™J
+BˆYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+HÂˆ˜[ÚY™›T^[\Ýš\œÝH]TÝÜ™K™Ù]
+ÚY™›T^[\Ýš\œÝÙ^K˜[ÙJBˆ\TÚY™›SÜ™\Š^Y\‹˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[ÚY™›T^[\Ýš\œÝ
+BˆBˆ]]ÛZ^][\Ë˜[YHH[\S\Ý
+
+BˆBˆB‚ˆš]˜]H[ˆ™Yœ™\ÚÜÝYžP]]Ü^T™]šY]ÊÙYYY]Y]NˆYYXSY]Y]JHÂˆYˆ
+ÙYYY]Y]Kš\Ñ\\ÛÙHÙYYY]Y]Kš\ÕšY[ÔÛÛ™ÊH™]\›‚ˆ˜[ÙYYYYXRYHÙYYY]Y]KšYˆÜÝYžP]]Ü^T™]šY]Ò›ØË˜Ø[˜Ù[
+
+BˆÜÝYžP]]Ü^T™]šY]Ò›ØˆBˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆYˆ
+Y]TÝÜ™K™Ù]
+Ú[Z[\ÛÛ[YJJH™]\›][˜ÚˆYˆ
+Y]TÝÜ™K™Ù]
+]]Ü^RÙ^KYJJH™]\›][˜Úˆ˜[ÛÛÚÚYHH]TÝÜ™K™Ù]
+ÜÝYžPÛÛÚÚYRÙ^KˆŠKZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ™]\›][˜Úˆ˜[ÙX”^Y\”™XÛÛ[Y[™][ÛœÓÛ›HHÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠÙYYY]Y]JBˆ˜[™XÛÛ[Y[™][ÛœÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆÜÝYžPØ[˜\ÐÛY[œ™\ÛÛ™P]]Ü^T™XÛÛ[Y[™][ÛœÊˆYYXSY]Y]HHÙYYY]Y]KˆÛÛÚÚYHHÛÛÚÚYKˆÛÛ^H\ÝÙŠÙYYY]Y]JKˆ]HH]Y]YU]Kˆ[Z]HÌˆÙX”^Y\“Û›HHÙX”^Y\”™XÛÛ[Y[™][ÛœÓÛ›Kˆ]šXÙS˜[YHHÙ]Ýš[™Ê‹œÝš[™ËœÜÝYžWÛ\Ý[š[™×Ú\ÝÜžWÙ]šXÙWÛ˜[YJKˆ
+BˆK›X\
+ÛÛ™Ò][NŽÓYYXR][JBˆ™š[\‘^XÚ]
+]TÝÜ™K™Ù]
+YQ^XÚ]Ù^K˜[ÙJJBˆ™š[\•šY[ÔÛÛ™ÜÊ]TÝÜ™K™Ù]
+YUšY[ÔÛÛ™ÜÒÙ^K˜[ÙJJBˆ™š[\“›ÝÈ]›YYXRYOHÙYYYYXRYBˆ™\Ý[˜ÝžHÈ]œÜÝYžP]]Ü^Qš[™Ù\œš[
+
+HÎˆ]›YYXRYB‚ˆ˜[XÝ]™SYYXRYBˆÝ\œ™[YYXSY]Y]K˜[YOËšYˆÎˆ^Y\‹˜Ý\œ™[Y]Y]OËšYˆÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆYˆ
+ˆXÝ]™SYYXRYOHÙYYYYXRY	‰‚ˆ
+™XÛÛ[Y[™][ÛœËš\Ó›Ý[\J
+HÙX”^Y\”™XÛÛ[Y[™][ÛœÓÛ›JBˆ
+HÂˆ]]ÛZ^][\Ë˜[YHH™XÛÛ[Y[™][ÛœÂˆBˆBˆB‚ˆš]˜]H[ˆYYXR][KœÜÝYžP]]Ü^Qš[™Ù\œš[
+
+NˆÝš[™ÏÈÂˆ˜[Y]Y]HHY]Y]HÎˆ™]\›ˆ[ˆ˜[]HHY]Y]K]KœÜÝYžP]]Ü^S›Ü›X[^™J
+BˆYˆ
+]Kš\Ð›[šÊ
+JH™]\›ˆ[ˆ˜[\\ÝHY]Y]K˜\\ÝË™š\œÝÜ“[
+
+OË›˜[YK›Ü‘[\J
+KœÜÝYžP]]Ü^S›Ü›X[^™J
+Bˆ™]\›ˆ‰]NŽ‰\\Ý‚ˆB‚ˆš]˜]H[ˆÝš[™ËœÜÝYžP]]Ü^S›Ü›X[^™J
+NˆÝš[™ÈBˆÝÙ\˜Ø\ÙJ
+Bˆœ™\XÙJ™YÙ^
+—
+Š×
+_ËŠ×HŠKˆŠBˆœ™\XÙJ™YÙ^
+—Š™X]ßßÚ]
+WˆŠKˆŠBˆœ™\XÙJ™YÙ^
+–×˜K^ŒNWJÈŠKˆŠBˆœ™\XÙJ™YÙ^
+—ÊÈŠKˆŠBˆš[J
+B‚ˆš]˜]HÝ\Ü[™[ˆ™\Ü[ÝUX™S]\ÚXÒ\ÝÜžT^X˜XÚÊˆšY[ÒYˆÝš[™Ëˆ^YYÙXÛÛ™ÎˆÝX›Kˆ
+Nˆ›ÛÛX[ˆBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ˜[˜XÚÚ[™ÐÛY[ÈHÛÛ™šYÝ\™Y[ÝUX™S]\ÚXÒ\ÝÜžU˜XÚÚ[™ÐÛY[Ê
+Bˆ˜[™YÚ\Ý˜][Û”™\ÛÛ][ÛˆBˆ™\ÛÛ™UÚ][ÝUX™PÛY[˜[˜XÚÊ˜XÚÚ[™ÐÛY[ÊHÈÛY[O‚ˆ˜[^Y\”™\ÜÛœÙHBˆ[ÝUX™Bˆœ^Y\ŠšY[ÒYÛY[HÛY[
+Bˆ›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊˆ\œ›Ü‹ˆ–[ÝUX™H]\ÚXÈ^Y\ˆ™\]Y\Ý˜Z[Y›Üˆ	\ÈÚ]	\È‹ˆšY[ÒYˆÛY[˜ÛY[˜[YKˆ
+BˆK™Ù]Ü“[
+
+Bˆ˜[˜XÚÚ[™ÈBˆ^Y\”™\ÜÛœÙBˆËœ^X˜XÚÕ˜XÚÚ[™ÂˆËZÙRYˆÂˆZ]šY[ÜÝ]Ô^X˜XÚÕ\›Ë˜˜\ÙU\›š\Ó[Ü›[šÊ
+H	‰‚ˆZ]šY[ÜÝ]ÕØ]Ú[YU\›Ë˜˜\ÙU\›š\Ó[Ü›[šÊ
+BˆBˆYˆ
+˜XÚÚ[™ÈOH[
+HÂˆ[X™\‹YÊQÊK™
+ˆ–[ÝUX™H]\ÚXÈ^Y\ˆ™]\›™Y›È\ØX›H˜XÚÚ[™È›Üˆ	\ÈÚ]	\È‹ˆšY[ÒYˆÛY[˜ÛY[˜[YKˆ
+Bˆ™]\›™\ÛÛ™UÚ][ÝUX™PÛY[˜[˜XÚÈ[ˆBˆ[X™\‹YÊQÊK™
+ˆ–[ÝUX™H]\ÚXÈ˜XÚÚ[™È™\ÛÛ™Y›Üˆ	\ÈÚ]	\È‹ˆšY[ÒYˆÛY[˜ÛY[˜[YKˆ
+Bˆ[ÝUX™Bˆœ™YÚ\Ý\”^X˜XÚÕ˜XÚÚ[™Êˆ^X˜XÚÕ˜XÚÚ[™ÈH˜XÚÚ[™Ëˆ^YYÙXÛÛ™ÈH^YYÙXÛÛ™ËˆÛY[HÛY[ˆ
+K›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊˆ\œ›Ü‹ˆ–[ÝUX™H]\ÚXÈ˜XÚÚ[™È™\]Y\Ý˜Z[Y›Üˆ	\ÈÚ]	\È‹ˆšY[ÒYˆÛY[˜ÛY[˜[YKˆ
+BˆK™Ù]Ü“[
+
+BˆB‚ˆYˆ
+™YÚ\Ý˜][Û”™\ÛÛ][ÛˆOH[
+HÂˆ[Ý]X™S]\ÚXÒ\ÝÜžQ˜Z[\™S›ÝYšYYH˜[ÙBˆ[X™\‹YÊQÊK™
+ˆ–[ÝUX™H]\ÚXÈ\ÝÜžH˜XÚÚ[™ÈXØÙ\Y›Üˆ	\ÈÚ]	\Îˆ^X˜XÚÏIYØ]Ú[YOIY‹ˆšY[ÒYˆ™YÚ\Ý˜][Û”™\ÛÛ][Û‹˜ÛY[˜ÛY[˜[YKˆ™YÚ\Ý˜][Û”™\ÛÛ][Û‹˜[YKœ^X˜XÚÔÝ]\Ëˆ™YÚ\Ý˜][Û”™\ÛÛ][Û‹˜[YKØ]Ú[YTÝ]\Ëˆ
+Bˆ™]\›Ú]ÛÛ^YBˆB‚ˆ[X™\‹YÊQÊKÊ[]][XØ]YÛY[È˜Z[Y[ÝUX™H]\ÚXÈ\ÝÜžH˜XÚÚ[™È›Üˆ	\È‹šY[ÒY
+BˆYˆ
+^[Ý]X™S]\ÚXÒ\ÝÜžQ˜Z[\™S›ÝYšYY
+HÂˆ[Ý]X™S]\ÚXÒ\ÝÜžQ˜Z[\™S›ÝYšYYHYBˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆØ\Ý›XZÙU^
+ˆ\Ð]\ÚXÔÙ\šXÙKˆÙ]Ýš[™Ê‹œÝš[™Ëž[Ý]X™WÛ]\ÚX×Ú\ÝÜžWÜÞ[˜×Ù˜Z[Y
+KˆØ\Ý“S‘ÕÓÓ‘Ëˆ
+KœÚÝÊ
+BˆBˆBˆ˜[ÙBˆB‚ˆš]˜]HÝ\Ü[™[ˆÝ\[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÙ\ÜÚ[ÛŠˆšY[ÒYˆÝš[™Ëˆ
+Nˆ[ÝUX™K”›ÙÜ™\ÜÚ]™T^X˜XÚÕ˜XÚÚ[™ÔÙ\ÜÚ[ÛÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ˜[˜XÚÚ[™ÐÛY[ÈHÛÛ™šYÝ\™Y[ÝUX™S]\ÚXÒ\ÝÜžU˜XÚÚ[™ÐÛY[Ê
+Bˆ˜[Ù\ÜÚ[Û”™\ÛÛ][ÛˆBˆ™\ÛÛ™UÚ][ÝUX™PÛY[˜[˜XÚÊ˜XÚÚ[™ÐÛY[ÊHÈÛY[O‚ˆ˜[˜XÚÚ[™ÈBˆ[ÝUX™Bˆœ^Y\ŠšY[ÒYÛY[HÛY[
+Bˆ›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊˆ\œ›Ü‹ˆ”›ÙÜ™\ÜÚ]™H[ÝUX™H]\ÚXÈ^Y\ˆ™\]Y\Ý˜Z[Y›Üˆ	\ÈÚ]	\È‹ˆšY[ÒYˆÛY[˜ÛY[˜[YKˆ
+BˆK™Ù]Ü“[
+
+BˆËœ^X˜XÚÕ˜XÚÚ[™ÂˆËZÙRYˆÂˆZ]šY[ÜÝ]Ô^X˜XÚÕ\›Ë˜˜\ÙU\›š\Ó[Ü›[šÊ
+H	‰‚ˆZ]šY[ÜÝ]ÕØ]Ú[YU\›Ë˜˜\ÙU\›š\Ó[Ü›[šÊ
+BˆBˆÎˆ™]\›™\ÛÛ™UÚ][ÝUX™PÛY[˜[˜XÚÈ[‚ˆ[ÝUX™BˆœÝ\›ÙÜ™\ÜÚ]™T^X˜XÚÕ˜XÚÚ[™Êˆ^X˜XÚÕ˜XÚÚ[™ÈH˜XÚÚ[™ËˆÛY[HÛY[ˆ
+K›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊˆ\œ›Ü‹ˆ”›ÙÜ™\ÜÚ]™H[ÝUX™H]\ÚXÈÙ\ÜÚ[Ûˆ˜Z[Y›Üˆ	\ÈÚ]	\È‹ˆšY[ÒYˆÛY[˜ÛY[˜[YKˆ
+BˆK™Ù]Ü“[
+
+BˆB‚ˆÙ\ÜÚ[Û”™\ÛÛ][ÛË›]È™\ÛÛ][ÛˆO‚ˆ™\ÛÛ][Û‹˜[YK˜[ÛÈÂˆ[Ý]X™S]\ÚXÒ\ÝÜžQ˜Z[\™S›ÝYšYYH˜[ÙBˆ[X™\‹YÊQÊK™
+ˆ”›ÙÜ™\ÜÚ]™H[ÝUX™H]\ÚXÈÙ\ÜÚ[ÛˆÝ\Y›Üˆ	\ÈÚ]	\È‹ˆšY[ÒYˆ™\ÛÛ][Û‹˜ÛY[˜ÛY[˜[YKˆ
+BˆBˆBˆB‚ˆš]˜]H[ˆÛÛ™šYÝ\™Y[ÝUX™S]\ÚXÒ\ÝÜžU˜XÚÚ[™ÐÛY[Ê
+Nˆ\Ý[ÝUX™PÛY[ˆBˆ[ÝUX™S]\ÚXÒ\ÝÜžU˜XÚÚ[™ÐÛY[Êˆ\ÙUÙX”™[Z^H]TÝÜ™K™Ù]
+^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžUÙX”™[Z^Ù^K˜[ÙJKˆ\ÙP[™›ÚY]\ÚXÈH]TÝÜ™K™Ù]
+^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžP[™›ÚY]\ÚXÒÙ^K˜[ÙJKˆ\ÙUÙXˆH]TÝÜ™K™Ù]
+^\š[Y[[[ÝUX™S]\ÚXÒ\ÝÜžUÙX’Ù^K˜[ÙJKˆ
+B‚ˆš]˜]HÝ\Ü[™[ˆ™\Ü[ÝUX™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžT›ÙÜ™\ÜÊˆÙ\ÜÚ[ÛŽˆ[ÝUX™K”›ÙÜ™\ÜÚ]™T^X˜XÚÕ˜XÚÚ[™ÔÙ\ÜÚ[Û‹ˆœ›ÛTÙXÛÛ™ÎˆÝX›KˆÔÙXÛÛ™ÎˆÝX›KˆÝ]NˆÝš[™Ëˆ
+Nˆ›ÛÛX[ˆBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ[ÝUX™Bˆœ™\Ü›ÙÜ™\ÜÚ]™T^X˜XÚÕ˜XÚÚ[™ÊˆÙ\ÜÚ[ÛˆHÙ\ÜÚ[Û‹ˆœ›ÛTÙXÛÛ™ÈHœ›ÛTÙXÛÛ™ËˆÔÙXÛÛ™ÈHÔÙXÛÛ™ËˆÝ]HHÝ]Kˆ
+K›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊˆ\œ›Ü‹ˆ”›ÙÜ™\ÜÚ]™H[ÝUX™H]\ÚXÈX\™X]˜Z[Y]	KŒ™ˆÙXÛÛ™È
+	\ÊH‹ˆÔÙXÛÛ™ËˆÝ]Kˆ
+BˆK™Ù]Ü“[
+
+BˆË˜[ÛÈÈÝ]\ÈO‚ˆ[X™\‹YÊQÊK™
+ˆ”›ÙÜ™\ÜÚ]™H[ÝUX™H]\ÚXÈX\™X]XØÙ\YˆÝ]\ÏIYÜÚ][ÛIKŒ™ˆÝ]OI\È‹ˆÝ]\ËˆÔÙXÛÛ™ËˆÝ]Kˆ
+BˆHOH[ˆB‚ˆÝ™\œšYH[ˆÛ“YYXR][U˜[œÚ][ÛŠˆYYXR][NˆYYXR][OËˆ™X\ÛÛŽˆ[ˆ
+HÂˆYˆ
+™X\ÛÛˆOH^Y\‹“QQPWÒUSWÕS”ÒUSÓ—Ô‘PTÓÓ—Ô‘TPU
+HÂˆÚÚ\Y[]™SX[šY™\ÝÛ˜ÙSYYXRYË˜ÛX\Š
+BˆB‚ˆËÈØ]™H™]š[Ý\È\\ÛÙHÜÚ][ÛˆYˆ]Ø\È[ˆ\\ÛÙBˆ™]š[Ý\Ñ\\ÛÙRYË›]È\\ÛÙRYO‚ˆYˆ
+™]š[Ý\Ñ\\ÛÙTÜÚ][Ûˆˆ
+HÂˆØ]™Q\\ÛÙTÜÚ][ÛŠ\\ÛÙRY™]š[Ý\Ñ\\ÛÙTÜÚ][ÛŠBˆBˆBˆ™]š[Ý\Ñ\\ÛÙRYH[ˆ™]š[Ý\Ñ\\ÛÙTÜÚ][ÛˆH‚ˆËÈÚXÚÈYˆ™]È][H\È[ˆ\\ÛÙH[™™\ÝÜ™H]ÈÜÚ][Û‚ˆ˜[™]ÓY]Y]HHYYXR][OË›Y]Y]Bˆ˜[˜[œÚ][Û™YY]Y]HH™]ÓY]Y]HÎˆ^Y\‹˜Ý\œ™[Y]Y]BˆÝ\œ™[YYXSY]Y]K˜[YHH˜[œÚ][Û™YY]Y]Bˆ˜[˜[œÚ][Û™YYYXRYH™]ÓY]Y]OËšYÎˆYYXR][OË›YYXRYˆÝ\œ™[^X˜XÚÑ›Ü›X]˜[YHH[ˆÝ\œ™[]™T^X˜XÚÐš]˜]K˜[YHH[ˆ\Ý]™T^X˜XÚÐš]˜]U\]S\ÈHˆ™Yœ™\ÚÝ\œ™[^X˜XÚÑ›Ü›X]œ›ÛQ]X˜\ÙJ˜[œÚ][Û™YYYXRY
+Bˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊ^Y\‹˜Ý\œ™[˜XÚÜÊBˆ˜[œÚ][Û™YYYXRYˆËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆË›]ÈYYXRYO‚ˆØÚY[P]Y[Ñ›Ü›X]™]žJYYXRY
+BˆØÚY[P]Y[Ñ›Ü›X]™Yœ™\Ú
+YYXRY
+BˆBˆYˆ
+™]ÓY]Y]OËš\Ñ\\ÛÙHOHYJHÂˆ™]š[Ý\Ñ\\ÛÙRYH™]ÓY]Y]KšYˆËÈ[^H™\ÝÜ˜][ÛˆÈ]^X˜XÚÈÝ\ˆØÛÜK›][˜ÚÂˆ[^JL
+Bˆ™\ÝÜ™Q\\ÛÙTÜÚ][ÛŠ™]ÓY]Y]KšY
+BˆBˆB‚ˆËÈ›Ü˜ÙH™\X]Û™HYˆH^Y\ˆYÛ›Ü™Y][™]]ËXY˜[˜ÙYˆYˆ
+™X\ÛÛˆOH^Y\‹“QQPWÒUSWÕS”ÒUSÓ—Ô‘PTÓÓ—ÐUUÊHÂˆYˆ
+^Y\‹œ™\X][ÙHOH‘TPUÓSÑWÓÓ‘H	‰‚ˆ™]š[Ý\ÓYYXR][R[™^OHË’S‘VÕS”ÑU	‰‚ˆ™]š[Ý\ÓYYXR][R[™^OH^Y\‹˜Ý\œ™[YYXR][R[™^ˆ
+HÂˆ^Y\‹œÙYZÕÊ™]š[Ý\ÓYYXR][R[™^
+BˆBˆBˆ™]š[Ý\ÓYYXR][R[™^H^Y\‹˜Ý\œ™[YYXR][R[™^‚ˆ\Ý^X˜XÚÔÜYYHLKŒ‚ˆ\ØÛÜ™\]R›ØË˜Ø[˜Ù[
+
+BˆÙ]\ÝY™\ÜÑ[š[˜Ù\Š
+B‚ˆ˜[˜[œÚ][Û‘\˜][ÛˆHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+BˆØÜ›Ø˜›SX[˜YÙ\Ë›Û”ÛÛ™ÔÝÜ
+
+Bˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝÜ
+
+Bˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝÜ
+
+BˆYˆ
+^Y\‹œ^UÚ[”™XYH	‰ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQJHÂˆØÜ›Ø˜›SX[˜YÙ\Ë›Û”ÛÛ™ÔÝ\
+˜[œÚ][Û™YY]Y]K\˜][ÛˆH˜[œÚ][Û‘\˜][ÛŠBˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+˜[œÚ][Û™YY]Y]K\˜][Û“\ÈH˜[œÚ][Û‘\˜][ÛŠBˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+ˆ˜[œÚ][Û™YY]Y]Kˆ\˜][Û“\ÈH˜[œÚ][Û‘\˜][Û‹ˆ
+BˆBˆYˆ
+^Y\‹œ^UÚ[”™XYH	‰ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰ˆ˜[œÚ][Û™YY]Y]HOH[
+HÂˆØÛÜK›][˜ÚÂˆ]X˜\ÙKœÛÛ™Ê˜[œÚ][Û™YY]Y]KšY
+K™š\œÝ
+
+OË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆBˆÝ\ÜÝYžS\Ý[š[™Ò\ÝÜžRY[ÝÙY
+ˆY]Y]HH˜[œÚ][Û™YY]Y]Kˆ\˜][ÛˆH˜[œÚ][Û‘\˜][Û‹ˆ
+B‚ˆËÈÞ[˜ÈØ\ÝÚ[ˆYYXHÚ[™Ù\È[™Ø\Ý\ÈÛÛ›™XÝYˆËÈÚÚ\Yˆ\ÈÚ[™ÙHØ\ÈšYÙÙ\™YžHØ\ÝÞ[˜È
+È™]™[ÛÜÊBˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYH	‰‚ˆØ\ÝÛÛ›™XÝ[Û’[™\Ëš\ÔÞ[˜Ú[™Ñœ›ÛPØ\ÝOHYH	‰‚ˆYYXR][HOH[ˆ
+HÂˆ˜[Y]Y]HHYYXR][K›Y]Y]BˆYˆ
+Y]Y]HOH[
+HÂˆËÈžHÈ˜]šYØ]HÈH][HYˆ]	ÜÈ[™XYH[ˆØ\Ý]Y]YBˆËÈ\È]›ÚYÈH[™[ØYÚXÚØ]\Ù\ÈHÚYÙ]È™Yœ™\Úˆ˜[˜]šYØ]YHØ\ÝÛÛ›™XÝ[Û’[™\Ë›˜]šYØ]UÓYYXRY’[”]Y]YJY]Y]KšY
+HÎˆ˜[ÙBˆYˆ
+[˜]šYØ]Y
+HÂˆËÈ][H›Ý[ˆØ\Ý]Y]YK™YYÈ™[ØYˆØ\ÝÛÛ›™XÝ[Û’[™\Ë›ØYYYXJY]Y]JBˆBˆBˆB‚ˆËÈ]]ÈØY[Ü™HÛÛ™ÜÈœ›ÛH]Y]YBˆYˆ
+ØXÚY]]ÓØY[Ü™H	‰‚ˆ™X\ÛÛˆOH^Y\‹“QQPWÒUSWÕS”ÒUSÓ—Ô‘PTÓÓ—Ô‘TPU	‰‚ˆ^Y\‹›YYXR][PÛÝ[H^Y\‹˜Ý\œ™[YYXR][R[™^HH	‰‚ˆÝ\œ™[]Y]YKš\Ó™^YÙJ
+H	‰‚ˆJØXÚY\ØX›SØY[Ü™UÚ[”™\X][	‰ˆ^Y\‹œ™\X][ÙHOH‘TPUÓSÑWÐS
+Bˆ
+HÂˆØÛÜK›][˜Ú
+Ú[[[™\ŠHÂˆ˜[YYXR][\ÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆÝ\œ™[]Y]YBˆ›™^YÙJ
+Bˆ™š[\‘^XÚ]
+ØXÚYYQ^XÚ]
+Bˆ™š[\•šY[ÔÛÛ™ÜÊØXÚYYUšY[ÔÛÛ™ÜÊBˆBˆYˆ
+^Y\‹œ^X˜XÚÔÝ]HOHÕUWÒQH	‰ˆYYXR][\Ëš\Ó›Ý[\J
+JHÂˆ^Y\‹˜YYYXR][\ÊYYXR][\ÊBˆYˆ
+^Y\‹œÚY™›S[ÙQ[˜X›Y
+HÂˆ\TÚY™›SÜ™\Š^Y\‹˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[ØXÚYÚY™›T^[\Ýš\œÝ
+BˆBˆBˆBˆB‚ˆYˆ
+™X\ÛÛˆOH^Y\‹“QQPWÒUSWÕS”ÒUSÓ—Ô‘PTÓÓ—Ô‘TPU	‰‚ˆ^Y\‹›YYXR][PÛÝ[ˆ	‰‚ˆ^Y\‹˜Ý\œ™[YYXR][R[™^H^Y\‹›YYXR][PÛÝ[HH	‰‚ˆXÝ\œ™[]Y]YKš\Ó™^YÙJ
+Bˆ
+HÂˆX^X™P\[™ÜÝYžP]]Ü^T™XÛÛ[Y[™][ÛœÊ^PY\\[™H˜[ÙJBˆB‚ˆËÈØ]™HÝ]HÚ[ˆYYXH][HÚ[™Ù\ÂˆYˆ
+ØXÚY\œÚ\Ý[]Y]YJHÂˆØ]™T]Y]YUÑ\ÚÊ
+BˆBˆB‚ˆÝ™\œšYH[ˆÛ”^X˜XÚÔÝ]PÚ[™ÙY
+ˆ^Y\‹”Ý]H^X˜XÚÔÝ]Nˆ[ˆ
+HÂˆ˜\ˆY˜[˜ÙYœ›ÛQ[™YH˜[ÙB‚ˆËÈ[™H]]Ü^HHÚÚ\È™^ÛÛ™ÈÚ[ˆ^X˜XÚÈ[™ÂˆYˆ
+^X˜XÚÔÝ]HOH^Y\‹”ÕUWÑS‘Q
+HÂˆËÈÚXÚÈÛY\[Y\ˆÝX\™HÛ‰Ý]]Ü^KÜ™\X]YˆÛY\[Y\ˆÚ[]\ÙBˆYˆ
+ÛY\[Y\‹š\ÐXÝ]™H	‰ˆÛY\[Y\‹œ]\ÙUÚ[”ÛÛ™Ñ[™
+HÂˆ™]\›‚ˆB‚ˆ˜[™\X][ÙHH^Y\‹œ™\X][ÙB‚ˆËÈ[™H™\X][[ÙBˆYˆ
+™\X][ÙHOH‘TPUÓSÑWÐS	‰ˆ^Y\‹›YYXR][PÛÝ[ˆ
+HÂˆ^Y\‹œÙYZÕÊ
+Bˆ^Y\‹œ™\\™J
+Bˆ^Y\‹œ^J
+Bˆ™]\›‚ˆB‚ˆËÈ[™H™\X]Û™H[ÙHH™\Ý\Ý\œ™[ÛÛ™ÂˆYˆ
+™\X][ÙHOH‘TPUÓSÑWÓÓ‘JHÂˆ^Y\‹œÙYZÕÊ^Y\‹˜Ý\œ™[YYXR][R[™^
+Bˆ^Y\‹œ™\\™J
+Bˆ^Y\‹œ^J
+Bˆ™]\›‚ˆB‚ˆËÈ[™H]]Ü^HHÚXÚÈYˆ\™IÜÈH™^][HÈ^BˆYˆ
+ØXÚY]]Ü^H	‰ˆ^Y\‹š\Ó™^YYXR][J
+JHÂˆ^Y\‹œÙYZÕÓ™^YYXR][J
+Bˆ^Y\‹œ™\\™J
+BˆY˜[˜ÙYœ›ÛQ[™YHYBˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJHÂˆ^Y\‹œ^J
+BˆBˆH[ÙHYˆ
+ØXÚY]]Ü^JHÂˆY˜[˜ÙYœ›ÛQ[™YHX^X™P\[™ÜÝYžP]]Ü^T™XÛÛ[Y[™][ÛœÊ^PY\\[™HYJBˆBˆB‚ˆËÈØ]™HÝ]HÚ[ˆ^X˜XÚÈÝ]HÚ[™Ù\È
+]›Ý\š[™ÈÚ[[˜ÙHÚÚ\[™ÊBˆYˆ
+ØXÚY\œÚ\Ý[]Y]YH	‰ˆZ\ÔÚ[[˜ÙTÚÚ\[™ÊHÂˆØ]™T]Y]YUÑ\ÚÊ
+BˆB‚ˆYˆ
+^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQJHÂˆÛÛœÙXÝ]]™T^X˜XÚÑ\œˆHˆ™]žPÛÝ[HˆØZ][™Ñ›Ü“™]ÛÜšÐÛÛ›™XÝ[Û‹˜[YHH˜[ÙBˆ™]žR›ØË˜Ø[˜Ù[
+
+BˆÝ\œ™[YYXSY]Y]K˜[YHH^Y\‹˜Ý\œ™[Y]Y]Bˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊ^Y\‹˜Ý\œ™[˜XÚÜÊBˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HOË›]ÈYYXRYO‚ˆ™Yœ™\ÚÝ\œ™[^X˜XÚÑ›Ü›X]œ›ÛQ]X˜\ÙJYYXRY
+BˆØÚY[P]Y[Ñ›Ü›X]™]žJYYXRY
+BˆØÚY[P]Y[Ñ›Ü›X]™Yœ™\Ú
+YYXRY
+BˆB‚ˆËÈ™\Ù]™]žHÛÝ[›ÜˆÝ\œ™[ÛÛ™ÈÛˆÝXØÙ\ÜÙ[^X˜XÚÂˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYË›]ÈYYXRYO‚ˆ™\Ù]™]žPÛÝ[
+YYXRY
+Bˆ[X™\‹YÊQÊK™
+”^X˜XÚÈÝXØÙ\ÜÙ[›Üˆ	YYXRY™\Ù]™]žHÛÝ[ŠBˆBˆÝ\ÜÝYžS\Ý[š[™Ò\ÝÜžRY[ÝÙY
+ˆY]Y]HH^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][ÛˆHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+BˆYˆ
+^Y\‹œ^UÚ[”™XYJHÂˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+ˆY]Y]HH^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][Û“\ÈHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+Bˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+ˆY]Y]HH^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][Û“\ÈHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+BˆBˆYˆ
+^Y\‹œ^UÚ[”™XYJHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆØÚY[PÜ›ÜÜÙ˜YJ
+BˆB‚ˆYˆ
+^X˜XÚÔÝ]HOH^Y\‹”ÕUWÒQH
+^X˜XÚÔÝ]HOH^Y\‹”ÕUWÑS‘Q	‰ˆXY˜[˜ÙYœ›ÛQ[™Y
+JHÂˆÝ\œ™[]™T^X˜XÚÐš]˜]K˜[YHH[ˆ\Ý]™T^X˜XÚÐš]˜]U\]S\ÈHˆØÜ›Ø˜›SX[˜YÙ\Ë›Û”ÛÛ™ÔÝÜ
+
+Bˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝÜ
+
+Bˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝÜ
+
+Bˆ\ØÛÜ™\]R›ØË˜Ø[˜Ù[
+
+BˆÝÜÜÝYžS\Ý[š[™Ò\ÝÜžJ
+BˆBˆB‚ˆÝ™\œšYH[ˆÛ”^UÚ[”™XYPÚ[™ÙY
+ˆ^UÚ[”™XYNˆ›ÛÛX[‹ˆ™X\ÛÛŽˆ[ˆ
+HÂˆËÈØY™]H™]ˆYˆØØ[^Y\ˆšY\ÈÈÝ\Ú[HØ\Ý[™Ë[[YYX][H]\ÙH]ˆYˆ
+^UÚ[”™XYH	‰ˆØ\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJHÂˆ^Y\‹œ]\ÙJ
+Bˆ™]\›‚ˆB‚ˆYˆ
+™X\ÛÛˆOH^Y\‹”VWÕÒS—Ô‘PQWÐÒS‘ÑWÔ‘PTÓÓ—ÕTÑT—Ô‘TUQTÕ
+HÂˆYˆ
+^UÚ[”™XYJHÂˆ\Ô]\ÙYžU›Û[YS]]HH˜[ÙBˆB‚ˆYˆ
+\^UÚ[”™XYH	‰ˆZ\Ô]\ÙYžU›Û[YS]]JHÂˆØ\Ô^Z[™Ð™Y›Ü™U›Û[YS]]HH˜[ÙBˆBˆB‚ˆËÈØ]™H\\ÛÙHÜÚ][ÛˆÚ[ˆ]\Ú[™ÂˆYˆ
+\^UÚ[”™XYJHÂˆ˜[Ý\œ™[Y]Y]HH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]BˆYˆ
+Ý\œ™[Y]Y]OËš\Ñ\\ÛÙHOHYH	‰ˆ^Y\‹˜Ý\œ™[ÜÚ][Ûˆˆ
+HÂˆØ]™Q\\ÛÙTÜÚ][ÛŠÝ\œ™[Y]Y]KšY^Y\‹˜Ý\œ™[ÜÚ][ÛŠBˆ™]š[Ý\Ñ\\ÛÙTÜÚ][ÛˆH^Y\‹˜Ý\œ™[ÜÚ][Û‚ˆBˆB‚ˆYˆ
+^UÚ[”™XYJHÂˆ\PØXÚYÝY™\ÜÑ[š[˜Ù\“›ÝÊ
+BˆBˆB‚ˆÝ™\œšYH[ˆÛ‘]™[Êˆ^Y\Žˆ^Y\‹ˆ]™[Îˆ^Y\‹‘]™[Ëˆ
+HÂˆYˆ
+]™[Ë˜ÛÛZ[œÐ[žJˆ^Y\‹‘U‘S•ÔVPPÒ×ÔÕUWÐÒS‘ÑQˆ^Y\‹‘U‘S•ÔVWÕÒS—Ô‘PQWÐÒS‘ÑQˆ
+Bˆ
+HÂˆØÚY[PÜ›ÜÜÙ˜YJ
+Bˆ˜[\ÐY™™\š[™ÓÜ”™XYHBˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÐ•Q‘‘T’S‘È^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQBˆYˆ
+\ÐY™™\š[™ÓÜ”™XYH	‰ˆ^Y\‹œ^UÚ[”™XYJHÂˆ˜[›ØÝ\ÑÜ˜[YH™\]Y\Ý]Y[Ñ›ØÝ\Ê
+BˆYˆ
+›ØÝ\ÑÜ˜[Y
+HÂˆÜ[]Y[ÑY™™XÝÙ\ÜÚ[ÛŠ
+BˆBˆH[ÙHYˆ
+^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÒQJHÂˆÛÜÙP]Y[ÑY™™XÝÙ\ÜÚ[ÛŠ
+BˆBˆBˆYˆ
+]™[Ë˜ÛÛZ[œÐ[žJˆU‘S•ÕSQSS‘WÐÒS‘ÑQˆU‘S•ÔÔÒUSÓ—ÑTÐÓÓ•S•RUKˆ^Y\‹‘U‘S•ÓQQPWÒUSWÕS”ÒUSÓ‹ˆ
+Bˆ
+HÂˆÝ\œ™[YYXSY]Y]K˜[YHH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]HÎˆ^Y\‹˜Ý\œ™[Y]Y]BˆBˆYˆ
+]™[Ë˜ÛÛZ[œÐ[žJˆ^Y\‹‘U‘S•ÕPÒÔ×ÐÒS‘ÑQˆ^Y\‹‘U‘S•ÓQQPWÒUSWÕS”ÒUSÓ‹ˆ^Y\‹‘U‘S•ÔVPPÒ×ÔÕUWÐÒS‘ÑQˆ
+Bˆ
+HÂˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊ^Y\‹˜Ý\œ™[˜XÚÜÊBˆB‚ˆËÈÚYÙ]\]\ÂˆYˆ
+]™[Ë˜ÛÛZ[œÐ[žJ^Y\‹‘U‘S•ÒT×ÔVRS‘×ÐÒS‘ÑQ
+JHÂˆ\]UÚYÙ]RJ^Y\‹š\Ô^Z[™ÊBˆYˆ
+^Y\‹š\Ô^Z[™ÊHÂˆÝ\ÚYÙ]\]\Ê
+BˆH[ÙHÂˆÝÜÚYÙ]\]\Ê
+BˆBˆYˆ
+\^Y\‹š\Ô^Z[™È	‰‚ˆY]™[Ë˜ÛÛZ[œÐ[žJˆ^Y\‹‘U‘S•ÔÔÒUSÓ—ÑTÐÓÓ•S•RUKˆ^Y\‹‘U‘S•ÓQQPWÒUSWÕS”ÒUSÓ‹ˆ
+Bˆ
+HÂˆØÛÜK›][˜ÚÂˆ\ØÛÜ™œÓX[˜YÙ\‹˜ÛX\Š
+BˆBˆBˆB‚ˆYˆ
+]™[Ë˜ÛÛZ[œÐ[žJˆ^Y\‹‘U‘S•ÓQQPWÒUSWÕS”ÒUSÓ‹ˆ^Y\‹‘U‘S•ÒT×ÔVRS‘×ÐÒS‘ÑQˆ
+H	‰ˆ^Y\‹š\Ô^Z[™Âˆ
+HÂˆ˜[YYXRYH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]OËšYÎˆÝ\œ™[YYXSY]Y]K˜[YOËšYÎˆ^Y\‹˜Ý\œ™[Y]Y]OËšYˆYˆ
+YYXRYOH[
+HÂˆØÛÜK›][˜ÚÂˆ]X˜\ÙKœÛÛ™ÊYYXRY
+K™š\œÝ
+
+OË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆBˆB‚ˆËÈØÜ›Ø˜›[™ÂˆYˆ
+]™[Ë˜ÛÛZ[œÐ[žJ^Y\‹‘U‘S•ÒT×ÔVRS‘×ÐÒS‘ÑQ
+JHÂˆØÜ›Ø˜›SX[˜YÙ\Ë›Û”^Y\”Ý]PÚ[™ÙY
+ˆ^Y\‹š\Ô^Z[™Ëˆ^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][ÛˆHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+BˆYˆ
+^Y\‹š\Ô^Z[™ÊHÂˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+ˆY]Y]HH^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][Û“\ÈHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+Bˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+ˆY]Y]HH^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][Û“\ÈHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+BˆH[ÙHÂˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™Ô]\ÙJ
+Bˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™Ô]\ÙJ
+BˆBˆBˆYˆ
+ˆ]™[Ë˜ÛÛZ[œÐ[žJˆ^Y\‹‘U‘S•ÒT×ÔVRS‘×ÐÒS‘ÑQˆ^Y\‹‘U‘S•ÔVWÕÒS—Ô‘PQWÐÒS‘ÑQˆ^Y\‹‘U‘S•ÔVPPÒ×ÔÕUWÐÒS‘ÑQˆ^Y\‹‘U‘S•ÓQQPWÒUSWÕS”ÒUSÓ‹ˆ
+Bˆ
+HÂˆ˜[ÜÝYžSY]Y]HH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]HÎˆÝ\œ™[YYXSY]Y]K˜[YHÎˆ^Y\‹˜Ý\œ™[Y]Y]Bˆ\]TÜÝYžS\Ý[š[™Ò\ÝÜžT^X˜XÚÔÝ]JˆY]Y]HHÜÝYžSY]Y]Kˆ\˜][ÛˆHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+BˆBˆB‚ˆÝ™\œšYH[ˆÛ”^X˜XÚÔ\˜[Y]\œÐÚ[™ÙY
+^X˜XÚÔ\˜[Y]\œÎˆ^X˜XÚÔ\˜[Y]\œÊHÂˆÝ\\^Y\‹“\Ý[™\‹›Û”^X˜XÚÔ\˜[Y]\œÐÚ[™ÙY
+^X˜XÚÔ\˜[Y]\œÊBˆYˆ
+^X˜XÚÔ\˜[Y]\œËœÜYYOH\Ý^X˜XÚÔÜYY
+HÂˆ\Ý^X˜XÚÔÜYYH^X˜XÚÔ\˜[Y]\œËœÜYYˆ\ØÛÜ™\]R›ØË˜Ø[˜Ù[
+
+Bˆ\ØÛÜ™\]R›ØˆBˆØÛÜK›][˜ÚÂˆ[^JL
+BˆYˆ
+^Y\‹œ^UÚ[”™XYH	‰ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQJHÂˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆBˆBˆB‚ˆš]˜]H[ˆÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+NˆÛ™ÏÈBˆ^Y\‹™\˜][Û‚ˆZÙRYˆÂˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQH	‰‚ˆ]OHË•SQWÕS”ÑU	‰‚ˆ]ˆˆB‚ˆš]˜]H[ˆÜÝYžR\ÝÜžT^X˜XÚÐXÝ]™J
+Nˆ›ÛÛX[ˆBˆ^Y\‹œ^UÚ[”™XYH	‰‚ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÒQH	‰‚ˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÑS‘Q‚ˆš]˜]H[ˆÝ\œ™[ÜÝYžT^X˜XÚÐÛÛ^\šJ
+NˆÝš[™ÏÈHÝ\œ™[]Y]YKœ^X˜XÚÐÛÛ^\šB‚ˆš]˜]H[ˆÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠY]Y]NˆYYXSY]Y]OÊNˆ›ÛÛX[ˆÂˆYˆ
+\ÜÝYžS\Ý[š[™Ò\ÝÜžQ[˜X›Y˜[YJH™]\›ˆ˜[ÙBˆYˆ
+ÜÝYžS\Ý[š[™Ò\ÝÜžQÛØ˜[˜[YJH™]\›ˆYBˆ™]\›ˆÝ\œ™[ÜÝYžT^X˜XÚÐÛÛ^\šJ
+OËœÝ\ÕÚ]
+œÜÝYžNˆ‹YÛ›Ü™PØ\ÙHHYJHOHYHˆY]Y]OËšYËš\ÔÜÝYžU˜XÚÔ^X˜XÚÒY
+
+HOHYHˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYËš\ÔÜÝYžU˜XÚÔ^X˜XÚÒY
+
+HOHYBˆB‚ˆš]˜]H[ˆÝš[™Ëš\ÔÜÝYžU˜XÚÔ^X˜XÚÒY
+
+Nˆ›ÛÛX[ˆBˆÝ\ÕÚ]
+œÜÝYžN˜XÚÎˆ‹YÛ›Ü™PØ\ÙHHYJB‚ˆš]˜]H[ˆÝ\ÜÝYžS\Ý[š[™Ò\ÝÜžRY[ÝÙY
+ˆY]Y]NˆYYXSY]Y]OËˆ\˜][ÛŽˆÛ™ÏËˆ
+HÂˆ˜[X[˜YÙ\ˆHÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ˆÎˆ™]\›‚ˆYˆ
+\^Y\‹œ^UÚ[”™XYJHÂˆÝÜÜÝYžS\Ý[š[™Ò\ÝÜžJ
+Bˆ™]\›‚ˆBˆYˆ
+\ÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠY]Y]JJHÂˆÝÜÜÝYžS\Ý[š[™Ò\ÝÜžJ
+Bˆ™]\›‚ˆBˆÜÝYžS\Ý[š[™Ò\ÝÜžTÛÝ\˜ÙP[ÝÙYHYBˆX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+ˆY]Y]HHY]Y]Kˆ\˜][ÛˆH\˜][Û‹ˆ^X˜XÚÐÛÛ^\šHHÝ\œ™[ÜÝYžT^X˜XÚÐÛÛ^\šJ
+Kˆ
+BˆB‚ˆš]˜]H[ˆ\]TÜÝYžS\Ý[š[™Ò\ÝÜžT^X˜XÚÔÝ]JˆY]Y]NˆYYXSY]Y]OËˆ\˜][ÛŽˆÛ™ÏËˆ
+HÂˆ˜[X[˜YÙ\ˆHÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\ˆÎˆ™]\›‚ˆ˜[[ÝÙYHÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠY]Y]JBˆYˆ
+X[ÝÙY
+HÂˆÝÜÜÝYžS\Ý[š[™Ò\ÝÜžJ
+Bˆ™]\›‚ˆBˆÜÝYžS\Ý[š[™Ò\ÝÜžTÛÝ\˜ÙP[ÝÙYHYBˆX[˜YÙ\‹›Û”^Y\”Ý]PÚ[™ÙY
+ˆ\Ô^Z[™ÈHÜÝYžR\ÝÜžT^X˜XÚÐXÝ]™J
+KˆY]Y]HHY]Y]Kˆ\˜][ÛˆH\˜][Û‹ˆ^X˜XÚÐÛÛ^\šHHÝ\œ™[ÜÝYžT^X˜XÚÐÛÛ^\šJ
+Kˆ
+BˆB‚ˆš]˜]H[ˆÝÜÜÝYžS\Ý[š[™Ò\ÝÜžJ
+HÂˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\Ë›Û”ÛÛ™ÔÝÜ
+
+BˆÜÝYžS\Ý[š[™Ò\ÝÜžTÛÝ\˜ÙP[ÝÙYH˜[ÙBˆB‚ˆš]˜]H[ˆÙYZÔÜÝYžS\Ý[š[™Ò\ÝÜžRY[ÝÙY
+ˆÜÚ][Û“\ÎˆÛ™Ëˆ\Ô^Z[™Îˆ›ÛÛX[‹ˆY]Y]NˆYYXSY]Y]OËˆ\˜][ÛŽˆÛ™ÏËˆ
+HÂˆYˆ
+\ÜÝYžS\Ý[š[™Ò\ÝÜžP[ÝÙY›ÜŠY]Y]JJHÂˆÝÜÜÝYžS\Ý[š[™Ò\ÝÜžJ
+Bˆ™]\›‚ˆBˆÜÝYžS\Ý[š[™Ò\ÝÜžTÛÝ\˜ÙP[ÝÙYHYBˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\Ë›Û”ÙYZÊˆÜÚ][Û“\ÈHÜÚ][Û“\Ëˆ\Ô^Z[™ÈH\Ô^Z[™ËˆY]Y]HHY]Y]Kˆ\˜][ÛˆH\˜][Û‹ˆ^X˜XÚÐÛÛ^\šHHÝ\œ™[ÜÝYžT^X˜XÚÐÛÛ^\šJ
+Kˆ
+BˆB‚ˆÝ™\œšYH[ˆÛ”ÚY™›S[ÙQ[˜X›YÚ[™ÙY
+ÚY™›S[ÙQ[˜X›Yˆ›ÛÛX[ŠHÂˆ\]S›ÝYšXØ][ÛŠ
+BˆYˆ
+ÚY™›S[ÙQ[˜X›Y
+HÂˆËÈYˆ]Y]YH\È[\KÛ‰ÝÚY™›BˆYˆ
+^Y\‹›YYXR][PÛÝ[OH
+H™]\›‚‚ˆ˜[ÚY™›T^[\Ýš\œÝH]TÝÜ™K™Ù]
+ÚY™›T^[\Ýš\œÝÙ^K˜[ÙJBˆ˜[Ý\œ™[[™^H^Y\‹˜Ý\œ™[YYXR][R[™^ˆ˜[Ý[ÛÝ[H^Y\‹›YYXR][PÛÝ[‚ˆ\TÚY™›SÜ™\ŠÝ\œ™[[™^Ý[ÛÝ[ÚY™›T^[\Ýš\œÝ
+BˆB‚ˆËÈØ]™HÚY™›H[ÙHÈ™Y™\™[˜Ù\ÂˆYˆ
+]TÝÜ™K™Ù]
+™[Y[X™\”ÚY™›P[™™\X]Ù^KYJJHÂˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™Y]ÈÙ][™ÜÈO‚ˆÙ][™ÜÖÔÚY™›S[ÙRÙ^WHHÚY™›S[ÙQ[˜X›YˆBˆBˆB‚ˆËÈØ]™HÝ]HÚ[ˆÚY™›H[ÙHÚ[™Ù\ÂˆYˆ
+ØXÚY\œÚ\Ý[]Y]YJHÂˆØ]™T]Y]YUÑ\ÚÊ
+BˆBˆB‚ˆÝ™\œšYH[ˆÛ”™\X][ÙPÚ[™ÙY
+™\X][ÙNˆ[
+HÂˆ\]S›ÝYšXØ][ÛŠ
+BˆØÛÜK›][˜ÚÂˆ]TÝÜ™K™Y]ÈÙ][™ÜÈO‚ˆÙ][™ÜÖÔ™\X][ÙRÙ^WHH™\X][ÙBˆBˆB‚ˆËÈØ]™HÝ]HÚ[ˆ™\X][ÙHÚ[™Ù\ÂˆYˆ
+ØXÚY\œÚ\Ý[]Y]YJHÂˆØ]™T]Y]YUÑ\ÚÊ
+BˆBˆB‚ˆÊŠ‚ˆ
+ˆ\Y\ÈH™]ÈÚY™›HÜ™\ˆÈH^Y\‹XZ[Z[š[™ÈHÝ\œ™[][IÜÈÜÚ][Û‹‚ˆ
+ˆYˆÚY™›T^[\Ýš\œÝ\ÈYK]][\ÈÈÚY™›HÜšYÚ[˜[][\ÈÙ\\˜][Hœ›ÛHYY][\Ë‚ˆ
+‹Âˆš]˜]H[ˆ\TÚY™›SÜ™\ŠˆÝ\œ™[[™^ˆ[ˆÝ[ÛÝ[ˆ[ˆÚY™›T^[\Ýš\œÝˆ›ÛÛX[‹ˆ
+HÂˆYˆ
+Ý[ÛÝ[OH
+H™]\›‚‚ˆYˆ
+ÚY™›T^[\Ýš\œÝ	‰ˆÜšYÚ[˜[]Y]YTÚ^™Hˆ	‰ˆÜšYÚ[˜[]Y]YTÚ^™HÝ[ÛÝ[
+HÂˆËÈÚY™›HÜšYÚ[˜[][\È[™YY][\ÈÙ\\˜][Bˆ˜[ÜšYÚ[˜[[™XÙ\ÈH
+[[ÜšYÚ[˜[]Y]YTÚ^™JK™š[\ˆÈ]OHÝ\œ™[[™^KÓ]]X›S\Ý
+
+Bˆ˜[YY[™XÙ\ÈH
+ÜšYÚ[˜[]Y]YTÚ^™H[[Ý[ÛÝ[
+K™š[\ˆÈ]OHÝ\œ™[[™^KÓ]]X›S\Ý
+
+B‚ˆÜšYÚ[˜[[™XÙ\ËœÚY™›J
+BˆYY[™XÙ\ËœÚY™›J
+B‚ˆ˜[ÚY™›Y[™XÙ\ÈH[\œ˜^JÝ[ÛÝ[
+Bˆ˜\ˆÜÈHˆÚY™›Y[™XÙ\ÖÜÜÊÊ×HHÝ\œ™[[™^‚ˆYˆ
+Ý\œ™[[™^ÜšYÚ[˜[]Y]YTÚ^™JHÂˆÜšYÚ[˜[[™XÙ\Ë™›Ü‘XXÚÈÚY™›Y[™XÙ\ÖÜÜÊÊ×HH]BˆYY[™XÙ\Ë™›Ü‘XXÚÈÚY™›Y[™XÙ\ÖÜÜÊÊ×HH]BˆH[ÙHÂˆ
+[[ÜšYÚ[˜[]Y]YTÚ^™JKœÚY™›Y
+
+K™›Ü‘XXÚÈÚY™›Y[™XÙ\ÖÜÜÊÊ×HH]BˆYY[™XÙ\Ë™›Ü‘XXÚÈÚY™›Y[™XÙ\ÖÜÜÊÊ×HH]BˆBˆ^Y\‹œÙ]ÚY™›SÜ™\ŠY˜][ÚY™›SÜ™\ŠÚY™›Y[™XÙ\ËÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+JJBˆH[ÙHÂˆ˜[ÚY™›Y[™XÙ\ÈH[\œ˜^JÝ[ÛÝ[
+HÈ]BˆÚY™›Y[™XÙ\ËœÚY™›J
+BˆËÈ[œÝ\™HÝ\œ™[][H\Èš\œÝ[ˆHÚY™›HÜ™\‚ˆ˜[Ý\œ™[][R[™^[”ÚY™›YHÚY™›Y[™XÙ\Ëš[™^ÙŠÝ\œ™[[™^
+BˆYˆ
+Ý\œ™[][R[™^[”ÚY™›YOHLJHÈËÈÚÝ[[Ø^\È™HYHYˆÝ[ÛÝ[ˆˆ˜[[\HÚY™›Y[™XÙ\ÖÌBˆÚY™›Y[™XÙ\ÖÌHHÚY™›Y[™XÙ\ÖØÝ\œ™[][R[™^[”ÚY™›YBˆÚY™›Y[™XÙ\ÖØÝ\œ™[][R[™^[”ÚY™›YHH[\ˆBˆ^Y\‹œÙ]ÚY™›SÜ™\ŠY˜][ÚY™›SÜ™\ŠÚY™›Y[™XÙ\ËÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+JJBˆBˆB‚ˆÊŠ‚ˆ
+ˆ^˜XÝÈH™\ÜÛœÙHÛÙHœ›ÛH[ˆ\œ›Ü‰ÜÈØ]\ÙHÚZ[‹‚ˆ
+ˆ™]\›œÈ[Yˆ›È™\ÜÛœÙHÛÙH\È›Ý[™‚ˆ
+‹Âˆš]˜]H[ˆÙ]™\ÜÛœÙPÛÙJ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠNˆ[ÈÂˆ˜\ˆØ]\ÙNˆ›ÝØX›OÈH\œ›Ü‹˜Ø]\ÙBˆÚ[H
+Ø]\ÙHOH[
+HÂˆYˆ
+Ø]\ÙH\È]TÛÝ\˜ÙK’[˜[Y™\ÜÛœÙPÛÙQ^Ù\[ÛŠHÂˆ™]\›ˆØ]\ÙKœ™\ÜÛœÙPÛÙBˆBˆØ]\ÙHHØ]\ÙK˜Ø]\ÙBˆBˆ™]\›ˆ[ˆB‚ˆÊŠ‚ˆ
+ˆÚXÚÜÈYˆH\œ›Üˆ\ÈØ]\ÙYžH[ˆ^\™YÙ›Ü˜šY[ˆT“
+ÊK‚ˆ
+ˆ\È\XØ[H\[œÈÚ[ˆH[ÝUX™HÝ™X[HT“^\™\Ë‚ˆ
+‹Âˆš]˜]H[ˆ\Ñ^\™Y\›\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠNˆ›ÛÛX[ˆÂˆ˜[™\ÜÛœÙPÛÙHHÙ]™\ÜÛœÙPÛÙJ\œ›ÜŠBˆ™]\›ˆ™\ÜÛœÙPÛÙHOHÂˆB‚ˆš]˜]H[ˆ\ÑÛÛ™U\›\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠNˆ›ÛÛX[ˆÂˆ˜[™\ÜÛœÙPÛÙHHÙ]™\ÜÛœÙPÛÙJ\œ›ÜŠBˆ™]\›ˆ™\ÜÛœÙPÛÙHOHLˆB‚ˆÊŠ‚ˆ
+ˆÚXÚÜÈYˆH\œ›Üˆ\ÈH˜[™ÙH›ÝØ]\ÙšXX›H\œ›Üˆ
+MŠK‚ˆ
+ˆ\È\[œÈÚ[ˆØXÚY]HÙ\Û‰ÝX]ÚHXÝX[Ý™X[HÚ^™K‚ˆ
+‹Âˆš]˜]H[ˆ\Ô˜[™ÙS›ÝØ]\ÙšXX›Q\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠNˆ›ÛÛX[ˆÂˆ˜[™\ÜÛœÙPÛÙHHÙ]™\ÜÛœÙPÛÙJ\œ›ÜŠBˆ™]\›ˆ™\ÜÛœÙPÛÙHOHM‚ˆB‚ˆÊŠ‚ˆ
+ˆÚXÚÜÈYˆH\œ›Üˆ\ÈHœYÙH™YYÈÈ™H™[ØYYˆ\œ›Ü‹‚ˆ
+ˆ\È\ÈH[ÝUX™K\ÜXÚYšXÈ\œ›Üˆ]™\]Z\™\È™Yœ™\Ú[™ÈHÝ™X[K‚ˆ
+‹Âˆš]˜]H[ˆ\ÔYÙT™[ØY\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠNˆ›ÛÛX[ˆÂˆ˜[\œ›Ü“Y\ÜØYÙHH\œ›Ü‹›Y\ÜØYÙOË›ÝÙ\˜Ø\ÙJ
+HÎˆˆ‚ˆ˜[Ø]\ÙSY\ÜØYÙHH\œ›Ü‹˜Ø]\ÙOË›Y\ÜØYÙOË›ÝÙ\˜Ø\ÙJ
+HÎˆˆ‚ˆ˜[[›™\Ø]\ÙSY\ÜØYÙHBˆ\œ›Ü‹˜Ø]\ÙBˆË˜Ø]\ÙBˆË›Y\ÜØYÙBˆË›ÝÙ\˜Ø\ÙJ
+HÎˆˆ‚‚ˆ˜[™[ØYÙ^]ÛÜ™ÈBˆ\ÝÙŠˆœYÙH™YYÈÈ™H™[ØYY‹ˆœYÚ[˜H]™H\ÜÙ\™HšXØ\šXØ]H‹ˆ›HYÚ[˜H]™H\ÜÙ\™HšXØ\šXØ]H‹ˆœYÙH]\Ý™H™[ØYY‹ˆœ™[ØY‹ˆœšXØ\šXØ]H‹ˆ
+B‚ˆ™]\›ˆ™[ØYÙ^]ÛÜ™Ë˜[žHÈÙ^]ÛÜ™O‚ˆ\œ›Ü“Y\ÜØYÙK˜ÛÛZ[œÊÙ^]ÛÜ™
+HˆØ]\ÙSY\ÜØYÙK˜ÛÛZ[œÊÙ^]ÛÜ™
+Hˆ[›™\Ø]\ÙSY\ÜØYÙK˜ÛÛZ[œÊÙ^]ÛÜ™
+BˆBˆB‚ˆš]˜]H[ˆ\Ó™]ÛÜšÔ™[]Y\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠNˆ›ÛÛX[ˆÂˆËÈÛ‰Ý™X]ÜXÚYšXÈ\œ›ÜœÈ\È™]ÛÜšÈ\œ›ÜœÈH^H™YYÜXÚX[[™[™ÂˆYˆ
+\Ñ^\™Y\›\œ›ÜŠ\œ›ÜŠH\ÑÛÛ™U\›\œ›ÜŠ\œ›ÜŠH\Ô˜[™ÙS›ÝØ]\ÙšXX›Q\œ›ÜŠ\œ›ÜŠH\ÔYÙT™[ØY\œ›ÜŠ\œ›ÜŠJHÂˆ™]\›ˆ˜[ÙBˆBˆ™]\›ˆ\œ›Ü‹™\œ›ÜÛÙHOH^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÒS×Ó‘UÓÔ’×ÐÓÓ“‘PÕSÓ—ÑRSQˆ\œ›Ü‹™\œ›ÜÛÙHOH^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÒS×Ó‘UÓÔ’×ÐÓÓ“‘PÕSÓ—ÕSQSÕUˆ\œ›Ü‹™\œ›ÜÛÙHOH^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÒS×ÒS•SQÒÐÓÓ•S•ÕTHˆ\œ›Ü‹˜Ø]\ÙH\È˜]˜K›™]ÛÛ›™XÝ^Ù\[Ûˆˆ\œ›Ü‹˜Ø]\ÙH\È˜]˜K›™]•[šÛ›ÝÛ’ÜÝ^Ù\[Ûˆˆ
+\œ›Ü‹˜Ø]\ÙH\ÏÈ^X˜XÚÑ^Ù\[ÛŠOË™\œ›ÜÛÙHOH^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÒS×Ó‘UÓÔ’×ÐÓÓ“‘PÕSÓ—ÑRSQˆB‚ˆÊŠ‚ˆ
+ˆÚXÚÜÈYˆH\œ›Üˆ\ÈØ]\ÙYžH]Y[Õ˜XÚÈÜš]HÜˆ[š]X[^˜][Ûˆ˜Z[\™\Ë‚ˆ
+ˆ\ÙH\œ›ÜœÈ[™XØ]HH]Y[È™[™\™\ˆ\È[ˆHÛÜœ\YÚ[˜[YÝ]K‚ˆ
+‹Âˆš]˜]H[ˆ\Ð]Y[Ô™[™\™\‘\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠNˆ›ÛÛX[ˆBˆ\œ›Ü‹™\œ›ÜÛÙHOH^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÐUQS×ÕPÒ×ÕÔ’UWÑRSQˆ\œ›Ü‹™\œ›ÜÛÙHOH^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÐUQS×ÕPÒ×ÒS’UÑRSQˆ
+\œ›Ü‹˜Ø]\ÙH\ÏÈ^X˜XÚÑ^Ù\[ÛŠOË™\œ›ÜÛÙHOvÛÍt¶‰žËkºwµçBˆ˜[™^›Ü›X]BˆÚ[ˆÂˆ\Ð[XÈ	‰ˆ›Ü›X]˜š]˜]Hˆ	‰ˆY›Ü›X]˜š]˜]Kš\Ô]\ÚX›P[XÐš]˜]J›Ü›X]œØ[\T˜]JHO‚ˆ›Ü›X]˜ÛÜJš]˜]HH
+Bˆ\Ð[XÈ	‰ˆ›Ü›X]˜š]˜]HH	‰ˆ^\Ý[™Ð[XÐš]˜]HOH[O‚ˆ›Ü›X]˜ÛÜJˆš]˜]HH^\Ý[™Ð[XÐš]˜]KˆØ[\T˜]HH›Ü›X]œØ[\T˜]HÎˆ^\Ý[™ÏËœØ[\T˜]Kˆ
+Bˆ[ÙHOˆ›Ü›X]ˆBˆ˜[^\Ý[™Ò\Ð˜Y[XÐš]˜]HBˆ\Ð[XÈ	‰‚ˆ^\Ý[™ÏË˜š]˜]OË›]È]ˆ	‰ˆZ]š\Ô]\ÚX›P[XÐš]˜]J^\Ý[™ÔØ[\T˜]JHHOHYBˆYˆ
+ˆ^\Ý[™ÈOH[ˆ^\Ý[™Ëš]YÈOH™^›Ü›X]š]YÈˆ^\Ý[™Ò\Ð˜Y[XÐš]˜]Hˆ
+\Ð[XÈ	‰ˆ™^›Ü›X]˜š]˜]Hˆ	‰ˆ^\Ý[™Ë˜š]˜]HH
+Hˆ
+^\Ý[™Ë˜š]˜]HH	‰ˆZ\Ð[XÊHˆ
+
+^\Ý[™ËœØ[\T˜]HOH[^\Ý[™ËœØ[\T˜]HH
+H	‰ˆ™^›Ü›X]œØ[\T˜]OË›]È]ˆHOHYJBˆ
+HÂˆ\Ù\
+™^›Ü›X]
+BˆBˆBˆX›\ÚÝ\œ™[^X˜XÚÑ›Ü›X]
+YYXRY]X˜\ÙK™Ù]›Ü›X]žRY›ØÚÚ[™ÊYYXRY
+HÎˆ›Ü›X]
+BˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘˜Z[YÈ™\ÝÜ™HØXÚYÝ™X[H›Ü›X]›Üˆ	YYXRYŠBˆBˆB‚ˆš]˜]H[ˆX›\ÚÝ\œ™[^X˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ›Ü›X]ˆ›Ü›X][]Kˆ
+HÂˆØÛÜK›][˜ÚÂˆ˜[Ý\œ™[YYXRYHÝ\œ™[YYXSY]Y]K˜[YOËšYÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆYˆ
+Ý\œ™[YYXRYOHYYXRY	‰ˆ›Ü›X]šYOHYYXRY
+HÂˆÝ\œ™[^X˜XÚÑ›Ü›X]˜[YHH›Ü›X]ˆBˆBˆB‚ˆš]˜]H[ˆ™Yœ™\ÚÝ\œ™[^X˜XÚÑ›Ü›X]œ›ÛQ]X˜\ÙJYYXRYˆÝš[™ÏÊHÂˆYˆ
+YYXRYš\Ó[Ü›[šÊ
+JHÂˆÝ\œ™[^X˜XÚÑ›Ü›X]˜[YHH[ˆ™]\›‚ˆB‚ˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÊHÂˆ˜[›Ü›X]Bˆ[Ø]Ú[™ÈÂˆ]X˜\ÙK™Ù]›Ü›X]žRY›ØÚÚ[™ÊYYXRY
+BˆK™Ù]Ü“[
+
+BˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆ˜[Ý\œ™[YYXRYHÝ\œ™[YYXSY]Y]K˜[YOËšYÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆYˆ
+Ý\œ™[YYXRYOHYYXRY
+HÂˆÝ\œ™[^X˜XÚÑ›Ü›X]˜[YHH›Ü›X]ˆBˆBˆBˆB‚ˆš]˜]HÝ\Ü[™[ˆ™[ØY™^˜XÚÊ\™Ù]ˆ™^˜XÚÔ™[ØY\™Ù]
+HÂˆ˜[YYXR][HH\™Ù]›YYXR][Bˆ˜[YYXRYHYYXR][K›YYXRY›Ü”^X˜XÚÔÛÝ\˜ÙJ
+HÎˆ™]\›‚ˆ˜[]Y]YYY]Y]HHYYXR][K›Y]Y]BˆYˆ
+ˆYYXRYš\Ð›[šÊ
+Hˆ]Y]YYY]Y]OËš\Ñ\\ÛÙHOHYHˆ]Y]YYY]Y]OËš\ÕšY[ÔÛÛ™ÈOHYHˆYYXRYš\ÓØØ[YYXRY
+
+Bˆ
+HÂˆ™]\›‚ˆB‚ˆ˜[ÛÛ™ÈH]X˜\ÙK™Ù]ÛÛ™ÐžRY›ØÚÚ[™ÊYYXRY
+BˆYˆ
+ÛÛ™ÏËœÛÛ™ÏËš\ÓØØ[OHYHÛÛ™ÏËœÛÛ™ÏËš\Ñ\\ÛÙHOHYJH™]\›‚‚ˆ˜[Ù[XÝ[Û’Ù^HHÝ\œ™[Ý™X[TÙ[XÝ[Û’Ù^J
+Bˆ˜[›ÝÈHÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+Bˆ˜[ØXÚY™\ÛÛ][ÛˆHÛÛ™Õ\›ØXÚVÛYYXRYOËZÙRYˆÂˆ]™^\™\Ð]\Èˆ›ÝÈ
+È‘SÐQÓRS—ÕT“ÓQ‘USQWÓTÈ	‰‚ˆ]œÙ[XÝ[Û’Ù^HOHÙ[XÝ[Û’Ù^BˆB‚ˆØXÚY™\ÛÛ][ÛË›]ÈØXÚYO‚ˆ˜[\™Ù]ž]\ÈH™^˜XÚÔ™[ØYÛXÞK\™Ù]ž]\Êˆ]Y]YQ\Ý[˜ÙHH\™Ù]œ]Y]YQ\Ý[˜ÙKˆš]˜]HHØXÚY™›Ü›X]˜š]˜]KˆÛÛ[[™ÝHØXÚY™›Ü›X]˜ÛÛ[[™Ýˆ
+Bˆ˜[ØXÚYž]\ÈHÛÛYÝ[Ý\ÐØXÚY™Yš^
+ØXÚY˜ØXÚRÙ^K\™Ù]ž]\ÊBˆYˆ
+ØXÚYž]\ÈH\™Ù]ž]\ÊHÂˆ[X™\‹YÊ‘SÐQÕQÊK™
+ˆØXÚH]ˆYYXRYI\È\Ý[˜ÙOIYØXÚYIY\™Ù]IYØXÚRÙ^OI\È‹ˆYYXRYˆ\™Ù]œ]Y]YQ\Ý[˜ÙKˆØXÚYž]\Ëˆ\™Ù]ž]\ËˆØXÚY˜ØXÚRÙ^Kˆ
+Bˆ™]\›‚ˆBˆB‚ˆ˜[™\ÛÛ™YHØXÚY™\ÛÛ][ÛËÔ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠ
+HÎˆ[ˆÂˆÛÛ™Õ\›ØXÚKœ™[[Ý™JYYXRY
+Bˆ˜[™\ÛÛ][ÛˆH™\ÛÛ™SÛ›[™TÝ™X[JˆYYXRYHYYXRYˆÛÛ™ÈHÛÛ™Ëˆ]Y]YYY]Y]HH]Y]YYY]Y]Kˆ[ÝÕ\Ù\‘™YY˜XÚÈH˜[ÙKˆ
+Bˆ]X˜\ÙKœ]Y\žHÂˆ]Y]YYY]Y]Q›Ü”^X˜XÚÑ]X˜\ÙJYYXRYÛÛ™ÊOË›]È[œÙ\
+]
+HBˆ\Ù\
+™\ÛÛ][Û‹™›Ü›X]
+BˆBˆÛÛ™Õ\›ØXÚVÛYYXRYHH™\ÛÛ][Û‹ÐØXÚYÛÛ™ÔÝ™X[JÙ[XÝ[Û’Ù^JBˆ™\ÛÛ][Û‚ˆB‚ˆYˆ
+\™\ÛÛ™YœÝ\ÜÔ›ÙÜ™\ÜÚ]™T™[ØY
+
+JHÂˆ[X™\‹YÊ‘SÐQÕQÊK™
+ˆ”ÚÚ\Y[œÝ\ÜYÝ™X[NˆYYXRYI\ÈZ[YOI\ÈØXÚRÙ^OI\È‹ˆYYXRYˆ™\ÛÛ™Y›Z[YU\Kˆ™\ÛÛ™Y˜ØXÚRÙ^Kˆ
+Bˆ™]\›‚ˆB‚ˆ˜[\™Ù]ž]\ÈH™^˜XÚÔ™[ØYÛXÞK\™Ù]ž]\Êˆ]Y]YQ\Ý[˜ÙHH\™Ù]œ]Y]YQ\Ý[˜ÙKˆš]˜]HH™\ÛÛ™Y™›Ü›X]˜š]˜]KˆÛÛ[[™ÝH™\ÛÛ™Y™›Ü›X]˜ÛÛ[[™Ýˆ
+Bˆ˜[ØXÚY™Y›Ü™HHÛÛYÝ[Ý\ÐØXÚY™Yš^
+™\ÛÛ™Y˜ØXÚRÙ^K\™Ù]ž]\ÊBˆ˜[Z\ÜÚ[™Ô˜[™ÙHH™^˜XÚÔ™[ØYÛXÞK›Z\ÜÚ[™Ô˜[™ÙJØXÚY™Y›Ü™K\™Ù]ž]\ÊBˆYˆ
+Z\ÜÚ[™Ô˜[™ÙHOH[
+HÂˆ[X™\‹YÊ‘SÐQÕQÊK™
+ˆØXÚH]ˆYYXRYI\È\Ý[˜ÙOIYØXÚYIY\™Ù]IYØXÚRÙ^OI\È‹ˆYYXRYˆ\™Ù]œ]Y]YQ\Ý[˜ÙKˆØXÚY™Y›Ü™Kˆ\™Ù]ž]\Ëˆ™\ÛÛ™Y˜ØXÚRÙ^Kˆ
+Bˆ™]\›‚ˆB‚ˆ[X™\‹YÊ‘SÐQÕQÊK™
+ˆ”Ý\[™ÎˆYYXRYI\È\Ý[˜ÙOIY\™Ù]IYØXÚY™Y›Ü™OIY›ÝšY\I\ÈØXÚRÙ^OI\È‹ˆYYXRYˆ\™Ù]œ]Y]YQ\Ý[˜ÙKˆ\™Ù]ž]\ËˆØXÚY™Y›Ü™Kˆ™\ÛÛ™Yœ›ÝšY\“X™[
+
+Kˆ™\ÛÛ™Y˜ØXÚRÙ^Kˆ
+Bˆ˜[Ý\Y]HÞ\Ý[K›˜[›Õ[YJ
+Bˆ˜[]TÛÝ\˜ÙHHÜ™X]PØXÚQ]TÛÝ\˜ÙJ
+K˜Ü™X]Q]TÛÝ\˜ÙJ
+Bˆ˜\ˆ™XYž]\ÈHˆ[’[\œ\X›J\Ü]Ú\œË’SÊHÂˆžHÂˆ]TÛÝ\˜ÙK›Ü[Šˆ]TÜXËZ[\Š
+BˆœÙ]\šJ™\ÛÛ™Y\šJBˆœÙ]Ù^J™\ÛÛ™Y˜ØXÚRÙ^JBˆœÙ]ÜÚ][ÛŠZ\ÜÚ[™Ô˜[™ÙKœÜÚ][ÛŠBˆœÙ][™Ý
+Z\ÜÚ[™Ô˜[™ÙK›[™Ý
+Bˆ˜Z[
+
+Kˆ
+Bˆ˜[Y™™\ˆHž]P\œ˜^J‘SÐQÔ‘PQÐ•Q‘‘T—Ð–UTÊBˆÚ[H
+™XYž]\ÈZ\ÜÚ[™Ô˜[™ÙK›[™Ý	‰ˆU™XY˜Ý\œ™[™XY
+
+Kš\Ò[\œ\Y
+HÂˆ˜[™\]Y\ÝYHZ[“ÙŠY™™\‹œÚ^™KÓÛ™Ê
+KZ\ÜÚ[™Ô˜[™ÙK›[™ÝH™XYž]\ÊKÒ[
+
+Bˆ˜[™XYH]TÛÝ\˜ÙKœ™XY
+Y™™\‹™\]Y\ÝY
+BˆYˆ
+™XYOHË”‘TÕSÑS‘ÓÑ—ÒS”U
+Hœ™XZÂˆYˆ
+™XYH
+Hœ™XZÂˆ™XYž]\È
+ÏH™XYˆBˆHš[˜[HÂˆ[Ø]Ú[™Ê]TÛÝ\˜ÙNŽ˜ÛÜÙJBˆBˆB‚ˆ˜[ØXÚYY\ˆHÛÛYÝ[Ý\ÐØXÚY™Yš^
+™\ÛÛ™Y˜ØXÚRÙ^K\™Ù]ž]\ÊBˆ˜[[\ÙY\ÈH[YU[š]“S“ÔÑPÓÓ‘ËÓZ[\ÊÞ\Ý[K›˜[›Õ[YJ
+HHÝ\Y]
+Bˆ[X™\‹YÊ‘SÐQÕQÊK™
+ˆÛÛ\]YˆYYXRYI\ÈØXÚY™Y›Ü™OIYØXÚYY\IYÝÛ›ØYYIY[\ÙY\ÏIY›ÝšY\I\ÈØXÚRÙ^OI\È‹ˆYYXRYˆØXÚY™Y›Ü™KˆØXÚYY\‹ˆ
+ØXÚYY\ˆHØXÚY™Y›Ü™JK˜ÛÙ\˜ÙP]X\Ý
+™XYž]\Ë˜ÛÙ\˜ÙP][ÜÝ
+Z\ÜÚ[™Ô˜[™ÙK›[™Ý
+JKˆ[\ÙY\Ëˆ™\ÛÛ™Yœ›ÝšY\“X™[
+
+Kˆ™\ÛÛ™Y˜ØXÚRÙ^Kˆ
+BˆB‚ˆš]˜]H[ˆÛÛYÝ[Ý\ÐØXÚY™Yš^
+ˆØXÚRÙ^NˆÝš[™Ëˆ\™Ù]ž]\ÎˆÛ™Ëˆ
+NˆÛ™ÈÂˆYˆ
+\™Ù]ž]\ÈH
+H™]\›ˆˆ˜[ØXÚY[™ÝH^Y\ØXÚK™Ù]ØXÚY[™Ý
+ØXÚRÙ^K\™Ù]ž]\ÊBˆ™]\›ˆØXÚY[™ÝZÙRYˆÈ]ˆOË˜ÛÙ\˜ÙP][ÜÝ
+\™Ù]ž]\ÊHÎˆˆB‚ˆš]˜]H[ˆØXÚYÛÛ™ÔÝ™X[KÔ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠ
+HBˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHH\šKˆ^\™\Ð]\ÈH^\™\Ð]\ËˆØXÚRÙ^HHØXÚRÙ^Kˆ›Ü›X]H›Ü›X]ˆZ[YU\HHZ[YU\Kˆ›SXÙ[œÙU\šHH›SXÙ[œÙU\šKˆÚYHÚYˆXÜž\[Û’Ù^HHXÜž\[Û’Ù^Kˆ
+B‚ˆš]˜]H[ˆ^X˜XÚÔÝ™X[T™\ÛÛ][Û‹ÐØXÚYÛÛ™ÔÝ™X[JÙ[XÝ[Û’Ù^NˆÝš[™ÊHBˆØXÚYÛÛ™ÔÝ™X[Jˆ\šHH\šKˆ^\™\Ð]\ÈH^\™\Ð]\ËˆØXÚRÙ^HHØXÚRÙ^KˆÙ[XÝ[Û’Ù^HHÙ[XÝ[Û’Ù^Kˆ›Ü›X]H›Ü›X]ˆZ[YU\HHZ[YU\Kˆ›SXÙ[œÙU\šHH›SXÙ[œÙU\šKˆÚYHÚYˆXÜž\[Û’Ù^HHXÜž\[Û’Ù^Kˆ
+B‚ˆš]˜]H[ˆ^X˜XÚÔÝ™X[T™\ÛÛ][Û‹œÝ\ÜÔ›ÙÜ™\ÜÚ]™T™[ØY
+
+Nˆ›ÛÛX[ˆÂˆ˜[\œÙY\šHH\šKÕ\šJ
+Bˆ˜[ØÚ[YHH\œÙY\šKœØÚ[YOË›ÝÙ\˜Ø\ÙJØØ[K•TÊBˆ˜[]H\œÙY\šKœ]›Ü‘[\J
+K›ÝÙ\˜Ø\ÙJØØ[K•TÊBˆ™]\›ˆ›SXÙ[œÙU\šKš\Ó[Ü›[šÊ
+H	‰‚ˆ[\š[T]š\Ó[Ü›[šÊ
+H	‰‚ˆXØXÚRÙ^KœÝ\ÕÚ]
+SPV“Ó—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+H	‰‚ˆ\œÙY\šK™Ù]]Y\žT\˜[Y]\ŠÛÝ[™ÛÝY]Y[Ô›ÝšY\‹”Õ‘PSWÒ×ÓPT’ÑT—ÔUQT–JHOHŒHˆ	‰‚ˆZ[YU\HOHZ[YU\\ËTPÐUSÓ—ÓT	‰‚ˆZ[YU\HOHZ[YU\\ËTPÐUSÓ—ÓLÕN	‰‚ˆ\]™[™ÕÚ]
+‹›\ŠH	‰‚ˆ\]™[™ÕÚ]
+‹›LÝNŠH	‰‚ˆ
+ØÚ[YHOHšˆØÚ[YHOHšÈˆY^™\]Y[Ñ]TÛÝ\˜ÙKš\ÑY^™\•\šJ\œÙY\šJJBˆB‚ˆš]˜]H[ˆ^X˜XÚÔÝ™X[T™\ÛÛ][Û‹œ›ÝšY\“X™[
+
+NˆÝš[™ÈBˆÚ[ˆÂˆØXÚRÙ^KœÝ\ÕÚ]
+SÐ•V—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+HOˆœ[Ø^ˆ‚ˆ\ÕY[˜[˜XÚÐØXÚRÙ^JØXÚRÙ^JHOˆY[‚ˆØXÚRÙ^KœÝ\ÕÚ]
+QV‘T—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+HOˆ™Y^™\ˆ‚ˆØXÚRÙ^KœÝ\ÕÚ]
+ÓÕS‘ÓÕQÑSPÒ×ÐÐPÒWÔ‘Q’V
+HOˆœÛÝ[™ÛÝY‚ˆØXÚRÙ^KœÝ\ÕÚ]
+S”ÕQÔSWÑSPÒ×ÐÐPÒWÔ‘Q’V
+HOˆš[œÝYÜ˜[H‚ˆØXÚRÙ^KœÝ\ÕÚ]
+TWÓUTÒP×ÑSPÒ×ÐÐPÒWÔ‘Q’V
+HOˆ˜\H‚ˆØXÚRÙ^KœÝ\ÕÚ]
+SPV“Ó—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+HOˆ˜[X^›Ûˆ‚ˆØXÚRÙ^KœÝ\ÕÚ]
+SÕUP‘WÑSPÒ×ÐÐPÒWÔ‘Q’V
+HOˆž[Ý]X™H‚ˆØXÚRÙ^KœÝ\ÕÚ]
+T‘PÕÒÐUQS×ÐÐPÒWÔ‘Q’V
+HOˆ™\™XÝ‚ˆ[ÙHOˆ[šÛ›ÝÛˆ‚ˆB‚ˆš]˜]H[ˆ[˜[Y]T™\ÛÛ™Y›ÝšY\”Ý™X[JYYXRYˆÝš[™ÊHÂˆÛÛ™Õ\›ØXÚKœ™[[Ý™JYYXRY
+Bˆ[Ø^]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+BˆY[]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+BˆY^™\]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+Bˆ[X^›Û]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+BˆÛÝ[™ÛÝY]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+Bˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+Bˆ[ÝUX™P]Y[Ô›ÝšY\‹š[˜[Y]JYYXRY
+BˆB‚ˆš]˜]H[ˆ™[[Ý™PØXÚY]Y[ÊYYXRYˆÝš[™ÊHÂˆ˜[Ù^\ÈBˆ
+ˆ^X˜XÚÐØXÚR[™^šÙ^\Ñ›Ü“YYXRY
+^Y\ØXÚKšÙ^\ËYYXRY
+H
+Âˆ^X˜XÚÐØXÚR[™^šÙ^\Ñ›Ü“YYXRY
+ÝÛ›ØYØXÚKšÙ^\ËYYXRY
+H
+ÂˆYYXRYˆ
+K™\Ý[˜Ý
+
+BˆÙ^\Ë™›Ü‘XXÚÈÙ^HO‚ˆ^Y\ØXÚKœ™[[Ý™T™\ÛÝ\˜ÙJÙ^JBˆÝÛ›ØYØXÚKœ™[[Ý™T™\ÛÝ\˜ÙJÙ^JBˆBˆB‚ˆš]˜]H[ˆš[™ÛÛ\]PØXÚYÙ^JˆYYXRYˆÝš[™Ëˆ˜[˜XÚÐÛÛ[[™ÝˆÛ™ÏËˆ
+NˆÝš[™ÏÈÂˆ˜[Ý™\œšYHH›ÝšY\“X]ÚÝ™\œšY\Ë™XÛÙJ]TÝÜ™K™Ù]
+]Y[Ô›ÝšY\“X]ÚÝ™\œšY\ÒÙ^KˆŠJVÛYYXRYBˆ˜[™Y™\œ™Y›ÝšY\’Ù^\ÈBˆZ[\ÝÂˆÝ™\œšYOËœ›ÝšY\Ë›]ÈY
+ØXÚRÙ^Q›Ü”›ÝšY\Š]YYXRY
+JHBˆÛÛ™Õ\›ØXÚVÛYYXRYOË˜ØXÚRÙ^OË›]
+Ž˜Y
+BˆY
+YYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\‹™\Ù\šX[^™J]TÝÜ™K™Ù]
+]Y[Ô›ÝšY\“Ü™\’Ù^KˆŠJBˆ›X\Ê\ÊHÈ›ÝšY\ˆOˆØXÚRÙ^Q›Ü”›ÝšY\Š›ÝšY\‹YYXRY
+HBˆBˆ˜[\ØÛÝ™\™YÙ^\ÈBˆ^X˜XÚÐØXÚR[™^šÙ^\Ñ›Ü“YYXRY
+^Y\ØXÚKšÙ^\È
+ÈÝÛ›ØYØXÚKšÙ^\ËYYXRY
+Bˆ™]\›ˆ
+™Y™\œ™Y›ÝšY\’Ù^\È
+È\ØÛÝ™\™YÙ^\ÊBˆ™\Ý[˜Ý
+
+Bˆ™š\œÝÜ“[ÈÙ^HO‚ˆÝÛ›ØYØXÚKš\Ñ[PØXÚY
+Ù^K˜[˜XÚÐÛÛ[[™Ý
+Hˆ^Y\ØXÚKš\Ñ[PØXÚY
+Ù^K˜[˜XÚÐÛÛ[[™Ý
+BˆBˆB‚ˆš]˜]H[ˆØXÚRÙ^Q›Ü”›ÝšY\Šˆ›ÝšY\Žˆ]Y[Ô›ÝšY\“Ü™\’][KˆYYXRYˆÝš[™Ëˆ
+NˆÝš[™ÈBˆÚ[ˆ
+›ÝšY\ŠHÂˆ]Y[Ô›ÝšY\“Ü™\’][K”ÓÕS‘ÓÕQOˆÛÝ[™ÛÝY˜[˜XÚÐØXÚRÙ^JYYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\’][K•QSOˆY[˜[˜XÚÐØXÚRÙ^JYYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\’][K‘QV‘TˆOˆY^™\‘˜[˜XÚÐØXÚRÙ^JYYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\’][K’S”ÕQÔSHOˆ[œÝYÜ˜[Q˜[˜XÚÐØXÚRÙ^JYYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\’][K–SÕUP‘WÓUTÒPÈOˆ[Ý]X™Q˜[˜XÚÐØXÚRÙ^JYYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\’][K”SÐ•VˆOˆ[Ø^‘˜[˜XÚÐØXÚRÙ^JYYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\’][KSPV“Ó—ÓUTÒPÈOˆ[X^›Û‘˜[˜XÚÐØXÚRÙ^JYYXRY
+Bˆ]Y[Ô›ÝšY\“Ü™\’][KTWÓUTÒPÈOˆ\S]\ÚXÑ˜[˜XÚÐØXÚRÙ^JYYXRY
+BˆB‚ˆš]˜]H[ˆ™\ÛÛ™T^X˜XÚÔÝ™X[P›ØÚÚ[™ÊˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆ]Y]YYY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ‘‘UÒS‘ÈVPPÒÈÕ‘PSNˆ	YYXRYŠBˆ™]\›ˆ[Ø]Ú[™ÈÂˆ[›ØÚÚ[™Ê\Ü]Ú\œË’SÊHÂˆ™\ÛÛ™SÛ›[™TÝ™X[JYYXRYÛÛ™Ë]Y]YYY]Y]JBˆBˆK™Ù]Ü‘[ÙHÈ›ÝØX›HO‚ˆÚ[ˆ
+›ÝØX›JHÂˆ\È^X˜XÚÑ^Ù\[ÛˆOˆ›ÝÈ›ÝØX›Bˆ\È˜]˜K›™]ÛÛ›™XÝ^Ù\[Û‹\È˜]˜K›™]•[šÛ›ÝÛ’ÜÝ^Ù\[ÛˆOˆÂˆ›ÝÈ^X˜XÚÑ^Ù\[ÛŠˆÙ]Ýš[™Ê‹œÝš[™Ë™\œ›Ü—Û›×Ú[\›™]
+Kˆ›ÝØX›Kˆ^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÒS×Ó‘UÓÔ’×ÐÓÓ“‘PÕSÓ—ÑRSQˆ
+BˆBˆ\È˜]˜K›™]”ÛØÚÙ][Y[Ý]^Ù\[ÛˆOˆÂˆ›ÝÈ^X˜XÚÑ^Ù\[ÛŠˆÙ]Ýš[™Ê‹œÝš[™Ë™\œ›Ü—Ý[Y[Ý]
+Kˆ›ÝØX›Kˆ^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÒS×Ó‘UÓÔ’×ÐÓÓ“‘PÕSÓ—ÕSQSÕUˆ
+BˆBˆ[ÙHOˆÂˆ›ÝÈ^X˜XÚÑ^Ù\[ÛŠˆÙ]Ýš[™Ê‹œÝš[™Ë™\œ›Ü—Ý[šÛ›ÝÛŠKˆ›ÝØX›Kˆ^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÔ‘SSÕWÑT”“Ô‹ˆ
+BˆBˆBˆBˆB‚ˆš]˜]HÝ\Ü[™[ˆ™\ÛÛ™SÛ›[™TÝ™X[JˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆ]Y]YYY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ[ÝÕ\Ù\‘™YY˜XÚÎˆ›ÛÛX[ˆHYKˆ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆÂˆYˆ
+YYXRYÕ\šJ
+Kš\ÕY[^X˜XÚÐÙ•\šJ
+JHÂˆ™]\›ˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHYYXRYˆ^\™\Ð]\ÈHÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+H
+ÈH
+ˆŒ
+ˆLˆØXÚRÙ^HHYYXRYˆ›Ü›X]HY[\™XÝ^X˜XÚÑ›Ü›X]
+YYXRY
+KˆZ[YU\HHZ[YU\\ËUQS×ÓTˆ
+BˆBˆYˆ
+YYXRYÕ\šJ
+Kš\Ñ\™XÝ]Y[Õ\šJ
+JHÂˆ˜[Z[YU\HHYYXRY™\™XÝ]Y[ÓZ[YU\J
+Bˆ™]\›ˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHYYXRYˆ^\™\Ð]\ÈHÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+H
+Èˆ
+ˆŒ
+ˆŒ
+ˆLˆØXÚRÙ^HH\™XÝ]Y[ÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]H\™XÝ]Y[Ñ›Ü›X]
+YYXRYZ[YU\JKˆZ[YU\HHZ[YU\Kˆ
+BˆBˆ˜[Y[]X[]HH]TÝÜ™K™Ù]Ýš[™ÏŠY[]Y[Ô]X[]RÙ^JKÑ[[JY[]Y[Ô]X[]KPP×ÌÌŒ
+Bˆ˜[Y[™\ÛÛ™\‘[™Ú[ÈH]TÝÜ™K™Ù]
+Y[™\ÛÛ™\‘[™Ú[ÒÙ^KšÎ‹ËÚYØ[Y][ŒLY^‹ZYšKX\Kš‹œÜXÙKÈŠBˆ˜[Y^™\”™\ÛÛ™\•\›H]TÝÜ™K™Ù]
+Y^™\”™\ÛÛ™\•\›Ù^KY^™\]Y[Ô›ÝšY\‹‘QUSÔ‘TÓÓ‘T—ÕT“
+Bˆ˜[Y^™\”]X[]HH]TÝÜ™K™Ù]Ýš[™ÏŠY^™\]Y[Ô]X[]RÙ^JKÑ[[JY^™\]Y[Ô]X[]K“T×ÌLŽ
+Bˆ˜[Y^™\‘˜\Ý[ÙHH]TÝÜ™K™Ù]
+Y^™\‘˜\Ý[ÙRÙ^K˜[ÙJBˆ˜[ÛÛ™šYÝ\™YY^™\”›ÞU\›H]TÝÜ™K™Ù]
+Y^™\”›ÞU\›Ù^KY^™\]Y[Ô›ÝšY\‹‘QUSÔ“ÖWÕT“
+Bˆ˜[Y^™\”›ÞU\›HY^™\]Y[Ô›ÝšY\‹™Y™™XÝ]™T›ÞU\›
+ˆÛÛ™šYÝ\™Y›ÞS[ÙU˜[YHH]TÝÜ™K™Ù]
+Y^™\”›ÞS[ÙRÙ^KˆŠKˆÛÛ™šYÝ\™Y›ÞU\›HÛÛ™šYÝ\™YY^™\”›ÞU\›ˆÛØ˜[›ÞQ[˜X›YH]TÝÜ™K™Ù]
+›ÞQ[˜X›YÙ^K˜[ÙJKˆ
+Bˆ˜[ÝÜÛ”›ÝšY\‘\œ›ÜˆH]TÝÜ™K™Ù]
+ÝÜÛ”›ÝšY\‘\œ›Ü’Ù^K˜[ÙJBˆ˜[]Y[Ô›ÝšY\“Ü™\ˆH]Y[Ô›ÝšY\“Ü™\‹™\Ù\šX[^™J]TÝÜ™K™Ù]
+]Y[Ô›ÝšY\“Ü™\’Ù^KˆŠJBˆ˜[›ÝšY\“Ý™\œšYHH›ÝšY\“X]ÚÝ™\œšY\Ë™XÛÙJ]TÝÜ™K™Ù]
+]Y[Ô›ÝšY\“X]ÚÝ™\œšY\ÒÙ^KˆŠJVÛYYXRYBˆ˜[[œÝYÜ˜[PÛÛÚÚYHH]TÝÜ™K™Ù]
+[œÝYÜ˜[PÛÛÚÚYRÙ^KˆŠBˆ˜[[œÝYÜ˜[U\Ù\YÙ[H]TÝÜ™K™Ù]
+[œÝYÜ˜[U\Ù\YÙ[Ù^K[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÕTÑT—ÐQÑS•
+BˆZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÕTÑT—ÐQÑS•ˆ˜[[œÝYÜ˜[P\YH]TÝÜ™K™Ù]
+[œÝYÜ˜[P\YÙ^K[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÐTÒQ
+BˆZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹‘QUSÐTÒQˆ˜[[œÝYÜ˜[U]ZYH]TÝÜ™K™Ù]
+[œÝYÜ˜[U]ZYÙ^KˆŠBˆ˜[ÛÝ[™ÛÝY]]ÚÙ[ˆH]TÝÜ™K™Ù]
+ÛÝ[™ÛÝY]]ÚÙ[’Ù^KˆŠBˆ˜[ÛÝ[™ÛÝY]X[]HH]TÝÜ™K™Ù]Ýš[™ÏŠÛÝ[™ÛÝY]Y[Ô]X[]RÙ^JKÑ[[JÛÝ[™ÛÝY]Y[Ô]X[]KPP×ÌMŒ
+Bˆ˜[\™XÝY[YYXRYHY[]Y[Ô›ÝšY\‹š\ÕY[˜XÚÒY
+YYXRY
+Bˆ˜[\™XÝY^™\“YYXRYHY^™\]Y[Ô›ÝšY\‹š\ÑY^™\•˜XÚÒY
+YYXRY
+Bˆ˜[\™XÝÛÝ[™ÛÝYYYXRYHÛÝ[™ÛÝY]Y[Ô›ÝšY\‹š\ÔÛÝ[™ÛÝY\›
+YYXRY
+Bˆ˜[\™XÝY[\Ù\ÑY^™\”Ý™X[\ÈH\™XÝY[YYXRYˆ˜[ÚÚ\Y[]™SX[šY™\Ý›Ü•\Ð][\BˆÚÚ\Y[]™SX[šY™\ÝÛ˜ÙSYYXRYËœ™[[Ý™JYYXRY
+HˆY[›ÙÜ™\ÜÚ]™T™Y™\œ™YYYXRYË˜ÛÛZ[œÊYYXRY
+B‚ˆ[ˆ[Ø^]Y[Ô›ÝšY\‹”™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆBˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHYYXU\šKˆ^\™\Ð]\ÈH^\™\Ð]\ËˆØXÚRÙ^HH[Ø^‘˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]H[Ø^‘˜[˜XÚÑ›Ü›X]
+YYXRY\ÊKˆZ[YU\HHZ[YU\\ËUQS×ÓTˆ
+B‚ˆ[ˆY[]Y[Ô›ÝšY\‹”™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆBˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHYYXU\šKˆ^\™\Ð]\ÈH^\™\Ð]\ËˆØXÚRÙ^HHY[˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]HY[˜[˜XÚÑ›Ü›X]
+YYXRY\ÊKˆZ[YU\HHZ[YU\Kˆ
+B‚ˆ[ˆY^™\]Y[Ô›ÝšY\‹”™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆBˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHYYXU\šKˆ^\™\Ð]\ÈH^\™\Ð]\ËˆØXÚRÙ^HHY^™\‘˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]HY^™\‘˜[˜XÚÑ›Ü›X]
+YYXRY\ÊKˆZ[YU\HHZ[YU\\ËUQS×ÓTQËˆ
+B‚ˆ[ˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹”™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆBˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHYYXU\šKˆ^\™\Ð]\ÈH^\™\Ð]\ËˆØXÚRÙ^HH[œÝYÜ˜[Q˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]H[œÝYÜ˜[Q˜[˜XÚÑ›Ü›X]
+YYXRY\ÊKˆZ[YU\HHZ[YU\Kˆ
+B‚ˆ[ˆ\P]Y[Ô›ÝšY\‹”™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆBˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHYYXU\šKˆ^\™\Ð]\ÈH^\™\Ð]\ËˆØXÚRÙ^HH\S]\ÚXÑ˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]H\S]\ÚXÑ˜[˜XÚÑ›Ü›X]
+YYXRY\ÊKˆZ[YU\HHZ[YU\Kˆ
+B‚ˆ[ˆ›ÝÔ›ÝšY\‘˜Z[\™Jˆ›ÝšY\ŽˆÝš[™Ëˆ\œ›ÜŽˆ›ÝØX›OËˆ
+Nˆ›Ý[™ÈÂˆ˜[Ø]\ÙHH\œ›ÜˆÎˆ[YØ[Ý]Q^Ù\[ÛŠ‰›ÝšY\ˆ˜Z[YŠBˆ›ÝÈ^X˜XÚÑ^Ù\[ÛŠˆ‰›ÝšY\ˆ˜Z[Yˆ	ØØ]\ÙKœ™XYX›SY\ÜØYÙJ
+_H‹ˆØ]\ÙKˆ^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÔ‘SSÕWÑT”“Ô‹ˆ
+BˆB‚ˆ[ˆÚÝÔ›ÝšY\•Ø\›š[™ÊY\ÜØYÙNˆÝš[™ÊHÂˆYˆ
+[ÝÕ\Ù\‘™YY˜XÚÊHÂˆÚÝÔ^X˜XÚÕØ\Ý
+Y\ÜØYÙJBˆBˆB‚ˆ˜\ˆÛÝ[™ÛÝY][\ˆ™\Ý[^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ”ÛÝ[™ÛÝY›Ý][\YY]ŠJBˆ˜\ˆY[][\ˆ™\Ý[Y[]Y[Ô›ÝšY\‹”™\ÛÛ™YˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ•QS]Y[È›Ý[˜X›YŠJBˆ˜\ˆY^™\][\ˆ™\Ý[Y^™\]Y[Ô›ÝšY\‹”™\ÛÛ™YˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ‘Y^™\ˆ]Y[È›Ý[˜X›YŠJBˆ˜\ˆ[X^›Û][\ˆ™\Ý[[X^›Û]Y[Ô›ÝšY\‹”™\ÛÛ™YˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ[X^›Ûˆ]\ÚXÈ›Ý[˜X›YŠJBˆ˜\ˆ[œÝYÜ˜[P][\ˆ™\Ý[[œÝYÜ˜[P]Y[Ô›ÝšY\‹”™\ÛÛ™YˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ’[œÝYÜ˜[H]Y[È›Ý[˜X›YŠJBˆ˜\ˆ\P][\ˆ™\Ý[\P]Y[Ô›ÝšY\‹”™\ÛÛ™YˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ\H]\ÚXÈ›Ý[˜X›YŠJBˆ˜\ˆ[Ý]X™P][\ˆ™\Ý[^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ–[ÝUX™H]\ÚXÈ›Ý][\YY]ŠJBˆ˜\ˆ[Ø^][\ˆ™\Ý[[Ø^]Y[Ô›ÝšY\‹”™\ÛÛ™YˆBˆ™\Ý[™˜Z[\™J[YØ[Ý]Q^Ù\[ÛŠ”[Ø^ˆ›Ý][\YY]ŠJBˆ˜[][\Y›ÝšY\œÈH]]X›TÙ]Ù]Y[Ô›ÝšY\“Ü™\’][OŠ
+Bˆ˜[ÜÝYžR\Ü˜ÈH™\ÛÛ™TÜÝYžR\Ü˜Ñ›Ü“X]Ú[™ÊYYXRYÛÛ™Ë]Y]YYY]Y]JBˆ˜[Ü™\™Y›ÝšY\œÈBˆ^\š[Y[[^X˜XÚÔÛXÞKœš[Üš]^™QY^™\Šˆ›ÝšY\œÈHZ[\ÝÂˆ›ÝšY\“Ý™\œšYOËœ›ÝšY\Ë›]
+Ž˜Y
+BˆYˆ
+\™XÝÛÝ[™ÛÝYYYXRY
+HY
+]Y[Ô›ÝšY\“Ü™\’][K”ÓÕS‘ÓÕQ
+BˆYˆ
+\™XÝY[\Ù\ÑY^™\”Ý™X[\ÊHÂˆY
+]Y[Ô›ÝšY\“Ü™\’][K‘QV‘TŠBˆH[ÙHYˆ
+\™XÝY[YYXRY
+HÂˆY
+]Y[Ô›ÝšY\“Ü™\’][K•QS
+BˆBˆYˆ
+\™XÝY^™\“YYXRY
+HY
+]Y[Ô›ÝšY\“Ü™\’][K‘QV‘TŠBˆY[
+]Y[Ô›ÝšY\“Ü™\ŠBˆK™\Ý[˜Ý
+
+Kˆ[˜X›YH]TÝÜ™K™Ù]
+^\š[Y[[Y^™\‘š\œÝÙ^K˜[ÙJKˆ
+B‚ˆ[ˆ\Ñ›Ü˜ÙY›ÝšY\Š›ÝšY\Žˆ]Y[Ô›ÝšY\“Ü™\’][JNˆ›ÛÛX[ˆBˆ›ÝšY\“Ý™\œšYOËœ›ÝšY\ˆOH›ÝšY\‚‚ˆ[ˆ›ÝšY\“YYXRY
+›ÝšY\Žˆ]Y[Ô›ÝšY\“Ü™\’][JNˆÝš[™ÈBˆYˆ
+\Ñ›Ü˜ÙY›ÝšY\Š›ÝšY\ŠJH›ÝšY\“Ý™\œšYOËœ›ÝšY\“YYXRY
+
+K›Ü‘[\J
+KšY›[šÈÈYYXRYH[ÙHYYXRY‚ˆ[ˆØ[][\Ü™\™Y›ÝšY\Š›ÝšY\Žˆ]Y[Ô›ÝšY\“Ü™\’][JNˆ›ÛÛX[ˆBˆYˆ
+\™XÝY[\Ù\ÑY^™\”Ý™X[\È	‰ˆ›ÝšY\ˆOH]Y[Ô›ÝšY\“Ü™\’][K‘QV‘TŠHÂˆ˜[ÙBˆH[ÙHÂˆÚ[ˆ
+›ÝšY\ŠHÂˆ]Y[Ô›ÝšY\“Ü™\’][K’S”ÕQÔSHOˆ[œÝYÜ˜[PÛÛÚÚYKš\Ó›Ý›[šÊ
+Bˆ]Y[Ô›ÝšY\“Ü™\’][K–SÕUP‘WÓUTÒPÈOˆYYXRYš\Ö[ÝUX™UšY[ÒY
+
+Bˆ[ÙHOˆYBˆBˆB‚ˆÝ\Ü[™[ˆ][\›ÝšY\Šˆ›ÝšY\Žˆ]Y[Ô›ÝšY\“Ü™\’][KˆØ[™Y]U˜XÚÒYˆÝš[™ÏÈH[ˆ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛÈÂˆYˆ
+Ø[™Y]U˜XÚÒYOH[	‰ˆ›ÝšY\ˆ[ˆ][\Y›ÝšY\œÊH™]\›ˆ[ˆYˆ
+\›ÝšY\‹š\Ô^X˜XÚÔ›ÝšY\Š
+JH™]\›ˆ[ˆYˆ
+\™XÝY[\Ù\ÑY^™\”Ý™X[\È	‰ˆ›ÝšY\ˆOH]Y[Ô›ÝšY\“Ü™\’][K‘QV‘TŠH™]\›ˆ[ˆYˆ
+Ø[™Y]U˜XÚÒYOH[	‰ˆXØ[][\Ü™\™Y›ÝšY\Š›ÝšY\ŠH	‰ˆZ\Ñ›Ü˜ÙY›ÝšY\Š›ÝšY\ŠJH™]\›ˆ[ˆ˜[][\YYXRYHØ[™Y]U˜XÚÒYË›]È˜XÚÒYO‚ˆ›ÝšY\“X]ÚÝ™\œšYJˆ›ÝšY\ˆH›ÝšY\‹ˆ›ÝšY\•˜XÚÒYH˜XÚÒYˆX™[H˜XÚÒYˆ
+Kœ›ÝšY\“YYXRY
+
+BˆHÎˆ›ÝšY\“YYXRY
+›ÝšY\ŠBˆÚ[ˆ
+›ÝšY\ŠHÂˆ]Y[Ô›ÝšY\“Ü™\’][K”ÓÕS‘ÓÕQOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆÛÝ[™ÛÝY][\H[Ø]Ú[™ÈÂˆ™\ÛÛ™TÛÝ[™ÛÝY˜[˜XÚÊˆYYXRYHYYXRYˆÛÛ™ÈHÛÛ™Ëˆ]Y]YYY]Y]HH]Y]YYY]Y]Kˆ]]ÚÙ[ˆHÛÝ[™ÛÝY]]ÚÙ[‹ˆ]X[]HHÛÝ[™ÛÝY]X[]Kˆ]Y\žSYYXRYH][\YYXRYˆ
+BˆBˆÛÝ[™ÛÝY][\™Ù]Ü“[
+
+OË›]È™]\›ˆ]BˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J”ÛÝ[™ÛÝY‹ÛÝ[™ÛÝY][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆ]Y[Ô›ÝšY\“Ü™\’][K•QSOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆY[][\H[Ø]Ú[™ÈÂˆY[]Y[Ô›ÝšY\‹œ™\ÛÛ™Jˆ]Y\žHHZ[Y[]Y\žJ][\YYXRYÛÛ™Ë]Y]YYY]Y]KÜÝYžR\Ü˜ÊKˆØXÚQ\ˆHØXÚQ\‹ˆ™Y™\][ÜÈH˜[ÙKˆ™Y™\“]™Q\ÚH˜[ÙKˆ]Y[Ô]X[]HHY[]X[]Kˆ™\ÛÛ™\‘[™Ú[ÈHY[™\ÛÛ™\‘[™Ú[Ëˆ
+BˆBˆY[][\™Ù]Ü“[
+
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ•\Ú[™ÈQSÝ™X[H›Üˆ	YYXRYˆ	Ü™\ÛÛ™Y›X™[HŠBˆ™\ÛÛ™Y›ÜÜÛ\ÜÑÝÛ™Ü˜YYš]˜]RØœÏË›]Èš]˜]RØœÈO‚ˆÚÝÔ›ÝšY\•Ø\›š[™ÊÙ]Ýš[™Ê‹œÝš[™ËY[ÛÜÜÛ\Ü×ÙÝÛ™Ü˜YYÝ×ØXXËš]˜]RØœÊJBˆBˆ™]\›ˆ™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+BˆBˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J•QS‹Y[][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆ]Y[Ô›ÝšY\“Ü™\’][K‘QV‘TˆOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆY^™\][\H[Ø]Ú[™ÈÂˆY^™\]Y[Ô›ÝšY\‹œ™\ÛÛ™JˆZ[Y^™\”]Y\žJˆYYXRYH][\YYXRYˆÛÛ™ÈHÛÛ™ËˆY]Y]SÝ™\œšYHH]Y]YYY]Y]Kˆ™\ÛÛ™\•\›HY^™\”™\ÛÛ™\•\›ˆ]X[]HHY^™\”]X[]Kˆ˜\Ý[ÙHHYˆ
+\™XÝY[\Ù\ÑY^™\”Ý™X[\ÊH˜[ÙH[ÙHY^™\‘˜\Ý[ÙKˆ›ÞU\›HY^™\”›ÞU\›ˆ\Ü˜ÓÝ™\œšYHHÜÝYžR\Ü˜Ëˆ
+Kˆ
+BˆBˆY^™\][\™Ù]Ü“[
+
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ•\Ú[™ÈY^™\ˆÝ™X[H›Üˆ	YYXRYˆ	Ü™\ÛÛ™Y›X™[HŠBˆ™]\›ˆ™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+BˆBˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J‘Y^™\ˆ‹Y^™\][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆ]Y[Ô›ÝšY\“Ü™\’][KSPV“Ó—ÓUTÒPÈOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆ˜[[X^›Û”]Y\žHHZ[[X^›Û”]Y\žJˆYYXRYH][\YYXRYˆÛÛ™ÈHÛÛ™ËˆY]Y]SÝ™\œšYHH]Y]YYY]Y]Kˆ
+B‚ˆ[X^›Û][\H[Ø]Ú[™ÈÂˆ[X^›Û]Y[Ô›ÝšY\‹œ™\ÛÛ™J\Ð]\ÚXÔÙ\šXÙK[X^›Û”]Y\žJBˆB‚ˆ[X^›Û][\™Ù]Ü“[
+
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ•\Ú[™È[X^›Ûˆ]\ÚXÈÝ™X[H›Üˆ	YYXRYˆ	Ü™\ÛÛ™Y›X™[HŠBˆËÈÝ\ÚH[™XYKZÛ›ÝÛˆ˜XÚÈ\˜][Ûˆ
+œ›ÛHØØ[‹Ü]Y]YYY]Y]KˆËÈ›Ýœ›ÛH[X^›ÛŠHÛÈ[X^›Û‘™›\YÐ]Ø\™Q]TÛÝ\˜ÙHØ[ˆÜš]HHÛÜœ™XÝˆËÈÐUˆ]KXÚ[šÈÚ^™H[œÝXYÙˆX]š[™È\˜][Ûˆ[šÛ›ÝÛˆHÙYBˆËÈÛ›ÝÛ‘\˜][Û“\ÐžU˜XÚÒY™[ÝË‚ˆ˜[\˜][Û“\ÈHÛÛ™ÏËœÛÛ™ÏË™\˜][Û‚ˆËZÙRYˆÈ]ˆBˆËÓÛ™Ê
+BˆË[Y\ÊL
+BˆÎˆ]Y]YYY]Y]OË™\˜][ÛËZÙRYˆÈ]ˆOËÓÛ™Ê
+OË[Y\ÊL
+BˆYˆ
+\˜][Û“\ÈOH[
+HÂˆÛ›ÝÛ‘\˜][Û“\ÐžU˜XÚÒYÜ™\ÛÛ™Y˜XÚÒYHH\˜][Û“\ÂˆÛ›ÝÛ‘\˜][Û“\ÐžU˜XÚÒYÛYYXRYHH\˜][Û“\ÂˆBˆ˜[\Ð][ÜÈH™\ÛÛ™Y˜ÛÙXÜË›ÝÙ\˜Ø\ÙJ
+K˜ÛÛZ[œÊ™XXÌÈŠBˆYˆ
+\Ð][ÜÊHÂˆËÈ][ÜËÑPPÌÈÝ[ÛÙ\È›ÝYÚH^\Ý[™È›ØÚÚ[™ÈXÜž\BˆËÈ[X^›Û‘™›\YÑ]TÛÝ\˜ÙHÛ›H[™\ÈH“PÈ
+Yˆ›XÊHØ\ÙH™[ÝË‚ˆ˜[ØØ[]H[X^›Û][ÜÑXÜž\Ü‹œ™\\™TÝ™X[J\Ð]\ÚXÔÙ\šXÙK™\ÛÛ™Y
+Bˆ™]\›ˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHH[™›ÚY›™]•\šK™œ›ÛQš[Jš[JØØ[]
+JKÔÝš[™Ê
+Kˆ^\™\Ð]\ÈH™\ÛÛ™Y™^\™\Ð]\ËˆØXÚRÙ^HH[X^›Û‘˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]H[X^›Û‘˜[˜XÚÑ›Ü›X]
+YYXRY™\ÛÛ™Y
+K˜ÛÜJˆ]YÈHSPV“Ó—ÐUSÔ×ÒUQËˆZ[YU\HHZ[YU\\ËUQS×ÓTˆ
+KˆZ[YU\HHZ[YU\\ËUQS×ÓTˆ
+BˆB‚ˆËÈ“PÈ]ˆÛ‰Ý›ØÚÈ\™HÛˆH[ÝÛ›ØY
+È‘›\YÈ\ÜË‚ˆËÈÜ™X]SYYXTÛÝ\˜ÙJ
+HXÚÜÈ\È™\ÛÛ][Ûˆ\šXBˆËÈ[X^›Û]Y[Ô›ÝšY\‹œ™\ÛÛ™Y›ÜŠ\Ú[ŠH[™Ú\™\È[‚ˆËÈ[X^›Û‘™›\YÑ]TÛÝ\˜ÙH]Ý™X[\ÈHÑˆT“Ý˜ZYÚ[È‘›\YËˆËÈXÜž\[™È›ÙÜ™\ÜÚ]™[H\Èž]\È\œš]™H[™YZ[™ÈH™\Ý[[ÂˆËÈHØ[YHØXÚHÛÝ›ÜˆH™^^K‚ˆ˜[ØXÚY›XÈH[X^›Û‘™›\YÑXÜž\Ü‹™Ù]ØXÚY›XÊ™\ÛÛ™Y˜XÚÒY
+Bˆ˜[Ý™X[U\šHHYˆ
+ØXÚY›XÈOH[	‰ˆØXÚY›XË™^\ÝÊ
+H	‰ˆØXÚY›XË›[™Ý
+
+Hˆ
+HÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+[X^›Ûˆ‘›\YÈØXÚH]›Üˆ	YYXRYOˆ	ØØXÚY›XË˜XœÛÛ]T]HŠBˆ[™›ÚY›™]•\šK™œ›ÛQš[JØXÚY›XÊKÔÝš[™Ê
+BˆH[ÙHÂˆ™\ÛÛ™Y›YYXU\šBˆBˆ™]\›ˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHHÝ™X[U\šKˆ^\™\Ð]\ÈH™\ÛÛ™Y™^\™\Ð]\ËˆØXÚRÙ^HH[X^›Û‘˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]H[X^›Û‘˜[˜XÚÑ›Ü›X]
+YYXRY™\ÛÛ™Y
+K˜ÛÜJˆ]YÈHSPV“Ó—Ñ“P×ÒUQËˆZ[YU\HHZ[YU\\ËUQS×Ñ“PËˆ
+KˆZ[YU\HHZ[YU\\ËUQS×Ñ“PËˆ
+BˆBˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J[X^›Ûˆ]\ÚXÈ‹[X^›Û][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆ]Y[Ô›ÝšY\“Ü™\’][K’S”ÕQÔSHOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆ[œÝYÜ˜[P][\H[Ø]Ú[™ÈÂˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹œ™\ÛÛ™JˆZ[[œÝYÜ˜[T]Y\žJYYXRYÛÛ™Ë]Y]YYY]Y]KÜÝYžR\Ü˜ÊKˆ[œÝYÜ˜[PÛÛÚÚYKˆ[œÝYÜ˜[U]ZYˆ[œÝYÜ˜[U\Ù\YÙ[ˆ[œÝYÜ˜[P\Yˆ
+BˆBˆ[œÝYÜ˜[P][\™Ù]Ü“[
+
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ•\Ú[™È[œÝYÜ˜[H]Y[ÈÝ™X[H›Üˆ	YYXRYˆ	Ü™\ÛÛ™Y]_HŠBˆ™]\›ˆ™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+BˆBˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J’[œÝYÜ˜[H‹[œÝYÜ˜[P][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆ]Y[Ô›ÝšY\“Ü™\’][K–SÕUP‘WÓUTÒPÈOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆ[Ý]X™P][\H[Ø]Ú[™ÈÂˆ™\ÛÛ™V[ÝUX™Q˜[˜XÚÊˆYYXRYH][\YYXRYˆØXÚSYYXRYHYYXRYˆÛÛ™ÈHÛÛ™Ëˆ]Y]YYY]Y]HH]Y]YYY]Y]Kˆ
+BˆBˆ[Ý]X™P][\™Ù]Ü“[
+
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ•\Ú[™È[ÝUX™H]\ÚXÈÝ™X[H›Üˆ	YYXRYŠBˆ™]\›ˆ™\ÛÛ™YˆBˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J–[ÝUX™H]\ÚXÈ‹[Ý]X™P][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆ]Y[Ô›ÝšY\“Ü™\’][KTWÓUTÒPÈOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆ\P][\H[Ø]Ú[™ÈÂˆ\P]Y[Ô›ÝšY\‹œ™\ÛÛ™Jˆ\P]Y[Ô›ÝšY\‹”]Y\žJˆÛÛ™ÈHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]HÎˆYYXRYˆ\\ÝHÛÛ™ÏË›Ü™\™Y\\ÝÏË™š\œÝÜ“[
+
+OË›˜[YHÎˆ]Y]YYY]Y]OË˜\\ÝÏË™š\œÝÜ“[
+
+OË›˜[YHÎˆˆ‹ˆ[[HHÛÛ™ÏËœÛÛ™ÏË˜[[S˜[YHÎˆÛÛ™ÏË˜[[OË]HÎˆ]Y]YYY]Y]OË˜[[OË]Kˆ\Ü˜ÈH›ÝšY\’\Ü˜Ë™š\œÝÙŠYYXRYÛÛ™ÏËœÛÛ™ÏËšY
+Kˆ\˜][Û“\ÈH
+ÛÛ™ÏËœÛÛ™ÏË™\˜][ÛˆÎˆ
+]Y]YYY]Y]OË™\˜][ÛŠJOËÓÛ™Ê
+OË[Y\ÊL
+Kˆ]X[]HH]TÝÜ™K™Ù]Ýš[™ÏŠ\P]Y[Ô]X[]RÙ^JKÑ[[J\P]Y[Ô]X[]KPPÊKˆ
+Bˆ
+BˆBˆ\P][\™Ù]Ü“[
+
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ•\Ú[™È\H]\ÚXÈÝ™X[H›Üˆ	YYXRYˆ	Ü™\ÛÛ™Y]_HŠBˆ™]\›ˆ™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+BˆBˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J\H]\ÚXÈ‹\P][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆ]Y[Ô›ÝšY\“Ü™\’][K”SÐ•VˆOˆÂˆ][\Y›ÝšY\œÈ
+ÏH›ÝšY\‚ˆ[Ø^][\H[Ø]Ú[™ÈÂˆ[Ø^]Y[Ô›ÝšY\‹œ™\ÛÛ™JZ[[Ø^”]Y\žJ][\YYXRYÛÛ™Ë]Y]YYY]Y]KÜÝYžR\Ü˜ÊJBˆBˆ[Ø^][\™Ù]Ü“[
+
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJ•\Ú[™È[Ø^ˆÝ™X[H›Üˆ	YYXRYˆ	Ü™\ÛÛ™Y›X™[HŠBˆ™]\›ˆ™\ÛÛ™YÔ^X˜XÚÔ™\ÛÛ][ÛŠ
+BˆBˆYˆ
+ÝÜÛ”›ÝšY\‘\œ›ÜŠHÂˆ›ÝÔ›ÝšY\‘˜Z[\™J”[Ø^ˆ‹[Ø^][\™^Ù\[Û“Ü“[
+
+JBˆBˆBˆBˆ™]\›ˆ[ˆB‚ˆ›Üˆ
+›ÝšY\ˆ[ˆÜ™\™Y›ÝšY\œÊHÂˆ˜[Ý\Y]HÞ\Ý[K›˜[›Õ[YJ
+Bˆ˜[™\ÛÛ™YBˆYˆ
+]TÝÜ™K™Ù]
+^\š[Y[[›ÝšY\”^X˜XÚÕ[Y[Ý]Ù^K˜[ÙJJHÂˆÚ][Y[Ý]Ü“[
+ŒÌ
+HÈ][\›ÝšY\Š›ÝšY\ŠHBˆH[ÙHÂˆ][\›ÝšY\Š›ÝšY\ŠBˆBˆYˆ
+]TÝÜ™K™Ù]
+^\š[Y[[^X˜XÚÑXYÛ›ÜÝXÜÒÙ^K˜[ÙJJHÂˆ˜[\˜][Û“\ÈH[YU[š]“S“ÔÑPÓÓ‘ËÓZ[\ÊÞ\Ý[K›˜[›Õ[YJ
+HHÝ\Y]
+Bˆ[X™\‹YÊQÊKšJˆ‘^\š[Y[[^X˜XÚÈ][\ˆ›ÝšY\I›ÝšY\ˆ\˜][Û“\ÏI\˜][Û“\ÈÝXØÙ\ÜÏIÜ™\ÛÛ™YOH[H‹ˆ
+BˆBˆ™\ÛÛ™YË›]È™]\›ˆ]BˆB‚ˆYˆ
+\™XÝY[\Ù\ÑY^™\”Ý™X[\ÊHÂˆ˜[Y^™\‘\œ›ÜˆHY^™\][\™^Ù\[Û“Ü“[
+
+BˆÎˆ[YØ[Ý]Q^Ù\[ÛŠ‘Y^™\ˆ]Y[ÈØ\È›Ý][\YŠBˆ›ÝÈ^X˜XÚÑ^Ù\[ÛŠˆ‘Y^™\ˆ˜Z[Yˆ	ÙY^™\‘\œ›Ü‹œ™XYX›SY\ÜØYÙJ
+_H‹ˆY^™\‘\œ›Ü‹ˆ^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÔ‘SSÕWÑT”“Ô‹ˆ
+BˆB‚ˆYˆ
+X][\Y›ÝšY\œË˜ÛÛZ[œÊ]Y[Ô›ÝšY\“Ü™\’][K”ÓÕS‘ÓÕQ
+H	‰ˆY\™XÝÛÝ[™ÛÝYYYXRY
+HÂˆÛÝ[™ÛÝY][\H[Ø]Ú[™ÈÂˆ™\ÛÛ™TÛÝ[™ÛÝY˜[˜XÚÊYYXRYÛÛ™Ë]Y]YYY]Y]KÛÝ[™ÛÝY]]ÚÙ[ŠBˆBˆÛÝ[™ÛÝY][\™Ù]Ü“[
+
+OË›]È™]\›ˆ]BˆB‚ˆYˆ
+ˆX][\Y›ÝšY\œË˜ÛÛZ[œÊ]Y[Ô›ÝšY\“Ü™\’][K–SÕUP‘WÓUTÒPÊH	‰‚ˆYYXRYš\Ö[ÝUX™UšY[ÒY
+
+Bˆ
+HÂˆ[Ý]X™P][\H[Ø]Ú[™ÈÂˆ™\ÛÛ™V[ÝUX™Q˜[˜XÚÊYYXRYÛÛ™ÈHÛÛ™Ë]Y]YYY]Y]HH]Y]YYY]Y]JBˆBˆBˆ[Ý]X™P][\™Ù]Ü“[
+
+OË›]È™]\›ˆ]B‚ˆ˜[˜[˜XÚÓY]Y]HH]Y]YYY]Y]HÎˆÛÛ™ÏËÓYYXSY]Y]J
+BˆYˆ
+›ÝšY\“Ý™\œšYHOH[	‰ˆ˜[˜XÚÓY]Y]HOH[
+HÂˆ˜[ÙX\˜ÚYØ[™Y]\ÈH[Ø]Ú[™ÈÂˆ›ÝšY\“X]ÚÙX\˜ÚœÙX\˜Ú
+ˆÛÛ^H\Ð]\ÚXÔÙ\šXÙKˆY]Y]HH˜[˜XÚÓY]Y]Kˆ\”›ÝšY\“[Z]Hˆ
+BˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊQÊKÊ\œ›Ü‹]]ÛX]XÈØ[™Y]H˜[˜XÚÈÙX\˜Ú˜Z[Y›Üˆ	YYXRYŠBˆK™Ù]Ü‘Y˜][
+[\S\Ý
+
+JB‚ˆ˜[ØY™PØ[™Y]\ÈH›ÝšY\‘˜[˜XÚÓX]Ú\‹œÙ[XÝØY™PØ[™Y]\ÊˆY]Y]HH˜[˜XÚÓY]Y]KˆØ[™Y]\ÈHÙX\˜ÚYØ[™Y]\Ë™š[\“›ÝÈØ[™Y]HO‚ˆØ[™Y]Kœ›ÝšY\ˆOH]Y[Ô›ÝšY\“Ü™\’][K–SÕUP‘WÓUTÒPÈ	‰‚ˆØ[™Y]Kœ›ÝšY\•˜XÚÒYOHYYXRYˆKˆ›ÝšY\“Ü™\ˆHÜ™\™Y›ÝšY\œËˆ
+B‚ˆ›Üˆ
+Ø[™Y]H[ˆØY™PØ[™Y]\ÊHÂˆ[X™\‹YÊQÊKšJˆ”™]žZ[™È^X˜XÚÈÚ]ØY™HØ[™Y]NˆYYXRYIYYXRYˆ
+Âˆœ›ÝšY\IØØ[™Y]Kœ›ÝšY\ŸH˜XÚÒYIØØ[™Y]Kœ›ÝšY\•˜XÚÒYH‹ˆ
+Bˆ][\›ÝšY\ŠØ[™Y]Kœ›ÝšY\‹Ø[™Y]Kœ›ÝšY\•˜XÚÒY
+OË›]È™\ÛÛ™YO‚ˆ[X™\‹YÊQÊKšJˆ]]ÛX]XÈØ[™Y]H˜[˜XÚÈÙ[XÝYˆYYXRYIYYXRYˆ
+Âˆœ›ÝšY\IØØ[™Y]Kœ›ÝšY\ŸH˜XÚÒYIØØ[™Y]Kœ›ÝšY\•˜XÚÒYH‹ˆ
+Bˆ™]\›ˆ™\ÛÛ™YˆBˆBˆB‚ˆ˜[[Ý]X™Q\œ›ÜˆH[Ý]X™P][\™^Ù\[Û“Ü“[
+
+BˆÎˆ[YØ[Ý]Q^Ù\[ÛŠ–[ÝUX™H˜[˜XÚÈ˜Z[YŠBˆ˜[ÛÝ[™ÛÝY\œ›ÜˆHÛÝ[™ÛÝY][\™^Ù\[Û“Ü“[
+
+BˆÎˆ[YØ[Ý]Q^Ù\[ÛŠ”ÛÝ[™ÛÝY˜[˜XÚÈ˜Z[YŠBˆ˜[Y[]Z[HYˆ
+][\Y›ÝšY\œË˜ÛÛZ[œÊ]Y[Ô›ÝšY\“Ü™\’][K•QS
+H\™XÝY[YYXRY
+HÂˆY[][\™^Ù\[Û“Ü“[
+
+OËœ™XYX›SY\ÜØYÙJ
+BˆË›]È•QS˜Z[Yˆ	]ÈˆBˆ›Ü‘[\J
+BˆH[ÙHÂˆˆ‚ˆBˆ˜[Y^™\‘]Z[HYˆ
+][\Y›ÝšY\œË˜ÛÛZ[œÊ]Y[Ô›ÝšY\“Ü™\’][K‘QV‘TŠH\™XÝY^™\“YYXRY
+HÂˆY^™\][\™^Ù\[Û“Ü“[
+
+OËœ™XYX›SY\ÜØYÙJ
+BˆË›]È‘Y^™\ˆ˜Z[Yˆ	]ÈˆBˆ›Ü‘[\J
+BˆH[ÙHÂˆˆ‚ˆBˆ˜[[œÝYÜ˜[Q]Z[HYˆ
+][\Y›ÝšY\œË˜ÛÛZ[œÊ]Y[Ô›ÝšY\“Ü™\’][K’S”ÕQÔSJJHÂˆ[œÝYÜ˜[P][\™^Ù\[Û“Ü“[
+
+OËœ™XYX›SY\ÜØYÙJ
+BˆË›]È’[œÝYÜ˜[H˜Z[Yˆ	]ÈˆBˆ›Ü‘[\J
+BˆH[ÙHÂˆˆ‚ˆBˆ˜[\Q]Z[HYˆ
+][\Y›ÝšY\œË˜ÛÛZ[œÊ]Y[Ô›ÝšY\“Ü™\’][KTWÓUTÒPÊJHÂˆ\P][\™^Ù\[Û“Ü“[
+
+OËœ™XYX›SY\ÜØYÙJ
+BˆË›]È\H]\ÚXÈ˜Z[Yˆ	]ÈˆBˆ›Ü‘[\J
+BˆH[ÙHÂˆˆ‚ˆBˆ˜[[Ø^‘]Z[H[Ø^][\™^Ù\[Û“Ü“[
+
+OËœ™XYX›SY\ÜØYÙJ
+BˆË›]È”[Ø^ˆ˜Z[Yˆ	]ÈˆBˆ›Ü‘[\J
+Bˆ˜[›ÝšY\‘]Z[ÈBˆ‰Ü[Ø^‘]Z[IÝY[]Z[IÙY^™\‘]Z[IÚ[œÝYÜ˜[Q]Z[IØ\Q]Z[Hˆ
+Âˆ”ÛÝ[™ÛÝY˜Z[Yˆ	ÜÛÝ[™ÛÝY\œ›Ü‹œ™XYX›SY\ÜØYÙJ
+_NÈˆ
+Âˆ–[ÝUX™H˜Z[Yˆ	Þ[Ý]X™Q\œ›Ü‹œ™XYX›SY\ÜØYÙJ
+_H‚ˆ›ÝÈ^X˜XÚÑ^Ù\[ÛŠˆ“›ÈÛÛ\]X›H]Y[ÈÛÝ\˜ÙHØ\È›Ý[™›Üˆ	Ù˜[˜XÚÓY]Y]OË]HÎˆYYXRYKˆ	›ÝšY\‘]Z[È‹ˆ[Ý]X™Q\œ›Ü‹ˆ^X˜XÚÑ^Ù\[Û‹‘T”“Ô—ÐÓÑWÔ‘SSÕWÑT”“Ô‹ˆ
+BˆB‚ˆš]˜]HÝ\Ü[™[ˆ™\ÛÛ™TÛÝ[™ÛÝY˜[˜XÚÊˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆ]Y]YYY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ]]ÚÙ[ŽˆÝš[™ÈHˆ‹ˆ]X[]NˆÛÝ[™ÛÝY]Y[Ô]X[]HHÛÝ[™ÛÝY]Y[Ô]X[]KPP×ÌMŒˆ]Y\žSYYXRYˆÝš[™ÈHYYXRYˆ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆÂˆ˜[™\ÛÛ™YHÛÝ[™ÛÝY]Y[Ô›ÝšY\‹œ™\ÛÛ™Jˆ]Y\žHHZ[ÛÝ[™ÛÝY]Y\žJ]Y\žSYYXRYÛÛ™Ë]Y]YYY]Y]JKˆ]]ÚÙ[ˆH]]ÚÙ[‹ˆ]X[]HH]X[]Kˆ
+Bˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJˆ•\Ú[™ÈÛÝ[™ÛÝY˜[˜XÚÈ›Üˆ	YYXRYˆ	Ü™\ÛÛ™Y]_HžH	Ü™\ÛÛ™Y˜\\ÝKš]˜]OIÜ™\ÛÛ™Y˜š]˜]_H‹ˆ
+Bˆ™]\›ˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHH™\ÛÛ™Y›YYXU\šKˆ^\™\Ð]\ÈH™\ÛÛ™Y™^\™\Ð]\ËˆØXÚRÙ^HHÛÝ[™ÛÝY˜[˜XÚÐØXÚRÙ^JYYXRY
+Kˆ›Ü›X]HÛÝ[™ÛÝY˜[˜XÚÑ›Ü›X]
+YYXRY™\ÛÛ™Y
+KˆZ[YU\HH™\ÛÛ™Y›Z[YU\Kˆ
+BˆB‚ˆš]˜]HÝ\Ü[™[ˆ™\ÛÛ™V[ÝUX™Q˜[˜XÚÊˆYYXRYˆÝš[™ËˆØXÚSYYXRYˆÝš[™ÈHYYXRYˆÛÛ™ÎˆÛÛ™ÏÈH[ˆ]Y]YYY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ
+Nˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛˆÂˆ˜[]HHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]Bˆ˜[\\ÝHÛÛ™ÏË›Ü™\™Y\\ÝÏË™š\œÝÜ“[
+
+OË›˜[YHÎˆ]Y]YYY]Y]OË˜\\ÝÏË™š\œÝÜ“[
+
+OË›˜[YBˆ˜[˜[˜XÚÔ]Y\žHHYˆ
+]]Kš\Ó[Ü›[šÊ
+JHÂˆ[ÝUX™P]Y[Ô›ÝšY\‹•˜XÚÔ]Y\žJ]HH]K\\ÝH\\Ý›Ü‘[\J
+JBˆH[ÙHÂˆ[ˆBˆ˜[™\ÛÛ™YH[ÝUX™P]Y[Ô›ÝšY\‹œ™\ÛÛ™JYYXRY˜[˜XÚÔ]Y\žJBˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKšJˆ•\Ú[™È[ÝUX™HPPÈ˜[˜XÚÈ›Üˆ	YYXRYˆ]YÏIÜ™\ÛÛ™Yš]YßKš]˜]OIÜ™\ÛÛ™Y˜š]˜]_H‹ˆ
+Bˆ™]\›ˆ^X˜XÚÔÝ™X[T™\ÛÛ][ÛŠˆ\šHH™\ÛÛ™Y›YYXU\šKˆ^\™\Ð]\ÈH™\ÛÛ™Y™^\™\Ð]\ËˆØXÚRÙ^HH[Ý]X™Q˜[˜XÚÐØXÚRÙ^JØXÚSYYXRY
+Kˆ›Ü›X]H[Ý]X™Q˜[˜XÚÑ›Ü›X]
+ØXÚSYYXRY™\ÛÛ™Y
+KˆZ[YU\HH™\ÛÛ™Y›Z[YU\Kˆ
+BˆB‚ˆš]˜]HÝ\Ü[™[ˆ™\ÛÛ™TÜÝYžR\Ü˜Ñ›Ü“X]Ú[™ÊˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆ]Y]YYY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ
+NˆÝš[™ÏÈÂˆ˜[ÜÝYžU˜XÚÒYBˆ\ÝÙŠˆYYXRYˆÛÛ™ÏËœÛÛ™ÏËšYˆ]Y]YYY]Y]OËšYˆ
+K™š\œÝÜ“[È˜[YHO‚ˆ˜[YOËœÝ\ÕÚ]
+œÜÝYžN˜XÚÎˆ‹YÛ›Ü™PØ\ÙHHYJHOHYHˆ˜[YOË˜ÛÛZ[œÊ›Ü[‹œÜÝYžK˜ÛÛKÝ˜XÚËÈ‹YÛ›Ü™PØ\ÙHHYJHOHYBˆHÎˆ™]\›ˆ[ˆ˜[ÛÛÚÚYHH]TÝÜ™K™Ù]
+ÜÝYžPÛÛÚÚYRÙ^KˆŠKZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ™]\›ˆ[ˆ™]\›ˆ[Ø]Ú[™ÈÂˆÜÝYžPØ[˜\ÐÛY[œ™\ÛÛ™U˜XÚÒ\Ü˜ÊÜÝYžU˜XÚÒYÛÛÚÚYJBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKÊ\œ›Ü‹”ÜÝYžHTÔÈX]ÚÛÚÝ\˜Z[Y›Üˆ	ÜÝYžU˜XÚÒYŠBˆK™Ù]Ü“[
+
+BˆB‚ˆš]˜]H[ˆZ[Y[]Y\žJˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆY]Y]SÝ™\œšYNˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ\Ü˜ÓÝ™\œšYNˆÝš[™ÏÈH[ˆ
+NˆY[]Y[Ô›ÝšY\‹”]Y\žHÂˆ˜[]Y]YYY]Y]HHY]Y]SÝ™\œšYHÎˆYˆ
+ÛÛ™ÈOH[
+HÝ\œ™[]Y]YSY]Y]JYYXRY
+H[ÙH[ˆ˜[]HHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]HÎˆYYXRYˆ˜[\\ÝÈHÛÛ™ÏË›Ü™\™Y\\ÝÏË›X\È]›˜[YHBˆËZÙRYˆÈ]š\Ó›Ý[\J
+HBˆÎˆ]Y]YYY]Y]OË˜\\ÝÏË›X\È]›˜[YHK›Ü‘[\J
+Bˆ˜[[[HHÛÛ™ÏËœÛÛ™ÏË˜[[S˜[YBˆÎˆÛÛ™ÏË˜[[OË]BˆÎˆ]Y]YYY]Y]OË˜[[OË]Bˆ˜[\˜][Û“\ÈHÛÛ™ÏËœÛÛ™ÏË™\˜][Û‚ˆËZÙRYˆÈ]ˆBˆËÓÛ™Ê
+BˆË[Y\ÊL
+BˆÎˆ]Y]YYY]Y]OË™\˜][ÛËZÙRYˆÈ]ˆOËÓÛ™Ê
+OË[Y\ÊL
+B‚ˆ™]\›ˆY[]Y[Ô›ÝšY\‹”]Y\žJˆYYXRYHYYXRYˆ]HH]Kˆ\\ÝÈH\\ÝËˆ[[HH[[Kˆ\Ü˜ÈH\Ü˜ÓÝ™\œšYHÎˆ›ÝšY\’\Ü˜Ë™š\œÝÙŠYYXRYÛÛ™ÏËœÛÛ™ÏËšY]Y]YYY]Y]OËšY
+Kˆ\˜][Û“\ÈH\˜][Û“\Ëˆ
+BˆB‚ˆš]˜]H[ˆZ[[Ø^”]Y\žJˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆY]Y]SÝ™\œšYNˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ\Ü˜ÓÝ™\œšYNˆÝš[™ÏÈH[ˆ
+Nˆ[Ø^]Y[Ô›ÝšY\‹”]Y\žHÂˆ˜[]Y]YYY]Y]HHY]Y]SÝ™\œšYHÎˆYˆ
+ÛÛ™ÈOH[
+HÝ\œ™[]Y]YSY]Y]JYYXRY
+H[ÙH[ˆ˜[]HHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]HÎˆYYXRYˆ˜[\\ÝÈHÛÛ™ÏË›Ü™\™Y\\ÝÏË›X\È]›˜[YHBˆËZÙRYˆÈ]š\Ó›Ý[\J
+HBˆÎˆ]Y]YYY]Y]OË˜\\ÝÏË›X\È]›˜[YHK›Ü‘[\J
+Bˆ˜[[[HHÛÛ™ÏËœÛÛ™ÏË˜[[S˜[YBˆÎˆÛÛ™ÏË˜[[OË]BˆÎˆ]Y]YYY]Y]OË˜[[OË]Bˆ˜[\˜][Û“\ÈHÛÛ™ÏËœÛÛ™ÏË™\˜][Û‚ˆËZÙRYˆÈ]ˆBˆËÓÛ™Ê
+BˆË[Y\ÊL
+BˆÎˆ]Y]YYY]Y]OË™\˜][ÛËZÙRYˆÈ]ˆOËÓÛ™Ê
+OË[Y\ÊL
+Bˆ˜[˜XÚÙ[™H]TÝÜ™K™Ù]
+[Ø^˜XÚÙ[™Ù^JKÑ[[O[Ø^˜XÚÙ[™Š[Ø^˜XÚÙ[™’ÑS“–JBˆ˜[ÛÝ[žHH]TÝÜ™K™Ù]
+[Ø^ÛÝ[žRÙ^K•TÈŠBˆš[J
+Bˆ\\˜Ø\ÙJØØ[K•TÊBˆZÙRYˆÈ]›X]Ú\Ê™YÙ^
+–ÐKV—^ÌŸHŠJHBˆÎˆ•TÈ‚ˆ˜[Ý\ÝÛR[œÝ[˜Ù\ÈH]TÝÜ™K™Ù]
+[Ø^Ý\ÝÛR[œÝ[˜Ù\ÒÙ^KˆŠB‚ˆ™]\›ˆ[Ø^]Y[Ô›ÝšY\‹”]Y\žJˆYYXRYHYYXRYˆ]HH]Kˆ\\ÝÈH\\ÝËˆ[[HH[[Kˆ\Ü˜ÈH\Ü˜ÓÝ™\œšYHÎˆ›ÝšY\’\Ü˜Ë™š\œÝÙŠYYXRYÛÛ™ÏËœÛÛ™ÏËšY]Y]YYY]Y]OËšY
+Kˆ\˜][Û“\ÈH\˜][Û“\ËˆÛÝ[žPÛÙHHÛÝ[žKˆ˜XÚÙ[™H˜XÚÙ[™Ô[Ø^”›ÝšY\˜XÚÙ[™
+
+KˆÝ\ÝÛR[œÝ[˜Ù\ÈHÝ\ÝÛR[œÝ[˜Ù\Ëˆ
+BˆB‚ˆš]˜]H[ˆZ[Y^™\”]Y\žJˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆY]Y]SÝ™\œšYNˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ™\ÛÛ™\•\›ˆÝš[™Ëˆ]X[]NˆY^™\]Y[Ô]X[]Kˆ˜\Ý[ÙNˆ›ÛÛX[ˆH˜[ÙKˆ›ÞU\›ˆÝš[™ÈHY^™\]Y[Ô›ÝšY\‹‘QUSÔ“ÖWÕT“ˆ\Ü˜ÓÝ™\œšYNˆÝš[™ÏÈH[ˆ
+NˆY^™\]Y[Ô›ÝšY\‹”]Y\žHÂˆ˜[Y^™\ÛÛÚÚYHH]TÝÜ™K™Ù]
+Y^™\ÛÛÚÚYRÙ^KˆŠBˆ˜[Y^™\•\ÙPXØÛÝ[H]TÝÜ™K™Ù]
+Y^™\•\ÙPXØÛÝ[Ù^KYJBˆ˜[]Y]YYY]Y]HHY]Y]SÝ™\œšYHÎˆYˆ
+ÛÛ™ÈOH[
+HÝ\œ™[]Y]YSY]Y]JYYXRY
+H[ÙH[ˆ˜[]HHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]HÎˆYYXRYˆ˜[\\ÝÈHÛÛ™ÏË›Ü™\™Y\\ÝÏË›X\È]›˜[YHBˆËZÙRYˆÈ]š\Ó›Ý[\J
+HBˆÎˆ]Y]YYY]Y]OË˜\\ÝÏË›X\È]›˜[YHK›Ü‘[\J
+Bˆ˜[[[HHÛÛ™ÏËœÛÛ™ÏË˜[[S˜[YBˆÎˆÛÛ™ÏË˜[[OË]BˆÎˆ]Y]YYY]Y]OË˜[[OË]Bˆ˜[\˜][Û“\ÈHÛÛ™ÏËœÛÛ™ÏË™\˜][Û‚ˆËZÙRYˆÈ]ˆBˆËÓÛ™Ê
+BˆË[Y\ÊL
+BˆÎˆ]Y]YYY]Y]OË™\˜][ÛËZÙRYˆÈ]ˆOËÓÛ™Ê
+OË[Y\ÊL
+B‚ˆ™]\›ˆY^™\]Y[Ô›ÝšY\‹”]Y\žJˆYYXRYHYYXRYˆ]HH]Kˆ\\ÝÈH\\ÝËˆ[[HH[[Kˆ\Ü˜ÈH\Ü˜ÓÝ™\œšYHÎˆ›ÝšY\’\Ü˜Ë™š\œÝÙŠYYXRYÛÛ™ÏËœÛÛ™ÏËšY]Y]YYY]Y]OËšY
+Kˆ\˜][Û“\ÈH\˜][Û“\Ëˆ™\ÛÛ™\•\›H™\ÛÛ™\•\›ˆ]X[]HH]X[]Kˆ˜\Ý[ÙHH˜\Ý[ÙKˆ›ÞU\›H›ÞU\›ˆ^\š[Y[[™\ÛÛ™\‘˜[˜XÚÈH]TÝÜ™K™Ù]
+^\š[Y[[Y^™\”™\ÛÛ™\‘˜[˜XÚÒÙ^KYJKˆÛÛÚÚYHHY^™\ÛÛÚÚYKˆ\ÙPXØÛÝ[HY^™\•\ÙPXØÛÝ[ˆ
+BˆB‚ˆš]˜]H[ˆZ[[X^›Û”]Y\žJˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆY]Y]SÝ™\œšYNˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ
+Nˆ[X^›Û]Y[Ô›ÝšY\‹”]Y\žHÂˆ˜[]Y]YYY]Y]HHY]Y]SÝ™\œšYHÎˆYˆ
+ÛÛ™ÈOH[
+HÝ\œ™[]Y]YSY]Y]JYYXRY
+H[ÙH[ˆ˜[]HHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]HÎˆYYXRYˆ˜[\\ÝÈHÛÛ™ÏË›Ü™\™Y\\ÝÏË›X\È]›˜[YHBˆËZÙRYˆÈ]š\Ó›Ý[\J
+HBˆÎˆ]Y]YYY]Y]OË˜\\ÝÏË›X\È]›˜[YHK›Ü‘[\J
+Bˆ˜[[[HHÛÛ™ÏËœÛÛ™ÏË˜[[S˜[YBˆÎˆÛÛ™ÏË˜[[OË]BˆÎˆ]Y]YYY]Y]OË˜[[OË]Bˆ˜[\˜][Û“\ÈHÛÛ™ÏËœÛÛ™ÏË™\˜][Û‚ˆËZÙRYˆÈ]ˆBˆËÓÛ™Ê
+BˆË[Y\ÊL
+BˆÎˆ]Y]YYY]Y]OË™\˜][ÛËZÙRYˆÈ]ˆOËÓÛ™Ê
+OË[Y\ÊL
+B‚ˆ˜[ÛÝ[žHH[›ØÚÚ[™ÈÈ]TÝÜ™K™Ù]
+ÛÛ[ÛÝ[žRÙ^K•TÈŠHBˆ˜[]X[]HH[›ØÚÚ[™ÈÈ]TÝÜ™K™Ù]Ýš[™ÏŠ[X^›Û]Y[Ô]X[]RÙ^JKÑ[[J[X^›Û]Y[Ô]X[]K’WÔ‘TÊK›˜[YHB‚ˆ™]\›ˆ[X^›Û]Y[Ô›ÝšY\‹”]Y\žJˆYYXRYHYYXRYˆ]HH]Kˆ\\ÝÈH\\ÝËˆ[[HH[[Kˆ\˜][Û“\ÈH\˜][Û“\ËˆÛÝ[žHHÛÝ[žKˆ]X[]HH]X[]Kˆ
+BˆB‚ˆš]˜]H[ˆZ[ÛÝ[™ÛÝY]Y\žJˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆY]Y]SÝ™\œšYNˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ
+NˆÛÝ[™ÛÝY]Y[Ô›ÝšY\‹”]Y\žHÂˆ˜[]Y]YYY]Y]HHY]Y]SÝ™\œšYHÎˆYˆ
+ÛÛ™ÈOH[
+HÝ\œ™[]Y]YSY]Y]JYYXRY
+H[ÙH[ˆ˜[]HHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]HÎˆYYXRYˆ˜[\\ÝÈHÛÛ™ÏË›Ü™\™Y\\ÝÏË›X\È]›˜[YHBˆËZÙRYˆÈ]š\Ó›Ý[\J
+HBˆÎˆ]Y]YYY]Y]OË˜\\ÝÏË›X\È]›˜[YHK›Ü‘[\J
+Bˆ˜[[[HHÛÛ™ÏËœÛÛ™ÏË˜[[S˜[YBˆÎˆÛÛ™ÏË˜[[OË]BˆÎˆ]Y]YYY]Y]OË˜[[OË]Bˆ˜[\˜][Û“\ÈHÛÛ™ÏËœÛÛ™ÏË™\˜][Û‚ˆËZÙRYˆÈ]ˆBˆËÓÛ™Ê
+BˆË[Y\ÊL
+BˆÎˆ]Y]YYY]Y]OË™\˜][ÛËZÙRYˆÈ]ˆOËÓÛ™Ê
+OË[Y\ÊL
+B‚ˆ™]\›ˆÛÝ[™ÛÝY]Y[Ô›ÝšY\‹”]Y\žJˆYYXRYHYYXRYˆ]HH]Kˆ\\ÝÈH\\ÝËˆ[[HH[[Kˆ\˜][Û“\ÈH\˜][Û“\Ëˆ
+BˆB‚ˆš]˜]H[ˆZ[[œÝYÜ˜[T]Y\žJˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆY]Y]SÝ™\œšYNˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈH[ˆ\Ü˜ÓÝ™\œšYNˆÝš[™ÏÈH[ˆ
+Nˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹”]Y\žHÂˆ˜[]Y]YYY]Y]HHY]Y]SÝ™\œšYHÎˆYˆ
+ÛÛ™ÈOH[
+HÝ\œ™[]Y]YSY]Y]JYYXRY
+H[ÙH[ˆ˜[]HHÛÛ™ÏËœÛÛ™ÏË]HÎˆ]Y]YYY]Y]OË]HÎˆYYXRYˆ˜[\\ÝÈHÛÛ™ÏË›Ü™\™Y\\ÝÏË›X\È]›˜[YHBˆËZÙRYˆÈ]š\Ó›Ý[\J
+HBˆÎˆ]Y]YYY]Y]OË˜\\ÝÏË›X\È]›˜[YHK›Ü‘[\J
+Bˆ˜[[[HHÛÛ™ÏËœÛÛ™ÏË˜[[S˜[YBˆÎˆÛÛ™ÏË˜[[OË]BˆÎˆ]Y]YYY]Y]OË˜[[OË]Bˆ˜[\˜][Û“\ÈHÛÛ™ÏËœÛÛ™ÏË™\˜][Û‚ˆËZÙRYˆÈ]ˆBˆËÓÛ™Ê
+BˆË[Y\ÊL
+BˆÎˆ]Y]YYY]Y]OË™\˜][ÛËZÙRYˆÈ]ˆOËÓÛ™Ê
+OË[Y\ÊL
+B‚ˆ™]\›ˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹”]Y\žJˆYYXRYHYYXRYˆ]HH]Kˆ\\ÝÈH\\ÝËˆ[[HH[[Kˆ\˜][Û“\ÈH\˜][Û“\Ëˆ\Ü˜ÈH\Ü˜ÓÝ™\œšYHÎˆ›ÝšY\’\Ü˜Ë™š\œÝÙŠYYXRYÛÛ™ÏËœÛÛ™ÏËšY]Y]YYY]Y]OËšY
+Kˆ
+BˆB‚ˆš]˜]H[ˆ[Ø^˜XÚÙ[™Ô[Ø^”›ÝšY\˜XÚÙ[™
+
+Nˆ[Ø^]Y[Ô›ÝšY\‹”™\ÛÛ™\˜XÚÙ[™Âˆ™]\›ˆÚ[ˆ
+\ÊHÂˆ[Ø^˜XÚÙ[™’ÑS“–HOˆ[Ø^]Y[Ô›ÝšY\‹”™\ÛÛ™\˜XÚÙ[™’ÑS“–BˆBˆB‚ˆš]˜]H[ˆ›ÝØX›Kœ™XYX›SY\ÜØYÙJ
+NˆÝš[™ÈÂˆ™]\›ˆY\ÜØYÙOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ˜]˜PÛ\ÜËœÚ[\S˜[YBˆB‚ˆš]˜]HÝ\Ü[™[ˆ\]P\S]\ÚXÓ[Ý[Û˜XÚÙÜ›Ý[™
+Y]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÊHÂˆÝ\œ™[\PØ[˜\Õ\›˜[YHH[ˆÝ\œ™[\U[Ø[˜\Õ\›˜[YHH[ˆYˆ
+Y]Y]HOH[Y]Y]Kš\Ñ\\ÛÙHY]Y]Kš\ÕšY[ÔÛÛ™ÊH™]\›‚ˆYˆ
+Y]TÝÜ™K™Ù]
+\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™Ù^KYJJH™]\›‚ˆYˆ
+\ÓØØ[YYXJY]Y]JJH™]\›‚‚ˆ˜[\\ÝHY]Y]K˜\\ÝË™š\œÝÜ“[
+
+OË›˜[YOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ™]\›‚ˆ˜[ØXÚRÙ^HH™Y™\œ™Y\ÛÜšÐØXÚRÙ^JY]Y]K\\Ý
+Bˆ˜[ØXÚYBˆÞ[˜Ú›Ûš^™Y
+\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™ØXÚJHÂˆ\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™ØXÚVØØXÚRÙ^WBˆB‚ˆYˆ
+ØXÚYOH[
+HÂˆYˆ
+Ý\œ™[YYXSY]Y]K˜[YOËšYOHY]Y]KšY
+HÂˆËÈÜ]ØXÚH˜[YHYˆÙHÝÜ™Y›ÝÜˆ[™HÚ[™ÛH˜[YBˆ˜[\ÈHØXÚYœÜ]
+ŸŠBˆÝ\œ™[\PØ[˜\Õ\›˜[YHH\Ë™Ù]Ü“[
+
+OËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÝ\œ™[\U[Ø[˜\Õ\›˜[YHH\Ë™Ù]Ü“[
+JOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆBˆ™]\›‚ˆB‚ˆ˜[ÛÛ™ÈH]X˜\ÙK™Ù]ÛÛ™ÐžRY›ØÚÚ[™ÊY]Y]KšY
+BˆËÈ™\ÛÛ™HH\ÝYTÔÈšXHHÚ\™YX[\ÛÝ\˜ÙH™\ÛÛ™\‹ˆ›Ü‚ˆËÈ[ÝUX™H]\ÚXÈÛÝ\˜Ù\È
+›È[X™YYTÔÊH\È\ØÛÝ™\œÈÛ™HšXBˆËÈY^™\ˆ
+È\H˜[Y][Û‹ÛÈHØ[˜\ÈÛÚÝ\Ø[ˆ\ÙHH™XÚ\ÙBˆËÈš[\–Ú\Ü˜×XST]ˆ™\Ý[\ÈØXÚYÛÈH\˜[[ÔUPT‘KÕSˆËÈ™]Ú\È™[ÝÈÚ\™HÛ™H™\ÛÛ][Ûˆ\ÜË‚ˆ˜[\Ü˜ÈH\Ü˜Ô™\ÛÛ™\‹œ™\ÛÛ™P[™˜[Y]JˆØ[™Y]R\Ü˜ÈH›ÝšY\’\Ü˜Ë™š\œÝÙŠY]Y]KšYÛÛ™ÏËœÛÛ™ÏËšYY]Y]KšY
+KˆÛÛ™ÈHY]Y]K]Kˆ\\ÝH\\Ýˆ\˜][Û”ÙXÛÛ™ÈHY]Y]K™\˜][Û‹ˆ
+B‚ˆËÈ“ÕNˆÙ]žTÛÛ™Ð\\Ý
+
+HØ[ˆÚZ[ˆ\ÈÙ\]Y[X[™]ÛÜšÈØ[ÂˆËÈ
+ÚÙ[ˆ™]ÚOˆU[™\ÈTÔÈÛÚÝ\OˆSTØ][ÙÈØ[OˆSTÙX\˜ÚˆËÈ˜[˜XÚÊK[™HÚÙ[ˆ[™Ú[\ÈHYÙÚ[™È˜XÙHÜXÙH]Ø[‚ˆËÈZÙHÙ[Ý™\ˆLÈÈÛÛ\Ý\ˆÈØ\ÈÝ][™È\ÈÙ™ˆ™Y›Ü™H]ˆËÈY[žH™X[Ú[˜ÙHÈÝXØÙYYÛÈÚ]™H]™X[œ™X][™È›ÛÛK‚ˆ˜[
+Ü]X\™K[
+HHÛÜ›Ý][™TØÛÜHÂˆ˜[Ü]X\™QY™\œ™YH\Þ[˜ÈÂˆÚ][Y[Ý]Ü“[
+TWÐÐS•T×Ñ‘UÒÕSQSÕUÓTÊHÂˆ\S]\ÚXÐØ[˜\Ô›ÝšY\‹™Ù]žTÛÛ™Ð\\Ý
+ˆÛÛ™ÈHY]Y]K]Kˆ\\ÝH\\Ýˆ[[HHY]Y]K˜[[OË]Kˆ^XÚ]HY]Y]K™^XÚ]ˆ\Ü˜ÈH\Ü˜Ëˆ\˜][Û”ÙXÛÛ™ÈHY]Y]K™\˜][Û‹ˆ™Y™\œ™Y\ÜXÝH\S]\ÚXÐØ[˜\Ô›ÝšY\‹Ø[˜\Ð\ÜXÝ™Y™\™[˜ÙK”ÔUPT‘Kˆ
+BˆOË˜[š[X]YˆB‚ˆ˜[[Y™\œ™YH\Þ[˜ÈÂˆÚ][Y[Ý]Ü“[
+TWÐÐS•T×Ñ‘UÒÕSQSÕUÓTÊHÂˆ\S]\ÚXÐØ[˜\Ô›ÝšY\‹™Ù]žTÛÛ™Ð\\Ý
+ˆÛÛ™ÈHY]Y]K]Kˆ\\ÝH\\Ýˆ[[HHY]Y]K˜[[OË]Kˆ^XÚ]HY]Y]K™^XÚ]ˆ\Ü˜ÈH\Ü˜Ëˆ\˜][Û”ÙXÛÛ™ÈHY]Y]K™\˜][Û‹ˆ™Y™\œ™Y\ÜXÝH\S]\ÚXÐØ[˜\Ô›ÝšY\‹Ø[˜\Ð\ÜXÝ™Y™\™[˜ÙK•Sˆ
+BˆOË˜[š[X]YˆB‚ˆÜ]X\™QY™\œ™Y˜]ØZ]
+
+HÈ[Y™\œ™Y˜]ØZ]
+
+BˆB‚ˆËÈÛ›HØXÚHÙ[Z[™H™\Ý[ËˆYˆ›ÝØ[YH˜XÚÈ[\H\ÈØ\È™\žBˆËÈZÙ[HH[Y[Ý]Û™]ÛÜšÈXØÝ\
+ÛÛÚÙ[ˆÙ\™\‹›ZÞBˆËÈÛÛ›™XÝ[Û‹]ËŠH˜]\ˆ[ˆ\HÛÛ™š\›Z[™È››ÈØ[˜\È^\ÝÈˆBˆËÈØXÚ[™È]\›X[™[H›ÜˆH™\ÝÙˆH›ØÙ\ÜÈY™][YH\ÂˆËÈÚ]XYHH™X]\™HÛÚÈÛÛ\][Hœ›ÚÙ[‹ˆ]]™]žHÛˆBˆËÈ™^^H[œÝXY‚ˆYˆ
+Ü]X\™HOH[[OH[
+HÂˆ˜[ÛÛXš[™YH‰ÜÜ]X\™K›Ü‘[\J
+__	Ý[›Ü‘[\J
+_H‚ˆÞ[˜Ú›Ûš^™Y
+\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™ØXÚJHÂˆ\S]\ÚXÐ\\Ý[Ý[Û˜XÚÙÜ›Ý[™ØXÚVØØXÚRÙ^WHHÛÛXš[™YˆBˆB‚ˆYˆ
+Ý\œ™[YYXSY]Y]K˜[YOËšYOHY]Y]KšY
+HÂˆÝ\œ™[\PØ[˜\Õ\›˜[YHHÜ]X\™BˆÝ\œ™[\U[Ø[˜\Õ\›˜[YHH[ˆBˆB‚ˆš]˜]HÝ\Ü[™[ˆ\]UY[Ø[˜\ÊY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÊHÂˆÝ\œ™[Y[Ø[˜\Õ\›˜[YHH[ˆYˆ
+Y]Y]HOH[Y]Y]Kš\Ñ\\ÛÙHY]Y]Kš\ÕšY[ÔÛÛ™ÊH™]\›‚ˆYˆ
+Y]TÝÜ™K™Ù]
+Y[[š[X]YÛÝ™\œÑ[˜X›YÙ^K˜[ÙJJH™]\›‚ˆYˆ
+\ÓØØ[YYXJY]Y]JJH™]\›‚‚ˆ˜[\\ÝHY]Y]K˜\\ÝË™š\œÝÜ“[
+
+OË›˜[YOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ™]\›‚ˆ˜[ØXÚRÙ^HH™Y™\œ™Y\ÛÜšÐØXÚRÙ^JY]Y]K\\Ý
+Bˆ˜[ØXÚYBˆÞ[˜Ú›Ûš^™Y
+Y[[š[X]Y\ÛÜšÐØXÚJHÂˆYˆ
+Y[[š[X]Y\ÛÜšÐØXÚK˜ÛÛZ[œÒÙ^JØXÚRÙ^JJHÂˆYHÈY[[š[X]Y\ÛÜšÐØXÚVØØXÚRÙ^WBˆH[ÙHÂˆ˜[ÙHÈ[ˆBˆBˆYˆ
+ØXÚY™š\œÝ
+HÂˆYˆ
+Ý\œ™[YYXSY]Y]K˜[YOËšYOHY]Y]KšY
+HÂˆÝ\œ™[Y[Ø[˜\Õ\›˜[YHHØXÚYœÙXÛÛ™ˆBˆ™]\›‚ˆB‚ˆ˜[™\ÛÛ™YBˆÚ][Y[Ý]Ü“[
+×ÍL
+HÂˆY[ÛYQ™YY›ÝšY\‹œ™\ÛÛ™P[š[X]Y\ÛÜšÊˆ]HHY]Y]K]Kˆ\\ÝH\\Ýˆ[[HHY]Y]K˜[[OË]KˆÛÛÚÚYHH]TÝÜ™K™Ù]
+Y[ÛÛÚÚYRÙ^KˆŠKˆ
+BˆOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HB‚ˆÞ[˜Ú›Ûš^™Y
+Y[[š[X]Y\ÛÜšÐØXÚJHÂˆY[[š[X]Y\ÛÜšÐØXÚVØØXÚRÙ^WHH™\ÛÛ™YˆBˆYˆ
+Ý\œ™[YYXSY]Y]K˜[YOËšYOHY]Y]KšY
+HÂˆÝ\œ™[Y[Ø[˜\Õ\›˜[YHH™\ÛÛ™YˆBˆB‚ˆš]˜]HÝ\Ü[™[ˆ\]T™Y™\œ™Y\ÛÜšÊˆY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OËˆ
+HÂˆÝ\œ™[™Y™\œ™Y\ÛÜšÕ\›˜[YHH[ˆYˆ
+Y]Y]HOH[Y]Y]Kš\Ñ\\ÛÙHY]Y]Kš\ÕšY[ÔÛÛ™ÊH™]\›‚ˆYˆ
+\ÓØØ[YYXJY]Y]JJH™]\›‚‚ˆ˜[\\ÝHY]Y]K˜\\ÝË™š\œÝÜ“[
+
+OË›˜[YOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆ˜[ØXÚRÙ^HH™Y™\œ™Y\ÛÜšÐØXÚRÙ^JY]Y]K\\Ý
+Bˆ˜[ØXÚYBˆÞ[˜Ú›Ûš^™Y
+™Y™\œ™Y\ÛÜšÐØXÚJHÂˆYˆ
+™Y™\œ™Y\ÛÜšÐØXÚK˜ÛÛZ[œÒÙ^JØXÚRÙ^JJHÂˆYHÈ™Y™\œ™Y\ÛÜšÐØXÚVØØXÚRÙ^WBˆH[ÙHÂˆ˜[ÙHÈ[ˆBˆBˆYˆ
+ØXÚY™š\œÝ
+HÂˆYˆ
+Ý\œ™[YYXSY]Y]K˜[YOËšYOHY]Y]KšY
+HÂˆÝ\œ™[™Y™\œ™Y\ÛÜšÕ\›˜[YHHØXÚYœÙXÛÛ™ˆ™Yœ™\Ú\ØÛÜ™œÑ›Ü”™Y™\œ™Y\ÛÜšÊY]Y]KšY
+BˆBˆ™]\›‚ˆB‚ˆ˜[Y[\ÛÜšÈBˆÚ][Y[Ý]Ü“[
+—ÍÍL
+HÂˆY[ÛYQ™YY›ÝšY\‹œ™\ÛÛ™P[[P\ÛÜšÊˆ]HHY]Y]K]Kˆ\\ÝH\\Ýˆ[[HHY]Y]K˜[[OË]KˆÛÛÚÚYHH]TÝÜ™K™Ù]
+Y[ÛÛÚÚYRÙ^KˆŠKˆ
+BˆOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆ˜[™\ÛÛ™YBˆY[\ÛÜšÂˆÎˆÚ][Y[Ý]Ü“[
+—ÍÍL
+HÂˆY^™\’ÛYQ™YY›ÝšY\‹œ™\ÛÛ™P[[P\ÛÜšÊˆ]HHY]Y]K]Kˆ\\ÝH\\Ýˆ[[HHY]Y]K˜[[OË]KˆÛÛÚÚYHH]TÝÜ™K™Ù]
+Y^™\ÛÛÚÚYRÙ^KˆŠKˆ
+BˆOËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HB‚ˆÞ[˜Ú›Ûš^™Y
+™Y™\œ™Y\ÛÜšÐØXÚJHÂˆ™Y™\œ™Y\ÛÜšÐØXÚVØØXÚRÙ^WHH™\ÛÛ™YˆBˆYˆ
+Ý\œ™[YYXSY]Y]K˜[YOËšYOHY]Y]KšY
+HÂˆÝ\œ™[™Y™\œ™Y\ÛÜšÕ\›˜[YHH™\ÛÛ™Yˆ™Yœ™\Ú\ØÛÜ™œÑ›Ü”™Y™\œ™Y\ÛÜšÊY]Y]KšY
+BˆBˆB‚ˆš]˜]H[ˆ™Yœ™\Ú\ØÛÜ™œÑ›Ü”™Y™\œ™Y\ÛÜšÊYYXRYˆÝš[™ÊHÂˆØÛÜK›][˜Ú
+\Ü]Ú\œË“XZ[‹š[[YYX]JHÂˆYˆ
+\^Y\‹š\Ô^Z[™ÈÝ\œ™[ÛÛ™Ë˜[YOËœÛÛ™ÏËšYOHYYXRY
+H™]\›][˜ÚˆÝ\œ™[ÛÛ™Ë˜[YOË›]ÈÛÛ™ÈO‚ˆ\]Q\ØÛÜ™”ÊÛÛ™ÊBˆBˆBˆB‚ˆš]˜]H[ˆ™Y™\œ™Y\ÛÜšÐØXÚRÙ^JˆY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]Kˆ\\ÝˆÝš[™ÏËˆ
+NˆÝš[™ÈBˆ\ÝÙŠˆY]Y]K]Kˆ\\Ý›Ü‘[\J
+KˆY]Y]K˜[[OË]K›Ü‘[\J
+Kˆ
+Kš›Ú[•ÔÝš[™ÊŸŠHÈ]›ÝÙ\˜Ø\ÙJ
+Kš[J
+HB‚ˆš]˜]HÝ\Ü[™[ˆ\ÓØØ[YYXJY]Y]NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]JNˆ›ÛÛX[ˆBˆY]Y]KšYš\ÓØØ[YYXRY
+
+HˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ]X˜\ÙK™Ù]ÛÛ™ÐžRY›ØÚÚ[™ÊY]Y]KšY
+OËœÛÛ™ÏËš\ÓØØ[OHYBˆB‚ˆš]˜]H[ˆÝš[™Ëš\ÓØØ[YYXRY
+
+Nˆ›ÛÛX[ˆBˆÝ\ÕÚ]
+˜ÛÛ[‹ËÈ‹YÛ›Ü™PØ\ÙHHYJHˆÝ\ÕÚ]
+™š[N‹ËÈ‹YÛ›Ü™PØ\ÙHHYJB‚ˆš]˜]H[ˆYYXR][Kš\Ð[X^›ÛÙ”Ý™X[J
+Nˆ›ÛÛX[ˆÂˆ˜[\šHHØØ[ÛÛ™šYÝ\˜][ÛË\šOËÔÝš[™Ê
+HÎˆ™]\›ˆ˜[ÙBˆ™]\›ˆ[X^›Û]Y[Ô›ÝšY\‹š\Ð[X^›ÛÙ•\›
+\šJHYYXRYœÝ\ÕÚ]
+˜[X^›ÛŽ˜XÚÎˆŠBˆB‚ˆš]˜]H[ˆØY[X™YYØ[˜\Ò[˜XÚÙÜ›Ý[™
+YYXRYˆÝš[™ÊHÂˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÊHÂˆ˜[[X™YYØ[˜\ÈBˆ]Y[ÕYÕÜš]\‹™^˜XÝ[X™YYØ[˜\ÕÐØXÚJ\XØ][ÛÛÛ^YYXRY
+BˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆYˆ
+Ý\œ™[YYXSY]Y]K˜[YOËšYOHYYXRY
+HÂˆÝ\œ™[[X™YYØ[˜\Õ\›˜[YHH[X™YYØ[˜\ÏË\šBˆBˆBˆBˆB‚ˆš]˜]H[ˆÝ\œ™[]Y]YSY]Y]JYYXRYˆÝš[™ÊNˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈÂˆ™]\›ˆYˆ
+ÛÜ\‹›^SÛÜ\Š
+HOHÛÜ\‹™Ù]XZ[“ÛÜ\Š
+JHÂˆ^Y\‹™š[™™^YYXR][PžRY
+YYXRY
+OË›Y]Y]BˆH[ÙHÂˆ[Ø]Ú[™ÈÂˆ[›ØÚÚ[™Ê\Ü]Ú\œË“XZ[ŠHÂˆ^Y\‹™š[™™^YYXR][PžRY
+YYXRY
+OË›Y]Y]BˆBˆK™Ù]Ü“[
+
+BˆBˆB‚ˆš]˜]H[ˆ]Y]YYY]Y]Q›Ü”^X˜XÚÑ]X˜\ÙJˆYYXRYˆÝš[™ËˆÛÛ™ÎˆÛÛ™ÏËˆ
+NˆÛÛK›Y]›Û\Ý›]\ÚXË›[Ù[Ë“YYXSY]Y]OÈÂˆYˆ
+ÛÛ™ÈOH[
+H™]\›ˆ[ˆ˜[Y]Y]HHÝ\œ™[]Y]YSY]Y]JYYXRY
+OËZÙRYˆÈ]šYOHYYXRYHÎˆ™]\›ˆ[ˆ™]\›ˆYˆ
+YYXRYš\Ñ^\›˜[œ›Û[™YYXRY
+
+H	‰ˆY]Y]K™\˜][Ûˆ[ˆH[[Ì
+HÂˆY]Y]K˜ÛÜJ\˜][ÛˆHLJBˆH[ÙHÂˆY]Y]BˆBˆB‚ˆš]˜]H[ˆÝš[™Ëš\Ñ^\›˜[œ›Û[™YYXRY
+
+Nˆ›ÛÛX[ˆÂˆ˜[˜[YHHÝÙ\˜Ø\ÙJØØ[K•TÊBˆ™]\›ˆ˜[YKœÝ\ÕÚ]
+œÜÝYžNˆŠHˆ˜[YKœÝ\ÕÚ]
+™Y^™\ŽˆŠHˆ˜[YKœÝ\ÕÚ]
+Y[ˆŠHˆ˜[YKœÝ\ÕÚ]
+œÛÝ[™ÛÝYˆŠHˆ˜[YKœÝ\ÕÚ]
+œ[Ø^ŽˆŠHˆ˜[YK˜ÛÛZ[œÊ›Ü[‹œÜÝYžK˜ÛÛHŠHˆ˜[YK˜ÛÛZ[œÊ™Y^™\‹˜ÛÛHŠHˆ˜[YK˜ÛÛZ[œÊY[˜ÛÛHŠHˆ˜[YK˜ÛÛZ[œÊœÛÝ[™ÛÝY˜ÛÛHŠHˆ˜[YK˜ÛÛZ[œÊœ[Ø^‹˜ÛÛHŠBˆB‚ˆš]˜]H[ˆ\šKš\Õ[œ™\ÛÛ™Y^X˜XÚÕ\šJYYXRYˆÝš[™ÊNˆ›ÛÛX[ˆÂˆ˜[˜]ÈHÔÝš[™Ê
+BˆYˆ
+˜]ÈOHYYXRY
+H™]\›ˆYBˆYˆ
+\ØÚ[YKš\Ó[Ü›[šÊ
+JH™]\›ˆ˜[ÙBˆ™]\›ˆ˜]Ëš\Ó›Ý›[šÊ
+H	‰‚ˆ\˜]Ë˜ÛÛZ[œÊ	ËÉÊH	‰‚ˆ\˜]Ë˜ÛÛZ[œÊ	×	ÊH	‰‚ˆ\˜]Ë˜ÛÛZ[œÊ	Ë‰ÊH	‰‚ˆ˜]Ë›[™ÝHˆB‚ˆš]˜]H[ˆYYXR][K›YYXRY›Ü”^X˜XÚÔÛÝ\˜ÙJ
+NˆÝš[™ÏÈÂˆ˜[ØØ[ÛÛ™šYÝ\˜][ÛˆHØØ[ÛÛ™šYÝ\˜][ÛˆÎˆ™]\›ˆYYXRYZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆ™]\›ˆYYXRYZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆØØ[ÛÛ™šYÝ\˜][Û‹˜Ý\ÝÛPØXÚRÙ^OË›]
+Ž›YYXRYœ›ÛQ]TÜXÒÙ^JBˆÎˆY^™\]Y[Ñ]TÛÝ\˜ÙK›YYXRYœ›ÛU\šJØØ[ÛÛ™šYÝ\˜][Û‹\šJBˆB‚ˆš]˜]H[ˆYYXR][K˜Z[[™[™ÕY[›Ý]JˆYYXRYˆÝš[™Ëˆ^XÝ\Úˆ›ÛÛX[‹ˆ
+NˆYYXR][OÈÂˆ˜[ØØ[ÛÛ™šYÝ\˜][ÛˆHØØ[ÛÛ™šYÝ\˜][ÛˆÎˆ™]\›ˆ[ˆ˜[ØÚ[YHHØØ[ÛÛ™šYÝ\˜][Û‹\šKœØÚ[YOË›ÝÙ\˜Ø\ÙJØØ[K•TÊBˆ˜[Ø[”›Ý]HBˆÚ[ˆ
+ØÚ[YJHÂˆ[ˆˆOˆØØ[ÛÛ™šYÝ\˜][Û‹\šKš\Õ[œ™\ÛÛ™Y^X˜XÚÕ\šJYYXRY
+Bˆš‹šÈˆOˆYBˆ[ÙHOˆ˜[ÙBˆBˆYˆ
+XØ[”›Ý]JH™]\›ˆ[ˆ™]\›ˆÚ]™\ÛÛ™Y^X˜XÚÔÝ™X[Jˆ\šHH[™[™ÕY[X[šY™\Ý\šJYYXRY^XÝ\Ú
+KˆØXÚRÙ^HHY[˜[˜XÚÐØXÚRÙ^JYYXRY
+KˆZ[YU\HHYˆ
+^XÝ\Ú
+HZ[YU\\ËTPÐUSÓ—ÓT[ÙH[ˆ
+BˆB‚ˆš]˜]H[ˆ™\ÛÛ™SYYXR][Q›Ü”ÛÝ\˜ÙJYYXR][NˆYYXR][JNˆYYXR][HÂˆYˆ
+YYXR][K›ØØ[ÛÛ™šYÝ\˜][ÛˆOH[
+H™]\›ˆYYXR][Bˆ˜[YYXRYHYYXR][K›YYXRY›Ü”^X˜XÚÔÛÝ\˜ÙJ
+BˆÎˆ™]\›ˆYYXR][Bˆ˜[Y[š[X\žHBˆ\Ô›ÝšY\‘š\œÝ[”^X˜XÚÓÜ™\ŠˆYYXRYHYYXRYˆ›ÝšY\ˆH]Y[Ô›ÝšY\“Ü™\’][K•QSˆ
+Bˆ˜[ÚÚ\Y[]™SX[šY™\Ý›Ü][\BˆÚÚ\Y[]™SX[šY™\ÝÛ˜ÙSYYXRYË˜ÛÛZ[œÊYYXRY
+HˆY[›ÙÜ™\ÜÚ]™T™Y™\œ™YYYXRYË˜ÛÛZ[œÊYYXRY
+B‚ˆ˜[Ý™X[TÙ[XÝ[Û’Ù^HHÝ\œ™[Ý™X[TÙ[XÝ[Û’Ù^J
+BˆÛÛ™Õ\›ØXÚVÛYYXRYOËZÙRYˆÂˆ]™^\™\Ð]\ÈˆÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+H	‰‚ˆ]œÙ[XÝ[Û’Ù^HOHÝ™X[TÙ[XÝ[Û’Ù^BˆOË›]ÈØXÚYO‚ˆYˆ
+ÚÚ\Y[]™SX[šY™\Ý›Ü][\	‰ˆ\ÕY[˜[˜XÚÐØXÚRÙ^JØXÚY˜ØXÚRÙ^JJHÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+’YÛ›Üš[™ÈØXÚYQSÝ™X[H\š[™È›ÙÜ™\ÜÚ]™H™]žH›Üˆ	YYXRYŠBˆÛX\”™\ÛÛ™YÝ™X[PØXÚJYYXRY
+Bˆ™]\›]ˆBˆ˜[ØXÚY\šHHØXÚY\šKÕ\šJ
+Bˆ˜[ØXÚY\Ðœ›ÚÙ[•Y[[\BˆY[š[X\žH	‰‚ˆ\ÚÚ\Y[]™SX[šY™\Ý›Ü][\	‰‚ˆ\ÕY[˜[˜XÚÐØXÚRÙ^JØXÚY˜ØXÚRÙ^JH	‰‚ˆØXÚY\šKœØÚ[YK™\]X[Ê™š[H‹YÛ›Ü™PØ\ÙHHYJH	‰‚ˆØXÚY›Z[YU\HOHZ[YU\\ËTPÐUSÓ—ÓTˆYˆ
+ØXÚY\Ðœ›ÚÙ[•Y[[\
+HÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+’YÛ›Üš[™È›Û‹QTÒQS[\ØXÚH™Y›Ü™HÛÝ\˜ÙHÙ[XÝ[Ûˆ›Üˆ	YYXRYŠBˆÛX\”™\ÛÛ™YÝ™X[PØXÚJYYXRY
+Bˆ™]\›]ˆBˆYˆ
+ˆÚÚ\Y[]™SX[šY™\Ý›Ü][\	‰‚ˆ\ÕY[˜[˜XÚÐØXÚRÙ^JØXÚY˜ØXÚRÙ^JH	‰‚ˆØXÚY›Z[YU\HOHZ[YU\\ËTPÐUSÓ—ÓTˆ
+HÂˆÚÚ\Y[]™SX[šY™\ÝÛ˜ÙSYYXRYËœ™[[Ý™JYYXRY
+BˆBˆ™]\›ˆYYXR][KÚ]™\ÛÛ™Y^X˜XÚÔÝ™X[Jˆ\šHHØXÚY\šKˆØXÚRÙ^HHØXÚY˜ØXÚRÙ^KˆZ[YU\HHØXÚY›Z[YU\Kˆ›SXÙ[œÙU\šHHØXÚY™›SXÙ[œÙU\šKˆÚYHØXÚYšÚYˆXÜž\[Û’Ù^HHØXÚY™XÜž\[Û’Ù^Bˆ
+BˆHÎˆÛÛ™Õ\›ØXÚKœ™[[Ý™JYYXRY
+B‚ˆYˆ
+Y[š[X\žJHÂˆYYXR][K˜Z[[™[™ÕY[›Ý]JˆYYXRYHYYXRYˆ^XÝ\ÚH˜[ÙKˆ
+OË›]È[™[™ÕY[][HO‚ˆ™]\›ˆ[™[™ÕY[][BˆBˆB‚ˆ™]\›ˆYYXR][BˆB‚ˆš]˜]H[ˆYYXR][KÚ]™\ÛÛ™Y^X˜XÚÔÝ™X[Jˆ\šNˆÝš[™ËˆØXÚRÙ^NˆÝš[™ËˆZ[YU\NˆÝš[™ÏÈH[ˆ›SXÙ[œÙU\šNˆÝš[™ÏÈH[ˆÚYˆÝš[™ÏÈH[ˆXÜž\[Û’Ù^NˆÝš[™ÏÈH[ˆ
+NˆYYXR][HÂˆ˜[™\ÛÛ™Y\šHH\šKÕ\šJ
+Bˆ˜[^X˜XÚÐØXÚRÙ^HHYˆ
+™\ÛÛ™Y\šKœØÚ[YK™\]X[Ê™š[H‹YÛ›Ü™PØ\ÙHHYJJHÂˆ™\ÛÛ™Y\šKÔÝš[™Ê
+BˆH[ÙHÂˆØXÚRÙ^BˆBˆ˜[\Ð˜\™T^X˜XÚÒYBˆ™\ÛÛ™Y\šKœØÚ[YKš\Ó[Ü›[šÊ
+H	‰‚ˆ™\ÛÛ™Y\šKÔÝš[™Ê
+Kš\Ó›Ý›[šÊ
+H	‰‚ˆ\™\ÛÛ™Y\šKÔÝš[™Ê
+K˜ÛÛZ[œÊ	ËÉÊH	‰‚ˆ\™\ÛÛ™Y\šKÔÝš[™Ê
+K˜ÛÛZ[œÊ	×	ÊBˆ˜[\ÔÛÝ[™ÛÝYÈBˆ™\ÛÛ™Y\šKš\ÒY\˜\˜ÚXØ[	‰‚ˆ™\ÛÛ™Y\šK™Ù]]Y\žT\˜[Y]\ŠÛÝ[™ÛÝY]Y[Ô›ÝšY\‹”Õ‘PSWÒ×ÓPT’ÑT—ÔUQT–JHOHŒH‚ˆ˜[\ÐÛX\’Ù^HH›SXÙ[œÙU\šOËœÝ\ÕÚ]
+˜ÛX\šÙ^N‹ËÈŠHOHYBˆ˜[Z[\ˆHZ[\ÛŠ
+BˆœÙ]\šJ™\ÛÛ™Y\šJBˆœÙ]Ý\ÝÛPØXÚRÙ^J^X˜XÚÐØXÚRÙ^JBˆœÙ]Z[YU\JˆÚ[ˆÂˆ\ÔÛÝ[™ÛÝYÈOˆZ[YU\\ËTPÐUSÓ—ÓLÕNˆ\Ð˜\™T^X˜XÚÒYOˆZ[YU\Bˆ[ÙHOˆZ[YU\HÎˆØØ[ÛÛ™šYÝ\˜][ÛË›Z[YU\BˆKˆ
+BˆYˆ
+\ÐÛX\’Ù^JHÂˆZ[\‹œÙ]›PÛÛ™šYÝ\˜][ÛŠˆYYXR][K‘›PÛÛ™šYÝ\˜][Û‹Z[\ŠËÓPT’ÑVWÕURQ
+BˆœÙ]XÙ[œÙU\šJ\šKœ\œÙJ›SXÙ[œÙU\šHHJJBˆ˜Z[
+
+Bˆ
+BˆH[ÙHYˆ
+Y›SXÙ[œÙU\šKš\Ó[Ü›[šÊ
+JHÂˆZ[\‹œÙ]›PÛÛ™šYÝ\˜][ÛŠˆYYXR][K‘›PÛÛ™šYÝ\˜][Û‚ˆZ[\ŠËÓPT’ÑVWÕURQ
+BˆœÙ]XÙ[œÙU\šJ›SXÙ[œÙU\šJBˆœÙ]^PÛX\ÛÛ[Ú]Ý]Ù^JYJBˆ˜Z[
+
+Kˆ
+BˆBˆ™]\›ˆZ[\‹˜Z[
+
+BˆB‚ˆš]˜]H[ˆYYXR][Kš\Ô™\ÛÛ™YY[^X˜XÚÔÝ™X[J
+Nˆ›ÛÛX[ˆÂˆ˜[ØØ[ÛÛ™šYÝ\˜][ÛˆHØØ[ÛÛ™šYÝ\˜][ÛˆÎˆ™]\›ˆ˜[ÙBˆ˜[\šHHØØ[ÛÛ™šYÝ\˜][Û‹\šBˆ™]\›ˆØØ[ÛÛ™šYÝ\˜][Û‹˜Ý\ÝÛPØXÚRÙ^OË›]
+Žš\ÕY[˜[˜XÚÐØXÚRÙ^JHOHYHˆY[]Y[Ô›ÝšY\‹š\Ó]™SX[šY™\Ý\šJ\šKÔÝš[™Ê
+JHˆ\šKš\ÕY[^X˜XÚÐÙ•\šJ
+BˆB‚ˆš]˜]H[›™\ˆÛ\ÜÈ^X˜XÚÓYYXTÛÝ\˜ÙQ˜XÝÜžJˆš]˜]H˜[]TÛÝ\˜ÙQ˜XÝÜžNˆ]TÛÝ\˜ÙK‘˜XÝÜžKˆ
+HˆYYXTÛÝ\˜ÙK‘˜XÝÜžHÂˆš]˜]H˜[^˜XÝÜœÑ˜XÝÜžHBˆY˜][^˜XÝÜœÑ˜XÝÜžJ
+BˆœÙ]ÛÛœÝ[š]˜]TÙYZÚ[™Ñ[˜X›Y
+YJBˆš]˜]H˜[Y˜][˜XÝÜžHHY˜][YYXTÛÝ\˜ÙQ˜XÝÜžJˆ]TÛÝ\˜ÙQ˜XÝÜžKˆ^˜XÝÜœÑ˜XÝÜžKˆ
+Bˆš]˜]H˜[Ñ˜XÝÜžHHÓYYXTÛÝ\˜ÙK‘˜XÝÜžJ]TÛÝ\˜ÙQ˜XÝÜžJBˆš]˜]H˜[\Ú˜XÝÜžHH\ÚYYXTÛÝ\˜ÙK‘˜XÝÜžJ]TÛÝ\˜ÙQ˜XÝÜžJBˆš]˜]H˜[Ý\ÜY\\ÈH
+ˆY˜][˜XÝÜžKœÝ\ÜY\\ËÔÙ]
+
+H
+ÂˆËÓÓ•S•ÕTWÒÈ
+ÂˆËÓÓ•S•ÕTWÑTÒˆ
+KÒ[\œ˜^J
+B‚ˆÝ™\œšYH[ˆÜ™X]SYYXTÛÝ\˜ÙJYYXR][NˆYYXR][JNˆYYXTÛÝ\˜ÙHÂˆ˜[™\ÛÛ™Y][HH[Ø]Ú[™ÈÂˆ™\ÛÛ™SYYXR][Q›Ü”ÛÝ\˜ÙJYYXR][JBˆK›Û‘˜Z[\™HÈ\œ›ÜˆO‚ˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠKÊ\œ›Ü‹‘˜Z[YÈ™\ÛÛ™HÝ™X[H™Y›Ü™HYYXHÛÝ\˜ÙHÜ™X][ÛˆŠBˆK™Ù]Ü‘Y˜][
+YYXR][JB‚ˆ˜[\šHH™\ÛÛ™Y][K›ØØ[ÛÛ™šYÝ\˜][ÛË\šBˆ˜[Ý™X[U\›H\šOËÔÝš[™Ê
+HÎˆˆ‚‚ˆ˜[š[˜[˜XÝÜžNˆ]TÛÝ\˜ÙK‘˜XÝÜžHH]TÛÝ\˜ÙQ˜XÝÜžBˆ˜[\ÒÔÛÝ\˜ÙHBˆ\šHOH[	‰‚ˆ
+ˆ™\ÛÛ™Y][K›ØØ[ÛÛ™šYÝ\˜][ÛË›Z[YU\HOHZ[YU\\ËTPÐUSÓ—ÓLÕNˆ
+Bˆ˜[\Ñ\ÚÛÝ\˜ÙHBˆ\šHOH[	‰‚ˆ™\ÛÛ™Y][K›ØØ[ÛÛ™šYÝ\˜][ÛË›Z[YU\HOHZ[YU\\ËTPÐUSÓ—ÓT‚ˆ™]\›ˆÚ[ˆÂˆ\ÒÔÛÝ\˜ÙHOˆÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+•\Ú[™ÈÈYYXHÛÝ\˜ÙH›Üˆ	Ü™\ÛÛ™Y][K›YYXRYHŠBˆÑ˜XÝÜžK˜Ü™X]SYYXTÛÝ\˜ÙJˆ™\ÛÛ™Y][K˜Z[\ÛŠ
+BˆœÙ]Z[YU\JZ[YU\\ËTPÐUSÓ—ÓLÕN
+Bˆ˜Z[
+
+Kˆ
+BˆBˆ\Ñ\ÚÛÝ\˜ÙHOˆÂˆ[X™\‹YÊ“]\ÚXÔÙ\šXÙHŠK™
+•\Ú[™ÈTÒYYXHÛÝ\˜ÙH›Üˆ	Ü™\ÛÛ™Y][K›YYXRYHŠBˆ\Ú˜XÝÜžK˜Ü™X]SYYXTÛÝ\˜ÙJˆ™\ÛÛ™Y][K˜Z[\ÛŠ
+BˆœÙ]Z[YU\JZ[YU\\ËTPÐUSÓ—ÓT
+Bˆ˜Z[
+
+Kˆ
+BˆBˆ[ÙHOˆY˜][˜XÝÜžK˜Ü™X]SYYXTÛÝ\˜ÙJ™\ÛÛ™Y][JBˆBˆB‚ˆÝ™\œšYH[ˆÙ]›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\Šˆ›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\Žˆ›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\‹ˆ
+NˆYYXTÛÝ\˜ÙK‘˜XÝÜžHÂˆY˜][˜XÝÜžKœÙ]›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\Š›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\ŠBˆÑ˜XÝÜžKœÙ]›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\Š›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\ŠBˆ\Ú˜XÝÜžKœÙ]›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\Š›TÙ\ÜÚ[Û“X[˜YÙ\”›ÝšY\ŠBˆ™]\›ˆ\ÂˆB‚ˆÝ™\œšYH[ˆÙ]ØY\œ›Ü’[™[™ÔÛXÞJˆØY\œ›Ü’[™[™ÔÛXÞNˆØY\œ›Ü’[™[™ÔÛXÞKˆ
+NˆYYXTÛÝ\˜ÙK‘˜XÝÜžHÂˆY˜][˜XÝÜžKœÙ]ØY\œ›Ü’[™[™ÔÛXÞJØY\œ›Ü’[™[™ÔÛXÞJBˆÑ˜XÝÜžKœÙ]ØY\œ›Ü’[™[™ÔÛXÞJØY\œ›Ü’[™[™ÔÛXÞJBˆ\Ú˜XÝÜžKœÙ]ØY\œ›Ü’[™[™ÔÛXÞJØY\œ›Ü’[™[™ÔÛXÞJBˆ™]\›ˆ\ÂˆB‚ˆÝ™\œšYH[ˆÙ]Ý\ÜY\\Ê
+Nˆ[\œ˜^HHÝ\ÜY\\ÂˆB‚ˆš]˜]H[ˆÜ™X]SYYXTÛÝ\˜ÙQ˜XÝÜžJ
+HH^X˜XÚÓYYXTÛÝ\˜ÙQ˜XÝÜžJÜ™X]Q]TÛÝ\˜ÙQ˜XÝÜžJ
+JB‚ˆš]˜]H[ˆÜ™X]SØYÛÛ›Û
+
+HBˆY˜][ØYÛÛ›ÛˆZ[\Š
+BˆœÙ]\™Ù]Y™™\ž]\ÊUQS×ÕT‘ÑUÐ•Q‘‘T—Ð–UTÊBˆœÙ]š[Üš]^™U[YSÝ™\”Ú^™U™\ÚÛÊ˜[ÙJBˆœÙ]Y™™\‘\˜][ÛœÓ\ÊˆUQS×ÓRS—Ð•Q‘‘T—ÓTËˆUQS×ÓPVÐ•Q‘‘T—ÓTËˆUQS×Ð•Q‘‘T—Ñ“Ô—ÔVPPÒ×ÓTËˆUQS×Ð•Q‘‘T—Ñ“Ô—Ô‘P•Q‘‘T—ÓTËˆ
+K˜Z[
+
+B‚ˆš]˜]H[ˆÚÝ[[˜X›P]Y[ÓÙ™›ØY
+ˆÙ™›ØY™YŽˆ›ÛÛX[‹ˆÜ›ÜÜÙ˜YQ[˜X›Yˆ›ÛÛX[‹ˆ
+Nˆ›ÛÛX[ˆÂˆYˆ
+[Ù™›ØY™YŠH™]\›ˆ˜[ÙBˆYˆ
+Ü›ÜÜÙ˜YQ[˜X›Y
+HÂˆ[X™\‹YÊQÊK™
+]Y[ÈÙ™›ØY\ØX›Y™XØ]\ÙHÜ›ÜÜÙ˜YH\È[˜X›YŠBˆ™]\›ˆ˜[ÙBˆBˆ[X™\‹YÊQÊK™
+ˆ]Y[ÈÙ™›ØY™\]Y\ÝY]Ý\ÝÛHTKÜÚ[[˜ÙKÜÜYY]Y[È›ØÙ\ÜÛÜœÈÝ[›ØÚÈ™[XX›HÙ™›ØY‚ˆ
+Bˆ™]\›ˆ˜[ÙBˆB‚ˆš]˜]H[ˆÜ™X]T™[™\™\œÑ˜XÝÜžJˆ\T›ØÙ\ÜÛÜŽˆÝ\ÝÛQ\]X[^™\]Y[Ô›ØÙ\ÜÛÜ‹ˆÚ[[˜ÙT›ØÙ\ÜÛÜŽˆÚ[[˜ÙQ]XÝÜ]Y[Ô›ØÙ\ÜÛÜ‹ˆ
+HHØš™XÝˆY˜][™[™\™\œÑ˜XÝÜžJ\ÊHÂˆ[š]ÂˆÙ]^[œÚ[Û”™[™\™\“[ÙJVS”ÒSÓ—Ô‘S‘T‘T—ÓSÑWÔ‘Q‘TŠBˆB‚ˆÝ™\œšYH[ˆZ[]Y[ÔÚ[šÊˆÛÛ^ˆÛÛ^ˆ[˜X›Q›Ø]Ý]]ˆ›ÛÛX[‹ˆ[˜X›P]Y[Õ˜XÚÔ^X˜XÚÔ\˜[\Îˆ›ÛÛX[‹ˆ
+HHY˜][]Y[ÔÚ[šÂˆZ[\Š\Ð]\ÚXÔÙ\šXÙJBˆœÙ][˜X›Q›Ø]Ý]]
+[˜X›Q›Ø]Ý]]
+BˆœÙ][˜X›P]Y[Õ˜XÚÔ^X˜XÚÔ\˜[\Ê[˜X›P]Y[Õ˜XÚÔ^X˜XÚÔ\˜[\ÊBˆœÙ]]Y[Ô›ØÙ\ÜÛÜÚZ[ŠˆY˜][]Y[ÔÚ[šË‘Y˜][]Y[Ô›ØÙ\ÜÛÜÚZ[ŠˆËÈ‹ˆ[š™XÝ›ØÙ\ÜÛÜˆ[È]Y[È\[[™Bˆ\œ˜^SÙŠˆ\T›ØÙ\ÜÛÜ‹ˆÚ[[˜ÙT›ØÙ\ÜÛÜ‹ˆ
+KˆÚ[[˜ÙTÚÚ\[™Ð]Y[Ô›ØÙ\ÜÛÜŠ—ÌÌŒÌMŠKˆÛÛšXÐ]Y[Ô›ØÙ\ÜÛÜŠ
+Kˆ
+Kˆ
+K˜Z[
+
+BˆB‚ˆÝ™\œšYH[ˆÛ•˜XÚÜÐÚ[™ÙY
+˜XÚÜÎˆ˜XÚÜÊHÂˆÝ\\^Y\‹“\Ý[™\‹›Û•˜XÚÜÐÚ[™ÙY
+˜XÚÜÊBˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊ˜XÚÜÊBˆB‚ˆš]˜]H[ˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊˆ˜XÚÜÎˆ˜XÚÜËˆ™]žRY•[šÛ›ÝÛŽˆ›ÛÛX[ˆHYKˆ
+HÂˆ˜[YYXRYH^Y\‹˜Ý\œ™[YYXR][OË›YYXRYËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ™]\›‚ˆ˜[]Y[Ñ›Ü›X]H˜XÚÜËœÙ[XÝY]Y[Ñ›Ü›X]
+
+BˆYˆ
+]Y[Ñ›Ü›X]OH[
+HÂˆYˆ
+™]žRY•[šÛ›ÝÛŠHØÚY[P]Y[Ñ›Ü›X]™]žJYYXRY
+Bˆ™]\›‚ˆBˆ˜[™[™\™\”Ø[\T˜]HH]Y[Ñ›Ü›X]œØ[\T˜]KZÙRYˆÈ]ˆBˆ˜[™[™\™\š]˜]HH]Y[Ñ›Ü›X]œ™[™\™\š]˜]Q›Ü‘]X˜\ÙJ™[™\™\”Ø[\T˜]JBˆYˆ
+™[™\™\š]˜]HOH[	‰ˆ™[™\™\”Ø[\T˜]HOH[
+HÂˆYˆ
+™]žRY•[šÛ›ÝÛŠHØÚY[P]Y[Ñ›Ü›X]™]žJYYXRY
+Bˆ™]\›‚ˆB‚ˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÊHÂˆ˜\ˆÚÝ[™]žHH˜[ÙBˆ˜\ˆ™\ÛÛ™Y^X˜XÚÑ›Ü›X]ˆ›Ü›X][]OÈH[ˆ]X˜\ÙKœ]Y\žHÂˆ˜[^\Ý[™ÈHÙ]›Ü›X]žRY›ØÚÚ[™ÊYYXRY
+Bˆ˜[ØXÚYHÛÛ™Õ\›ØXÚVÛYYXRYOË™›Ü›X]ˆ˜[˜\ÙQ›Ü›X]BˆÚ[ˆÂˆØXÚYOH[	‰ˆ
+^\Ý[™ÈOH[^\Ý[™Ëš]YÈOHØXÚYš]YÈY^\Ý[™Ëš\Õ\ÙY[]Y[ÓY]Y]J
+JHOˆØXÚYˆ^\Ý[™ÈOH[Oˆ^\Ý[™Âˆ[ÙHOˆ™[™\™\‘˜[˜XÚÑ›Ü›X]
+YYXRY]Y[Ñ›Ü›X]™[™\™\š]˜]K™[™\™\”Ø[\T˜]JBˆBˆYˆ
+^\Ý[™ÈOH[
+HÂˆ˜[[œÙ\YH˜\ÙQ›Ü›X]Ú]™[™\™\]Y[ÓY]Y]J]Y[Ñ›Ü›X]™[™\™\š]˜]K™[™\™\”Ø[\T˜]JBˆ\Ù\
+[œÙ\Y
+Bˆ™\ÛÛ™Y^X˜XÚÑ›Ü›X]H[œÙ\YˆÚÝ[™]žHHZ[œÙ\Yš\Õ\ÙY[]Y[ÓY]Y]J
+Bˆ™]\›]Y\žBˆBˆ˜[\Ð[XÈH˜\ÙQ›Ü›X]˜ÛÙXÜË˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJBˆ˜[ÚÝ[ÛX\˜Y[XÐš]˜]HBˆ\Ð[XÈ	‰‚ˆ˜\ÙQ›Ü›X]˜š]˜]Hˆ	‰‚ˆX˜\ÙQ›Ü›X]˜š]˜]Kš\Ô]\ÚX›P[XÐš]˜]J™[™\™\”Ø[\T˜]HÎˆ˜\ÙQ›Ü›X]œØ[\T˜]JBˆ˜[ÚÝ[\]Pš]˜]HBˆ™[™\™\š]˜]HOH[	‰‚ˆ
+ˆ˜\ÙQ›Ü›X]˜š]˜]HHˆ
+Z\Ð[XÈ	‰ˆ˜\ÙQ›Ü›X]š]YÈ[ˆÙ]ÙŠQSÑSPÒ×ÒUQËÓÕS‘ÓÕQÑSPÒ×ÒUQËS”ÕQÔSWÑSPÒ×ÒUQÊJBˆ
+Bˆ˜[ÚÝ[\]TØ[\T˜]HBˆ™[™\™\”Ø[\T˜]HOH[	‰‚ˆ
+˜\ÙQ›Ü›X]œØ[\T˜]HOH[˜\ÙQ›Ü›X]œØ[\T˜]HH˜\ÙQ›Ü›X]š]YÈ[ˆÙ]ÙŠQSÑSPÒ×ÒUQËQV‘T—ÑSPÒ×ÒUQËÓÕS‘ÓÕQÑSPÒ×ÒUQËS”ÕQÔSWÑSPÒ×ÒUQÊJBˆYˆ
+ˆ˜\ÙQ›Ü›X]OH^\Ý[™È	‰‚ˆ\ÚÝ[ÛX\˜Y[XÐš]˜]H	‰‚ˆ\ÚÝ[\]Pš]˜]H	‰‚ˆ\ÚÝ[\]TØ[\T˜]Bˆ
+HÂˆ™\ÛÛ™Y^X˜XÚÑ›Ü›X]H˜\ÙQ›Ü›X]ˆÚÝ[™]žHHX˜\ÙQ›Ü›X]š\Õ\ÙY[]Y[ÓY]Y]J
+Bˆ™]\›]Y\žBˆB‚ˆ˜[\]YH˜\ÙQ›Ü›X]˜ÛÜJˆš]˜]HHÚ[ˆÂˆÚÝ[ÛX\˜Y[XÐš]˜]H	‰ˆ™[™\™\š]˜]HOH[Oˆ™[™\™\š]˜]BˆÚÝ[ÛX\˜Y[XÐš]˜]HOˆˆÚÝ[\]Pš]˜]HOˆ™[™\™\š]˜]Bˆ[ÙHOˆ˜\ÙQ›Ü›X]˜š]˜]BˆKˆØ[\T˜]HHYˆ
+ÚÝ[\]TØ[\T˜]JH™[™\™\”Ø[\T˜]H[ÙH˜\ÙQ›Ü›X]œØ[\T˜]Kˆ
+Bˆ\Ù\
+\]Y
+Bˆ™\ÛÛ™Y^X˜XÚÑ›Ü›X]H\]YˆÚÝ[™]žHH]\]Yš\Õ\ÙY[]Y[ÓY]Y]J
+BˆBˆ™\ÛÛ™Y^X˜XÚÑ›Ü›X]Ë›]È›Ü›X]O‚ˆÚ]ÛÛ^
+\Ü]Ú\œË“XZ[ŠHÂˆ˜[Ý\œ™[YYXRYHÝ\œ™[YYXSY]Y]K˜[YOËšYÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆYˆ
+Ý\œ™[YYXRYOHYYXRY	‰ˆ›Ü›X]šYOHYYXRY
+HÂˆÝ\œ™[^X˜XÚÑ›Ü›X]˜[YHH›Ü›X]ˆBˆBˆBˆYˆ
+™]žRY•[šÛ›ÝÛˆ	‰ˆÚÝ[™]žJHÂˆØÚY[P]Y[Ñ›Ü›X]™]žJYYXRY
+BˆH[ÙHYˆ
+\ÚÝ[™]žJHÂˆ]Y[Ñ›Ü›X]™]žR›ØœËœ™[[Ý™JYYXRY
+OË˜Ø[˜Ù[
+
+BˆBˆBˆB‚ˆš]˜]H[ˆ›Ü›X][]Kš\Õ\ÙY[]Y[ÓY]Y]J
+Nˆ›ÛÛX[ˆÂˆ˜[\ÔØ[\T˜]HHØ[\T˜]OË›]È]ˆHOHYBˆ˜[\Ðš]˜]HHš]˜]Hˆ	‰ˆ
+ˆXÛÙXÜË˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJHˆš]˜]Kš\Ô]\ÚX›P[XÐš]˜]JØ[\T˜]JBˆ
+Bˆ™]\›ˆÚ[ˆÂˆ]YÈOHQSÑSPÒ×ÒUQÈOˆ\Ðš]˜]H\ÔØ[\T˜]Bˆ]YÈOHQV‘T—ÑSPÒ×ÒUQÈOˆ\Ðš]˜]H\ÔØ[\T˜]BˆÛÙXÜË˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJHOˆ\Ðš]˜]H\ÔØ[\T˜]Bˆ[ÙHOˆ\Ðš]˜]H\ÔØ[\T˜]BˆBˆB‚ˆš]˜]H[ˆ™[™\™\‘˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ]Y[Ñ›Ü›X]ˆ›Ü›X]ˆ™[™\™\š]˜]Nˆ[Ëˆ™[™\™\”Ø[\T˜]Nˆ[Ëˆ
+Nˆ›Ü›X][]HÂˆ˜[ÛÙXÜÈH]Y[Ñ›Ü›X]˜ÛÙXÜÏËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HK›Ü‘[\J
+Bˆ™]\›ˆ›Ü›X][]JˆYHYYXRYˆ]YÈHˆZ[YU\HH]Y[Ñ›Ü›X]œØ[\SZ[YU\OËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HHÎˆ˜]Y[ËÝ[šÛ›ÝÛˆ‹ˆÛÙXÜÈHÛÙXÜËˆš]˜]HH™[™\™\š]˜]HÎˆˆØ[\T˜]HH™[™\™\”Ø[\T˜]KˆÛÛ[[™ÝHˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H^Y\‹˜Ý\œ™[YYXR][OË›ØØ[ÛÛ™šYÝ\˜][ÛË\šOËÔÝš[™Ê
+Kˆ
+BˆB‚ˆš]˜]H[ˆ›Ü›X][]KÚ]™[™\™\]Y[ÓY]Y]Jˆ]Y[Ñ›Ü›X]ˆ›Ü›X]ˆ™[™\™\š]˜]Nˆ[Ëˆ™[™\™\”Ø[\T˜]Nˆ[Ëˆ
+Nˆ›Ü›X][]HÂˆ˜[™\ÛÛ™YZ[YU\HHZ[YU\BˆZÙRYˆÈ]š\Ó›Ý›[šÊ
+H	‰ˆZ]™\]X[Ê˜]Y[ËÝ[šÛ›ÝÛˆ‹YÛ›Ü™PØ\ÙHHYJHBˆÎˆ]Y[Ñ›Ü›X]œØ[\SZ[YU\OËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆ˜]Y[ËÝ[šÛ›ÝÛˆ‚ˆ˜[™\ÛÛ™YÛÙXÜÈHÛÙXÜÂˆZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆ]Y[Ñ›Ü›X]˜ÛÙXÜÏËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆÎˆˆ‚ˆ˜[\Ð[XÈBˆ™\ÛÛ™YÛÙXÜË˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJHˆ™\ÛÛ™YZ[YU\K˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJBˆ˜[^\Ý[™Ðš]˜]HBˆYˆ
+\Ð[XÈ	‰ˆXš]˜]Kš\Ô]\ÚX›P[XÐš]˜]JØ[\T˜]HÎˆ™[™\™\”Ø[\T˜]JJHÂˆˆH[ÙHÂˆš]˜]BˆBˆ˜[›ÝšY\’]YÈBˆ]YÈ[ˆÙ]ÙŠQSÑSPÒ×ÒUQËÓÕS‘ÓÕQÑSPÒ×ÒUQËS”ÕQÔSWÑSPÒ×ÒUQÊBˆ™]\›ˆÛÜJˆZ[YU\HH™\ÛÛ™YZ[YU\KˆÛÙXÜÈH™\ÛÛ™YÛÙXÜËˆš]˜]HHÚ[ˆÂˆ\Ð[XÈ	‰ˆ™[™\™\š]˜]HOH[	‰ˆ^\Ý[™Ðš]˜]HHOˆ™[™\™\š]˜]Bˆ\Ð[XÈOˆ^\Ý[™Ðš]˜]Bˆ™[™\™\š]˜]HOH[	‰ˆ
+^\Ý[™Ðš]˜]HH›ÝšY\’]YÊHOˆ™[™\™\š]˜]Bˆ[ÙHOˆ^\Ý[™Ðš]˜]BˆKˆØ[\T˜]HHÚ[ˆÂˆ™[™\™\”Ø[\T˜]HOH[	‰ˆ
+Ø[\T˜]HOH[Ø[\T˜]HH›ÝšY\’]YÊHOˆ™[™\™\”Ø[\T˜]Bˆ[ÙHOˆØ[\T˜]BˆKˆ
+BˆB‚ˆš]˜]H[ˆ›Ü›X]œ™[™\™\š]˜]Q›Ü‘]X˜\ÙJØ[\T˜]Nˆ[ÊNˆ[ÈÂˆ˜[š]˜]HH]™\˜YÙPš]˜]BˆZÙRYˆÈ]ˆBˆÎˆXZÐš]˜]KZÙRYˆÈ]ˆBˆ™]\›ˆYˆ
+\Ð[XÔ™[™\™\‘›Ü›X]
+
+JHÂˆš]˜]OËZÙRYˆÈ]š\Ô]\ÚX›P[XÐš]˜]JØ[\T˜]JHBˆH[ÙHÂˆš]˜]BˆBˆB‚ˆš]˜]H[ˆ›Ü›X]š\Ð[XÔ™[™\™\‘›Ü›X]
+
+Nˆ›ÛÛX[ˆBˆÛÙXÜÏË˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJHOHYHˆØ[\SZ[YU\OË˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJHOHYB‚ˆš]˜]H[ˆ[š\Ô]\ÚX›P[XÐš]˜]JØ[\T˜]Nˆ[ÊNˆ›ÛÛX[ˆÂˆYˆ
+\ÈH
+H™]\›ˆ˜[ÙBˆYˆ
+\ÈOHQÐPÖWÔPÑRÓT—Ð”ÊH™]\›ˆ˜[ÙBˆ˜[X^HÚ[ˆÂˆØ[\T˜]HOH[Oˆ—ÍLÌˆØ[\T˜]HHÌOˆ—ÍÌˆØ[\T˜]HHM—ÌOˆWÍLÌˆ[ÙHOˆLÌÌˆBˆ™]\›ˆ\È[ˆLŽÌ‹›X^ˆB‚ˆš]˜]H[ˆØÚY[P]Y[Ñ›Ü›X]™]žJYYXRYˆÝš[™ÊHÂˆYˆ
+]Y[Ñ›Ü›X]™]žR›ØœÖÛYYXRYOËš\ÐXÝ]™HOHYJH™]\›‚‚ˆ˜[™]žR›ØˆBˆØÛÜK›][˜ÚÂˆ™\X]
+UQS×Ñ“Ô“PUÔ‘U–WÐUSTÊHÈ][\O‚ˆ[^JUQS×Ñ“Ô“PUÔ‘U–WÑSVWÓTÊBˆYˆ
+^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOHYYXRY
+H™]\›][˜Ú‚ˆ˜[\Ô™\ÛÛ™Y]Y[Ô]X[]HBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ]X˜\ÙK™›Ü›X]
+YYXRY
+K™š\œÝ
+
+OËš\Õ\ÙY[]Y[ÓY]Y]J
+HOHYBˆBˆYˆ
+\Ô™\ÛÛ™Y]Y[Ô]X[]JH™]\›][˜Ú‚ˆ[X™\‹YÊQÊK™
+ˆ”™]žZ[™È]Y[È›Ü›X]Y]Y]H›Üˆ	YYXRY
+	Ø][\
+È_KÉUQS×Ñ“Ô“PUÔ‘U–WÐUSTÊH‹ˆ
+Bˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊ^Y\‹˜Ý\œ™[˜XÚÜË™]žRY•[šÛ›ÝÛˆH˜[ÙJBˆBˆB‚ˆ]Y[Ñ›Ü›X]™]žR›ØœÖÛYYXRYHH™]žR›Ø‚ˆ™]žR›Ø‹š[›ÚÙSÛÛÛ\][ÛˆÂˆ]Y[Ñ›Ü›X]™]žR›ØœËœ™[[Ý™JYYXRY™]žR›ØŠBˆBˆB‚ˆš]˜]H[ˆØÚY[P]Y[Ñ›Ü›X]™Yœ™\Ú
+YYXRYˆÝš[™ÊHÂˆYˆ
+]Y[Ñ›Ü›X]™Yœ™\Ú›ØœÖÛYYXRYOËš\ÐXÝ]™HOHYJH™]\›‚‚ˆ˜[™Yœ™\Ú›ØˆBˆØÛÜK›][˜ÚÂˆ™Yœ™\ÚÝ\œ™[^X˜XÚÑ›Ü›X]œ›ÛQ]X˜\ÙJYYXRY
+Bˆ\ÝÙŠLLWÎ
+K™›Ü‘XXÚÈ[^S\ÈO‚ˆ[^J[^S\ÊBˆYˆ
+^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOHYYXRY
+H™]\›][˜Úˆ™Yœ™\ÚÝ\œ™[^X˜XÚÑ›Ü›X]œ›ÛQ]X˜\ÙJYYXRY
+Bˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊ^Y\‹˜Ý\œ™[˜XÚÜÊBˆBˆB‚ˆ]Y[Ñ›Ü›X]™Yœ™\Ú›ØœÖÛYYXRYHH™Yœ™\Ú›Ø‚ˆ™Yœ™\Ú›Ø‹š[›ÚÙSÛÛÛ\][ÛˆÂˆ]Y[Ñ›Ü›X]™Yœ™\Ú›ØœËœ™[[Ý™JYYXRY™Yœ™\Ú›ØŠBˆBˆB‚ˆš]˜]H[ˆ˜XÚÜËœÙ[XÝY]Y[Ñ›Ü›X]
+
+Nˆ›Ü›X]ÈÂˆÜ›Ý\Ë™›Ü‘XXÚÈÜ›Ý\O‚ˆYˆ
+Ü›Ý\\HOHË•PÒ×ÕTWÐUQSÈYÜ›Ý\š\ÔÙ[XÝY
+H™]\››Ü‘XXÚˆ›Üˆ
+[™^[ˆ[[Ü›Ý\›[™Ý
+HÂˆYˆ
+Ü›Ý\š\Õ˜XÚÔÙ[XÝY
+[™^
+JH™]\›ˆÜ›Ý\™Ù]˜XÚÑ›Ü›X]
+[™^
+BˆBˆBˆ™]\›ˆ[ˆB‚ˆÝ™\œšYH[ˆÛ“ØYÛÛ\]Y
+ˆ]™[[YNˆ[˜[]XÜÓ\Ý[™\‹‘]™[[YKˆØY]™[[™›ÎˆØY]™[[™›ËˆYYXSØY]NˆYYXSØY]Kˆ
+HÂˆYˆ
+Z\Ó]™T^X˜XÚÐš]˜]PXÝ]™J
+JH™]\›‚ˆYˆ
+ˆYYXSØY]K™]U\HOHË‘UWÕTWÓQQPH	‰‚ˆYYXSØY]K™]U\HOHË‘UWÕTWÓQQPWÔ“ÑÔ‘TÔÒU‘WÓU‘Bˆ
+HÂˆ™]\›‚ˆB‚ˆ˜[\Ð]Y[ÓØYBˆYYXSØY]K˜XÚÕ\HOHË•PÒ×ÕTWÐUQSÈˆYYXSØY]K˜XÚÑ›Ü›X]ˆËœØ[\SZ[YU\BˆËœÝ\ÕÚ]
+˜]Y[ËÈ‹YÛ›Ü™PØ\ÙHHYJHOHYHˆYYXSØY]K˜XÚÕ\HOHË•PÒ×ÕTWÕS’Ó“ÕÓ‚ˆYˆ
+Z\Ð]Y[ÓØY
+H™]\›‚‚ˆ˜[YYXRYH]™[[YK›YYXRY
+
+HÎˆÝ\œ™[^X˜XÚÓYYXRY
+
+Bˆ˜[\Ñ›XÓØYBˆYYXSØY]K˜XÚÑ›Ü›X]ËœØ[\SZ[YU\OË˜ÛÛZ[œÊ™›XÈ‹YÛ›Ü™PØ\ÙHHYJHOHYHˆYYXSØY]K˜XÚÑ›Ü›X]Ë˜ÛÙXÜÏË˜ÛÛZ[œÊ™›XÈ‹YÛ›Ü™PØ\ÙHHYJHOHYBˆYˆ
+\Ñ›XÓØYYYXRYË›]
+Žš\Ó]™T^X˜XÚÔ\œÙ\˜XÚÙY
+HOHYJH™]\›‚‚ˆ˜[YYXTÝ\[YS\ÈHYYXSØY]K›YYXTÝ\[YS\Âˆ˜[YYXQ[™[YS\ÈHYYXSØY]K›YYXQ[™[YS\ÂˆYˆ
+YYXTÝ\[YS\ÈOHË•SQWÕS”ÑUYYXQ[™[YS\ÈOHË•SQWÕS”ÑU
+HÂˆ™]\›‚ˆB‚ˆ˜[YYXQ\˜][Û“\ÈHYYXQ[™[YS\ÈHYYXTÝ\[YS\Âˆ˜[ž]\ÓØYYHØY]™[[™›Ë˜ž]\ÓØYYˆYˆ
+YYXQ\˜][Û“\ÈHž]\ÓØYYH
+H™]\›‚‚ˆ˜[š]˜]HH
+
+ž]\ÓØYY
+ˆÌ
+HÈYYXQ\˜][Û“\ÊBˆ˜ÛÙ\˜ÙP][ÜÝ
+[“PVÕSQKÓÛ™Ê
+JBˆÒ[
+
+Bˆ™XÛÜ™]™T^X˜XÚÐš]˜]TØ[\J]™[[YKYYXSØY]Kš]˜]JBˆX›\Ú]™T^X˜XÚÐš]˜]J]™[[YKš]˜]K›Ü˜ÙHHYJBˆB‚ˆÝ™\œšYH[ˆÛ˜[™ÚY\Ý[X]Jˆ]™[[YNˆ[˜[]XÜÓ\Ý[™\‹‘]™[[YKˆÝ[ØY[YS\Îˆ[ˆÝ[ž]\ÓØYYˆÛ™Ëˆš]˜]Q\Ý[X]NˆÛ™Ëˆ
+HÂˆËÈ™]ÛÜšÈ˜[™ÚY\È›Ý]Y[Èš]˜]NÈ\œÙ\‹ÛØY]Ú[™ÝÈØ[\\Èš]™HH]™HX™[‚ˆB‚ˆš]˜]H[ˆX›\Ú]™T^X˜XÚÕ˜[œÙ™\‘\Ý[X]Jˆ]™[[YNˆ[˜[]XÜÓ\Ý[™\‹‘]™[[YKˆØY]™[[™›ÎˆØY]™[[™›Ëˆ
+HÂˆYˆ
+Z\Ó]™T^X˜XÚÐš]˜]PXÝ]™J
+JH™]\›‚ˆ˜[ØY\˜][Û“\ÈHØY]™[[™›Ë›ØY\˜][Û“\Âˆ˜[ž]\ÓØYYHØY]™[[™›Ë˜ž]\ÓØYYˆYˆ
+ØY\˜][Û“\ÈHž]\ÓØYYH
+H™]\›‚‚ˆ˜[š]˜]HH
+
+ž]\ÓØYY
+ˆÌ
+HÈØY\˜][Û“\ÊBˆ˜ÛÙ\˜ÙP][ÜÝ
+[“PVÕSQKÓÛ™Ê
+JBˆÒ[
+
+Bˆ™XÛÜ™]™T^X˜XÚÐš]˜]TØ[\J]™[[YKYYXSØY]HH[š]˜]HHš]˜]JBˆX›\Ú]™T^X˜XÚÐš]˜]J]™[[YKš]˜]K›Ü˜ÙHH˜[ÙJBˆB‚ˆš]˜]H[ˆ\Ó]™T^X˜XÚÔ\œÙ\˜XÚÙY
+YYXRYˆÝš[™ÊNˆ›ÛÛX[ˆÂˆ˜[›Ü›X]BˆÝ\œ™[^X˜XÚÑ›Ü›X]˜[YOËZÙRYˆÈ]šYOHYYXRYBˆÎˆÛÛ™Õ\›ØXÚVÛYYXRYOË™›Ü›X]ˆ™]\›ˆ›Ü›X]Ëš\Ñ›XÑ›Ü›X]
+
+HOHYBˆB‚ˆš]˜]H[ˆX›\Ú]™T^X˜XÚÐš]˜]Jˆ]™[[YNˆ[˜[]XÜÓ\Ý[™\‹‘]™[[YKˆš]˜]Nˆ[ˆ›Ü˜ÙNˆ›ÛÛX[‹ˆ
+HÂˆ˜[Ý\œ™[YYXRYBˆÝ\œ™[YYXSY]Y]K˜[YOËšYˆÎˆ^Y\‹˜Ý\œ™[Y]Y]OËšYˆÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆYˆ
+Ý\œ™[YYXRYš\Ó[Ü›[šÊ
+JH™]\›‚‚ˆ˜[]™[YYXRYBˆYˆ
+Y]™[[YK[Y[[™Kš\Ñ[\H	‰ˆ]™[[YKÚ[™ÝÒ[™^OHË’S‘VÕS”ÑU
+HÂˆ[Ø]Ú[™ÈÂˆ]™[[YK[Y[[™Bˆ™Ù]Ú[™ÝÊ]™[[YKÚ[™ÝÒ[™^[Y[[™K•Ú[™ÝÊ
+JBˆ›YYXR][Bˆ›YYXRYˆK™Ù]Ü“[
+
+BˆH[ÙHÂˆ[ˆBˆYˆ
+Y]™[YYXRYš\Ó[Ü›[šÊ
+H	‰ˆ]™[YYXRYOHÝ\œ™[YYXRY
+H™]\›‚‚ˆX›\Ú]™T^X˜XÚÐš]˜]JÝ\œ™[YYXRYš]˜]K›Ü˜ÙJBˆB‚ˆš]˜]H[ˆX›\Ú]™T^X˜XÚÐš]˜]JˆYYXRYˆÝš[™Ëˆš]˜]Nˆ[ˆ›Ü˜ÙNˆ›ÛÛX[‹ˆ
+HÂˆYˆ
+Z\Ó]™T^X˜XÚÐš]˜]PXÝ]™J
+JH™]\›‚ˆ˜[Ý\œ™[YYXRYBˆÝ\œ™[YYXSY]Y]K˜[YOËšYˆÎˆ^Y\‹˜Ý\œ™[Y]Y]OËšYˆÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆYˆ
+Ý\œ™[YYXRYš\Ó[Ü›[šÊ
+HÝ\œ™[YYXRYOHYYXRY
+H™]\›‚ˆ˜[Ø[\T˜]HH]™Pš]˜]TØ[\T˜]JYYXRY
+Bˆ˜[\Ü^Pš]˜]HHš]˜]KÑ\Ü^S]™T^X˜XÚÐš]˜]JØ[\T˜]JHÎˆ™]\›‚‚ˆ˜[›ÝÈHÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+Bˆ˜[™]š[Ý\ÈHÝ\œ™[]™T^X˜XÚÐš]˜]K˜[YBˆYˆ
+ˆY›Ü˜ÙH	‰‚ˆ™]š[Ý\ÈOH[	‰‚ˆ›ÝÈH\Ý]™T^X˜XÚÐš]˜]U\]S\ÈU‘WÔVPPÒ×Ð’UUWÓRS—ÕTUWÓTÂˆ
+HÂˆ™]\›‚ˆBˆYˆ
+Y›Ü˜ÙH	‰ˆ™]š[Ý\ÈOH[	‰ˆXœÊ™]š[Ý\ÈH\Ü^Pš]˜]JHU‘WÔVPPÒ×Ð’UUWÓRS—ÑSWÐ”ÊHÂˆ™]\›‚ˆB‚ˆÝ\œ™[]™T^X˜XÚÐš]˜]K˜[YHH\Ü^Pš]˜]Bˆ\Ý]™T^X˜XÚÐš]˜]U\]S\ÈH›ÝÂˆB‚ˆš]˜]H[ˆ[Ñ\Ü^S]™T^X˜XÚÐš]˜]JØ[\T˜]Nˆ[ÈH[
+Nˆ[ÈÂˆYˆ
+\ÈU‘WÔVPPÒ×Ð’UUWÓRS—Ð”ÊH™]\›ˆ[ˆ˜[X^H]™T^X˜XÚÐš]˜]SX^›Ü”Ø[\T˜]JØ[\T˜]JBˆ™]\›ˆZÙRYˆÈ]HX^BˆB‚ˆš]˜]H[ˆ]™T^X˜XÚÐš]˜]SX^›Ü”Ø[\T˜]JØ[\T˜]Nˆ[ÊNˆ[BˆÚ[ˆÂˆØ[\T˜]HOH[Oˆ×ÌÌˆØ[\T˜]HHÌOˆ×ÌÌˆØ[\T˜]HHM—ÌOˆ—ÍLÌˆØ[\T˜]HHNL—ÌOˆL—ÌÌˆ[ÙHOˆU‘WÔVPPÒ×Ð’UUWÐP”ÓÓUWÓPVÐ”ÂˆB‚ˆš]˜]H[ˆ™XÛÜ™]™T^X˜XÚÐš]˜]TØ[\Jˆ]™[[YNˆ[˜[]XÜÓ\Ý[™\‹‘]™[[YKˆYYXSØY]NˆYYXSØY]OËˆš]˜]Nˆ[ˆ
+HÂˆ˜[YYXRYH]™[[YK›YYXRY
+
+HÎˆÝ\œ™[^X˜XÚÓYYXRY
+
+HÎˆ™]\›‚ˆ˜[\Ü^Pš]˜]HHš]˜]KÑ\Ü^S]™T^X˜XÚÐš]˜]J]™Pš]˜]TØ[\T˜]JYYXRY
+JHÎˆ™]\›‚ˆ˜[Ø[\HBˆ]™T^X˜XÚÐš]˜]TØ[\JˆYYXRYHYYXRYˆYYXTÝ\\ÈHYYXSØY]OË›YYXTÝ\[YS\ÏËZÙRYˆÈ]OHË•SQWÕS”ÑUKˆYYXQ[™\ÈHYYXSØY]OË›YYXQ[™[YS\ÏËZÙRYˆÈ]OHË•SQWÕS”ÑUKˆš]˜]HH\Ü^Pš]˜]Kˆ™XÙZ]™Y]\ÈHÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+Kˆ
+BˆÞ[˜Ú›Ûš^™Y
+]™T^X˜XÚÐš]˜]SØÚÊHÂˆ]™T^X˜XÚÐš]˜]TØ[\\Ë˜Y\Ý
+Ø[\JBˆ[™S]™T^X˜XÚÐš]˜]TØ[\\ÓØÚÙY
+Ø[\Kœ™XÙZ]™Y]\ÊBˆBˆB‚ˆš]˜]H[ˆ™XÛÜ™]™T^X˜XÚÐš]˜]TØ[\JˆYYXRYˆÝš[™ËˆYYXTÝ\\ÎˆÛ™ÏËˆYYXQ[™\ÎˆÛ™ÏËˆš]˜]Nˆ[ˆ
+HÂˆ˜[\Ü^Pš]˜]HHš]˜]KÑ\Ü^S]™T^X˜XÚÐš]˜]J]™Pš]˜]TØ[\T˜]JYYXRY
+JHÎˆ™]\›‚ˆ˜[Ø[\HBˆ]™T^X˜XÚÐš]˜]TØ[\JˆYYXRYHYYXRYˆYYXTÝ\\ÈHYYXTÝ\\ËˆYYXQ[™\ÈHYYXQ[™\Ëˆš]˜]HH\Ü^Pš]˜]Kˆ™XÙZ]™Y]\ÈHÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+Kˆ
+BˆÞ[˜Ú›Ûš^™Y
+]™T^X˜XÚÐš]˜]SØÚÊHÂˆ]™T^X˜XÚÐš]˜]TØ[\\Ë˜Y\Ý
+Ø[\JBˆ[™S]™T^X˜XÚÐš]˜]TØ[\\ÓØÚÙY
+Ø[\Kœ™XÙZ]™Y]\ÊBˆBˆB‚ˆš]˜]H[ˆØœÙ\™S]™T^X˜XÚÐš]˜]TÙ][™Ê
+HÂˆ]TÝÜ™K™]Bˆ›X\Âˆ˜[]™Pš]˜]Q[˜X›YH]Ó]™T^X˜XÚÐš]˜]RÙ^WHÎˆ˜[ÙBˆ˜[YØXÞSX™[[˜X›YH]Ô^Y\“YØXÞT]X[]SX™[Ù^WHÎˆ˜[ÙBˆ]™Pš]˜]Q[˜X›Y	‰ˆYØXÞSX™[[˜X›YˆBˆ™\Ý[˜Ý[[Ú[™ÙY
+
+Bˆ˜ÛÛXÝ]\Ý
+ØÛÜJHÈ[˜X›YO‚ˆYˆ
+[˜X›Y	‰ˆ\ÔØÜ™Y[’[\˜XÝ]™Q›Ü“]™Pš]˜]JHÂˆÝ\]™T^X˜XÚÐš]˜]UXÚÙ\Š
+BˆH[ÙHÂˆÝÜ]™T^X˜XÚÐš]˜]UXÚÙ\ŠÛX\•˜[YHHYKÛX\”Ø[\\ÈHY[˜X›Y
+BˆBˆBˆB‚ˆš]˜]H[ˆÝ\]™T^X˜XÚÐš]˜]UXÚÙ\Š
+HÂˆYˆ
+]™T^X˜XÚÐš]˜]UXÚÙ\’›ØËš\ÐXÝ]™HOHYJH™]\›‚ˆ]™T^X˜XÚÐš]˜]UXÚÙ\’›ØˆBˆØÛÜK›][˜ÚÂˆÚ[H
+\ÐXÝ]™JHÂˆ[^JU‘WÔVPPÒ×Ð’UUWÕPÒ×ÓTÊBˆYˆ
+Z\Ó]™T^X˜XÚÐš]˜]PXÝ]™J
+JHÛÛ[YBˆ˜[YYXRYHÝ\œ™[^X˜XÚÓYYXRY
+
+BˆYˆ
+ˆYYXRYš\Ó[Ü›[šÊ
+Hˆ^Y\‹œ^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQHˆ\^Y\‹š\Ô^Z[™Âˆ
+HÂˆÛÛ[YBˆBˆ˜[\Ý[X]HBˆ\Ý[X]S]™T^X˜XÚÐš]˜]JˆYYXRYHYYXRYˆ^X˜XÚÔÜÚ][Û“\ÈH^Y\‹˜Ý\œ™[ÜÚ][Û‹˜ÛÙ\˜ÙP]X\Ý
+
+Kˆ
+BˆYˆ
+\Ý[X]HOH[
+HÂˆX›\Ú]™T^X˜XÚÐš]˜]JYYXRY\Ý[X]K›Ü˜ÙHH˜[ÙJBˆH[ÙHÂˆÛX\“]™T^X˜XÚÐš]˜]U˜[YJ
+BˆBˆBˆBˆB‚ˆš]˜]H[ˆÝÜ]™T^X˜XÚÐš]˜]UXÚÙ\ŠˆÛX\•˜[YNˆ›ÛÛX[‹ˆÛX\”Ø[\\Îˆ›ÛÛX[ˆHYKˆ
+HÂˆ]™T^X˜XÚÐš]˜]UXÚÙ\’›ØË˜Ø[˜Ù[
+
+Bˆ]™T^X˜XÚÐš]˜]UXÚÙ\’›ØˆH[ˆYˆ
+ÛX\•˜[YJHÂˆÛX\“]™T^X˜XÚÐš]˜]U˜[YJ
+BˆBˆYˆ
+ÛX\”Ø[\\ÊHÂˆÞ[˜Ú›Ûš^™Y
+]™T^X˜XÚÐš]˜]SØÚÊHÂˆ]™T^X˜XÚÐš]˜]TØ[\\Ë˜ÛX\Š
+BˆBˆBˆB‚ˆš]˜]H[ˆÛX\“]™T^X˜XÚÐš]˜]U˜[YJ
+HÂˆÝ\œ™[]™T^X˜XÚÐš]˜]K˜[YHH[ˆ\Ý]™T^X˜XÚÐš]˜]U\]S\ÈHˆB‚ˆš]˜]H[ˆ™\Ù]]™T^X˜XÚÐš]˜]JYYXRYˆÝš[™ÏÊHÂˆÛX\“]™T^X˜XÚÐš]˜]U˜[YJ
+BˆYˆ
+YYXRYš\Ó[Ü›[šÊ
+JHÂˆÞ[˜Ú›Ûš^™Y
+]™T^X˜XÚÐš]˜]SØÚÊHÂˆ]™T^X˜XÚÐš]˜]TØ[\\Ë˜ÛX\Š
+BˆBˆBˆB‚ˆš]˜]H[ˆ\Ý[X]S]™T^X˜XÚÐš]˜]JˆYYXRYˆÝš[™Ëˆ^X˜XÚÔÜÚ][Û“\ÎˆÛ™Ëˆ
+Nˆ[ÈÂˆ˜[›ÝÈHÞ\Ý[K˜Ý\œ™[[YSZ[\Ê
+Bˆ˜[Ø[\\ÈBˆÞ[˜Ú›Ûš^™Y
+]™T^X˜XÚÐš]˜]SØÚÊHÂˆ[™S]™T^X˜XÚÐš]˜]TØ[\\ÓØÚÙY
+›ÝÊBˆ]™T^X˜XÚÐš]˜]TØ[\\Âˆ™š[\ˆÈ]›YYXRYOHYYXRYBˆÓ\Ý
+
+BˆBˆYˆ
+Ø[\\Ëš\Ñ[\J
+JH™]\›ˆ[‚ˆ˜[˜[™ÙYØ[\\ÈBˆØ[\\Âˆ™š[\ˆÈ]›YYXTÝ\\ÈOH[	‰ˆ]›YYXQ[™\ÈOH[	‰ˆ]›YYXQ[™\Èˆ]›YYXTÝ\\ÈBˆœÛÜYžHÈ]›YYXTÝ\\ÈBˆYˆ
+˜[™ÙYØ[\\Ëš\Ó›Ý[\J
+JHÂˆ›Û[™Ô˜[™ÙY]™T^X˜XÚÐš]˜]JˆYYXRYHYYXRYˆØ[\\ÈH˜[™ÙYØ[\\Ëˆ^X˜XÚÔÜÚ][Û“\ÈH^X˜XÚÔÜÚ][Û“\Ëˆ
+OË›]È™]\›ˆ]BˆB‚ˆ˜[™XÙ[Ø[\\ÈBˆØ[\\Ë™š[\ˆÈ›ÝÈH]œ™XÙZ]™Y]\ÈHU‘WÔVPPÒ×Ð’UUWÔ“ÓS‘×ÕÒS‘Õ×ÓTÈBˆYˆ
+™XÙ[Ø[\\Ëš\Ñ[\J
+JH™]\›ˆ[‚ˆ™]\›ˆ›Û[™Ô™XÙ[]™T^X˜XÚÐš]˜]JYYXRY™XÙ[Ø[\\Ë›ÝÊBˆB‚ˆš]˜]H[ˆ›Û[™Ô˜[™ÙY]™T^X˜XÚÐš]˜]JˆYYXRYˆÝš[™ËˆØ[\\Îˆ\Ý]™T^X˜XÚÐš]˜]TØ[\O‹ˆ^X˜XÚÔÜÚ][Û“\ÎˆÛ™Ëˆ
+Nˆ[ÈÂˆ˜[Ø[\T˜]HH]™Pš]˜]TØ[\T˜]JYYXRY
+Bˆ˜[Ú[™ÝÔÝ\H^X˜XÚÔÜÚ][Û“\ÈHU‘WÔVPPÒ×Ð’UUWÔÓSÓÕÐ‘RS‘ÓTÂˆ˜[Ú[™ÝÑ[™H^X˜XÚÔÜÚ][Û“\È
+ÈU‘WÔVPPÒ×Ð’UUWÔÓSÓÕÐRPQÓTÂˆ˜[Ú[™ÝÔØ[\\ÈBˆØ[\\Âˆ™š[\ˆÈØ[\HO‚ˆ˜[Ý\HØ[\K›YYXTÝ\\ÈÎˆ™]\›š[\ˆ˜[ÙBˆ˜[[™HØ[\K›YYXQ[™\ÈÎˆ™]\›š[\ˆ˜[ÙBˆ[™HÚ[™ÝÔÝ\	‰ˆÝ\HÚ[™ÝÑ[™ˆKšY‘[\HÂˆØ[\\Âˆ›Z[žSÜ“[È]™\Ý[˜ÙUÊ^X˜XÚÔÜÚ][Û“\ÊHBˆËZÙRYˆÈ]™\Ý[˜ÙUÊ^X˜XÚÔÜÚ][Û“\ÊHHU‘WÔVPPÒ×Ð’UUWÓ‘PT‘TÕÔÐSTWÓTÈBˆË›]
+Ž›\ÝÙŠBˆ›Ü‘[\J
+BˆBˆ™]\›ˆÙZYÚYYYX[“]™T^X˜XÚÐš]˜]JˆØ[\\ÈHÚ[™ÝÔØ[\\ËˆØ[\T˜]HHØ[\T˜]KˆÙZYÚ›ÜˆHÈØ[\HO‚ˆ˜[Ý\HØ[\K›YYXTÝ\\ÈÎˆ^X˜XÚÔÜÚ][Û“\Âˆ˜[[™HØ[\K›YYXQ[™\ÈÎˆÝ\ˆ˜[Ù[\ˆHÝ\
+È
+
+[™HÝ\
+HÈ“
+BˆKŒÈ
+KŒ
+ÈXœÊÙ[\ˆH^X˜XÚÔÜÚ][Û“\ÊKÑÝX›J
+HÈU‘WÔVPPÒ×Ð’UUWÕÑRQÒÑTÕSÑWÓTÊBˆKˆ
+BˆB‚ˆš]˜]H[ˆ›Û[™Ô™XÙ[]™T^X˜XÚÐš]˜]JˆYYXRYˆÝš[™ËˆØ[\\Îˆ\Ý]™T^X˜XÚÐš]˜]TØ[\O‹ˆ›ÝÎˆÛ™Ëˆ
+Nˆ[ÈBˆÙZYÚYYYX[“]™T^X˜XÚÐš]˜]JˆØ[\\ÈHØ[\\ËˆØ[\T˜]HH]™Pš]˜]TØ[\T˜]JYYXRY
+KˆÙZYÚ›ÜˆHÈØ[\HO‚ˆ˜[YÙS\ÈH
+›ÝÈHØ[\Kœ™XÙZ]™Y]\ÊK˜ÛÙ\˜ÙP]X\Ý
+
+BˆKŒÈ
+KŒ
+ÈYÙS\ËÑÝX›J
+HÈU‘WÔVPPÒ×Ð’UUWÕÑRQÒÑTÕSÑWÓTÊBˆKˆ
+B‚ˆš]˜]H[ˆÙZYÚYYYX[“]™T^X˜XÚÐš]˜]JˆØ[\\Îˆ\Ý]™T^X˜XÚÐš]˜]TØ[\O‹ˆØ[\T˜]Nˆ[ËˆÙZYÚ›ÜŽˆ
+]™T^X˜XÚÐš]˜]TØ[\JHOˆÝX›Kˆ
+Nˆ[ÈÂˆ˜[˜[Y\ÈBˆØ[\\Âˆ›X\›Ý[È]˜š]˜]KÑ\Ü^S]™T^X˜XÚÐš]˜]JØ[\T˜]JHBˆœÛÜY
+
+BˆYˆ
+˜[Y\Ëš\Ñ[\J
+JH™]\›ˆ[‚ˆ˜[YYX[ˆH˜[Y\Ë›YYX[“]™T^X˜XÚÐš]˜]J
+Bˆ˜[›ÛÜˆH
+YYX[ˆ
+ˆU‘WÔVPPÒ×Ð’UUWÓÕUQT—ÓÕ×ÔUSÊKÒ[
+
+Bˆ˜[ÙZ[[™ÈH
+YYX[ˆ
+ˆU‘WÔVPPÒ×Ð’UUWÓÕUQT—ÒQÒÔUSÊKÒ[
+
+Bˆ˜\ˆÙZYÚÝ[HŒˆ˜\ˆÙZYÚYš]˜]HHŒˆØ[\\Ë™›Ü‘XXÚÈØ[\HO‚ˆ˜[š]˜]HHØ[\K˜š]˜]KÑ\Ü^S]™T^X˜XÚÐš]˜]JØ[\T˜]JHÎˆ™]\››Ü‘XXÚˆ˜[ÙZYÚHÙZYÚ›ÜŠØ[\JKZÙRYˆÈ]ˆŒHÎˆ™]\››Ü‘XXÚˆÙZYÚÝ[
+ÏHÙZYÚˆÙZYÚYš]˜]H
+ÏHš]˜]K˜ÛÙ\˜ÙR[Š›ÛÜ‹ÙZ[[™ÊH
+ˆÙZYÚˆBˆYˆ
+ÙZYÚÝ[HŒ
+H™]\›ˆYYX[‚ˆ™]\›ˆ
+
+YYX[ˆ
+ˆŠH
+È
+
+ÙZYÚYš]˜]HÈÙZYÚÝ[
+H
+ˆ
+JBˆÒ[
+
+BˆÑ\Ü^S]™T^X˜XÚÐš]˜]JØ[\T˜]JBˆB‚ˆš]˜]H[ˆ\Ý[‹›YYX[“]™T^X˜XÚÐš]˜]J
+Nˆ[Âˆ˜[ZYHHÚ^™HÈ‚ˆ™]\›ˆYˆ
+Ú^™H	HˆOH
+HÂˆ
+
+
+\ÖÛZYHHWKÓÛ™Ê
+H
+È\ÖÛZYWJHÈ“
+K˜ÛÙ\˜ÙP][ÜÝ
+[“PVÕSQKÓÛ™Ê
+JJKÒ[
+
+BˆH[ÙHÂˆ\ÖÛZYWBˆBˆB‚ˆš]˜]H[ˆ]™T^X˜XÚÐš]˜]TØ[\K™\Ý[˜ÙUÊÜÚ][Û“\ÎˆÛ™ÊNˆÛ™ÈÂˆ˜[Ý\HYYXTÝ\\ÈÎˆ™]\›ˆÛ™Ë“PVÕSQBˆ˜[[™HYYXQ[™\ÈÎˆ™]\›ˆÛ™Ë“PVÕSQBˆ™]\›ˆÚ[ˆÂˆÜÚ][Û“\ÈÝ\OˆÝ\HÜÚ][Û“\ÂˆÜÚ][Û“\Èˆ[™OˆÜÚ][Û“\ÈH[™ˆ[ÙHOˆˆBˆB‚ˆš]˜]H[ˆ[™S]™T^X˜XÚÐš]˜]TØ[\\ÓØÚÙY
+›ÝÎˆÛ™ÊHÂˆÚ[H
+ˆ]™T^X˜XÚÐš]˜]TØ[\\ËœÚ^™HˆU‘WÔVPPÒ×Ð’UUWÓPVÔÐSTTÈˆ]™T^X˜XÚÐš]˜]TØ[\\Ë™š\œÝÜ“[
+
+OË›]Âˆ›ÝÈH]œ™XÙZ]™Y]\ÈˆU‘WÔVPPÒ×Ð’UUWÔÐSTWÕÓTÂˆHOHYBˆ
+HÂˆ]™T^X˜XÚÐš]˜]TØ[\\Ëœ™[[Ý™Qš\œÝ
+
+BˆBˆB‚ˆš]˜]H[ˆ[˜[]XÜÓ\Ý[™\‹‘]™[[YK›YYXRY
+
+NˆÝš[™ÏÈBˆYˆ
+][Y[[™Kš\Ñ[\H	‰ˆÚ[™ÝÒ[™^OHË’S‘VÕS”ÑU
+HÂˆ[Ø]Ú[™ÈÂˆ[Y[[™Bˆ™Ù]Ú[™ÝÊÚ[™ÝÒ[™^[Y[[™K•Ú[™ÝÊ
+JBˆ›YYXR][Bˆ›YYXRYˆZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆK™Ù]Ü“[
+
+BˆH[ÙHÂˆ[ˆB‚ˆš]˜]H[ˆÝ\œ™[^X˜XÚÓYYXRY
+
+NˆÝš[™ÏÈBˆÝ\œ™[YYXSY]Y]K˜[YOËšYˆÎˆ^Y\‹˜Ý\œ™[Y]Y]OËšYˆÎˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRY‚ˆš]˜]H]HÛ\ÜÈ]™T^X˜XÚÐš]˜]TØ[\Jˆ˜[YYXRYˆÝš[™Ëˆ˜[YYXTÝ\\ÎˆÛ™ÏËˆ˜[YYXQ[™\ÎˆÛ™ÏËˆ˜[š]˜]Nˆ[ˆ˜[™XÙZ]™Y]\ÎˆÛ™Ëˆ
+B‚ˆÝ™\œšYH[ˆÛ”^X˜XÚÔÝ]Ô™XYJˆ]™[[YNˆ[˜[]XÜÓ\Ý[™\‹‘]™[[YKˆ^X˜XÚÔÝ]Îˆ^X˜XÚÔÝ]Ëˆ
+HÂˆ˜[YYXR][HH]™[[YK[Y[[™K™Ù]Ú[™ÝÊ]™[[YKÚ[™ÝÒ[™^[Y[[™K•Ú[™ÝÊ
+JK›YYXR][Bˆ˜[\ÝÜžQ\˜][Û“\ÈH]TÝÜ™VÒ\ÝÜžQ\˜][Û—OË[Y\ÊLŠHÎˆÌ‚‚ˆYˆ
+^X˜XÚÔÝ]ËÝ[^U[YS\ÈH\ÝÜžQ\˜][Û“\È	‰‚ˆY]TÝÜ™K™Ù]
+]\ÙS\Ý[’\ÝÜžRÙ^K˜[ÙJBˆ
+HÂˆ]X˜\ÙKœ]Y\žHÂˆ[˜Ü™[Y[Ý[^U[YJYYXR][K›YYXRY^X˜XÚÔÝ]ËÝ[^U[YS\ÊBˆžHÂˆ[œÙ\
+ˆ]™[
+ˆÛÛ™ÒYHYYXR][K›YYXRYˆ[Y\Ý[\HØØ[]U[YK››ÝÊ
+Kˆ^U[YHH^X˜XÚÔÝ]ËÝ[^U[YS\Ëˆ
+Kˆ
+BˆHØ]Ú
+ÎˆÔS^Ù\[ÛŠHÂˆBˆBˆB‚ˆËÈ\HÜ˜\\ˆ^X˜XÚÈÙ\È›Ý\ÙH[ÝUX™KÓÜ\ÈÝ™X[H˜XÚÚ[™Ë‚ˆB‚ˆš]˜]H[ˆØ]™T]Y]YUÑ\ÚÊ
+HÂˆYˆ
+^Y\‹›YYXR][PÛÝ[OH
+HÂˆ[X™\‹YÊQÊK™
+”ÚÚ\[™È]Y]YHØ]™HH›ÈYYXH][\ÈŠBˆ™]\›‚ˆB‚ˆ˜[Û˜\ÚÝBˆžHÂˆ]Y]YTØ]™TÛ˜\ÚÝ
+ˆ]Y]YHBˆÝ\œ™[]Y]YKÔ\œÚ\Ý]Y]YJˆ]HH]Y]YU]Kˆ][\ÈH^Y\‹›YYXR][\Ë›X\›Ý[È]›Y]Y]HKˆYYXR][R[™^H^Y\‹˜Ý\œ™[YYXR][R[™^ˆÜÚ][ÛˆH^Y\‹˜Ý\œ™[ÜÚ][Û‹ˆ
+Kˆ]]ÛZ^Bˆ\œÚ\Ý]Y]YJˆ]HH˜]]ÛZ^‹ˆ][\ÈH]]ÛZ^][\Ë˜[YK›X\›Ý[È]›Y]Y]HKˆYYXR][R[™^HˆÜÚ][ÛˆHˆ
+Kˆ^Y\”Ý]HBˆ\œÚ\Ý^Y\”Ý]Jˆ^UÚ[”™XYHH^Y\‹œ^UÚ[”™XYKˆ™\X][ÙHH^Y\‹œ™\X][ÙKˆÚY™›S[ÙQ[˜X›YH^Y\‹œÚY™›S[ÙQ[˜X›Yˆ›Û[YHH^Y\•›Û[YK˜[YKˆÝ\œ™[ÜÚ][ÛˆH^Y\‹˜Ý\œ™[ÜÚ][Û‹ˆÝ\œ™[YYXR][R[™^H^Y\‹˜Ý\œ™[YYXR][R[™^ˆ^X˜XÚÔÝ]HH^Y\‹œ^X˜XÚÔÝ]Kˆ
+Kˆ
+BˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ[X™\‹YÊQÊK™JK‘\œ›ÜˆÚ[HÛ˜\ÚÝ[™È]Y]YHÝ]HŠBˆ™\Ü^Ù\[ÛŠJBˆ™]\›‚ˆB‚ˆ]Y]YTØ]™R›ØË˜Ø[˜Ù[
+
+Bˆ]Y]YTØ]™R›ØˆBˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÊHÂˆ[^JL
+BˆÜš]T]Y]YTÛ˜\ÚÝÑ\ÚÊÛ˜\ÚÝ
+BˆBˆB‚ˆš]˜]H[ˆÜš]T]Y]YTÛ˜\ÚÝÑ\ÚÊÛ˜\ÚÝˆ]Y]YTØ]™TÛ˜\ÚÝ
+HÂˆÜš]SØš™XÝ]ÛZXØ[Jˆš[HHš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÔUQUQWÑ’SJKˆ˜[YHHÛ˜\ÚÝœ]Y]YKˆÝXØÙ\ÜÓY\ÜØYÙHH”]Y]YHØ]™YÝXØÙ\ÜÙ[H‹ˆ˜Z[\™SY\ÜØYÙHH‘˜Z[YÈØ]™H]Y]YH‹ˆ
+BˆÜš]SØš™XÝ]ÛZXØ[Jˆš[HHš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÐUUÓRVÑ’SJKˆ˜[YHHÛ˜\ÚÝ˜]]ÛZ^ˆÝXØÙ\ÜÓY\ÜØYÙHH]]ÛZ^Ø]™YÝXØÙ\ÜÙ[H‹ˆ˜Z[\™SY\ÜØYÙHH‘˜Z[YÈØ]™H]]ÛZ^‹ˆ
+BˆÜš]SØš™XÝ]ÛZXØ[Jˆš[HHš[\Ñ\‹œ™\ÛÛ™JT”ÒTÕS•ÔVQT—ÔÕUWÑ’SJKˆ˜[YHHÛ˜\ÚÝœ^Y\”Ý]KˆÝXØÙ\ÜÓY\ÜØYÙHH”^Y\ˆÝ]HØ]™YÝXØÙ\ÜÙ[H‹ˆ˜Z[\™SY\ÜØYÙHH‘˜Z[YÈØ]™H^Y\ˆÝ]H‹ˆ
+BˆB‚ˆš]˜]H[ˆÜš]SØš™XÝ]ÛZXØ[Jˆš[Nˆš[Kˆ˜[YNˆ[žKˆÝXØÙ\ÜÓY\ÜØYÙNˆÝš[™Ëˆ˜Z[\™SY\ÜØYÙNˆÝš[™Ëˆ
+HÂˆ[Ø]Ú[™ÈÂˆ˜[[\š[HHš[Jš[Kœ\™[š[K‰Ùš[K›˜[Y_K\ŠBˆ[\š[K›Ý]]Ý™X[J
+K\ÙHÈ›ÜÈO‚ˆØš™XÝÝ]]Ý™X[J›ÜÊK\ÙHÈÛÜÈO‚ˆÛÜËÜš]SØš™XÝ
+˜[YJBˆBˆBˆYˆ
+š[K™^\ÝÊ
+H	‰ˆYš[K™[]J
+JHÂˆ[X™\‹YÊQÊKÊÛÝ[›Ý[]HÛ	Ùš[K›˜[Y_H™Y›Ü™H]Y]YHÝ]H™\XÙHŠBˆBˆYˆ
+][\š[Kœ™[˜[YUÊš[JJHÂˆ[\š[K˜ÛÜUÊš[KÝ™\Üš]HHYJBˆ[\š[K™[]J
+BˆBˆ[X™\‹YÊQÊK™
+ÝXØÙ\ÜÓY\ÜØYÙJBˆK›Û‘˜Z[\™HÂˆ[X™\‹YÊQÊK™J]˜Z[\™SY\ÜØYÙJBˆ™\Ü^Ù\[ÛŠ]
+BˆBˆB‚ˆÊŠ‚ˆ
+ˆÐÛÛ^œÝ\›Ü™YÜ›Ý[™Ù\šXÙWH™\]Z\™\ÈÜÝ\›Ü™YÜ›Ý[™HÈÝXØÙYY]ZXÚÛKˆYˆÙHØ[››Ýˆ
+ˆ[\ˆH›Ü™YÜ›Ý[™Ý]KÝÜ[[YYX][HÛÈHÞ\Ý[HÙ\È›ÝS”ˆH\›ØÙ\ÜË‚ˆ
+‹Âˆš]˜]H[ˆ[œÝ\™TÝ\Y\Ñ›Ü™YÜ›Ý[™Ü”ÝÜ
+
+Nˆ›ÛÛX[ˆBˆÝ\›Ü™YÜ›Ý[™ØY™[Jˆ›ÝYšXØ][ÛˆHÜ™X]Q˜[˜XÚÑ›Ü™YÜ›Ý[™›ÝYšXØ][ÛŠ
+Kˆ[šYYY\ÜØYÙHH‘›Ü™YÜ›Ý[™Ù\šXÙHÝ\›Ý[ÝÙYÈÝÜ[™ÈÙ\šXÙHÈ]›ÚYS”ˆ‹ˆ˜Z[\™SY\ÜØYÙHH‘˜Z[YÈ[\ˆ›Ü™YÜ›Ý[™ÈÝÜ[™ÈÙ\šXÙHÈ]›ÚYS”ˆ‹ˆ
+B‚ˆš]˜]H[ˆ[œÝ\™Q›Ü™YÜ›Ý[™Ú]]\Ý›ÝYšXØ][Û“Ü”ÝÜ
+
+Nˆ›ÛÛX[ˆBˆÝ\›Ü™YÜ›Ý[™ØY™[Jˆ›ÝYšXØ][ÛˆH]\ÝYYXS›ÝYšXØ][ÛˆÎˆÜ™X]Q˜[˜XÚÑ›Ü™YÜ›Ý[™›ÝYšXØ][ÛŠ
+Kˆ[šYYY\ÜØYÙHH‘›Ü™YÜ›Ý[™›Û[Ý[Ûˆ[šYY\š[™È›ÝYšXØ][Ûˆ\]NÈÝÜ[™ÈÙ\šXÙH‹ˆ˜Z[\™SY\ÜØYÙHH‘˜Z[YÈ›Û[ÝHÙ\šXÙH\š[™È›ÝYšXØ][Ûˆ\]NÈÝÜ[™ÈÙ\šXÙH‹ˆÝÜÛ‘˜Z[\™HHYKˆ
+B‚ˆš]˜]H[ˆžQ[œÝ\™Q›Ü™YÜ›Ý[™Ú]]\Ý›ÝYšXØ][ÛŠ
+Nˆ›ÛÛX[ˆBˆÝ\›Ü™YÜ›Ý[™ØY™[Jˆ›ÝYšXØ][ÛˆH]\ÝYYXS›ÝYšXØ][ÛˆÎˆÜ™X]Q˜[˜XÚÑ›Ü™YÜ›Ý[™›ÝYšXØ][ÛŠ
+Kˆ[šYYY\ÜØYÙHH‘›Ü™YÜ›Ý[™›Û[Ý[Ûˆ[šYY\š[™È›ÝYšXØ][Ûˆ\]H‹ˆ˜Z[\™SY\ÜØYÙHH‘˜Z[YÈ›Û[ÝHÙ\šXÙH\š[™È›ÝYšXØ][Ûˆ\]H‹ˆÝÜÛ‘˜Z[\™HH˜[ÙKˆ
+B‚ˆš]˜]H[ˆ[œÝ\™Q›Ü™YÜ›Ý[™Ú[›™[^\ÝÊ
+HÂˆ˜[›HHÙ]Þ\Ý[TÙ\šXÙJ›ÝYšXØ][Û“X[˜YÙ\ŽŽ˜Û\ÜËš˜]˜JBˆ›OË˜Ü™X]S›ÝYšXØ][ÛÚ[›™[
+ˆ›ÝYšXØ][ÛÚ[›™[
+ˆÒS“‘SÒQˆÙ]Ýš[™Ê‹œÝš[™Ë›]\ÚX×Ü^Y\ŠKˆ›ÝYšXØ][Û“X[˜YÙ\‹’STÔ•SÑWÓÕËˆ
+Kˆ
+BˆB‚ˆš]˜]H[ˆÜ™X]Q˜[˜XÚÑ›Ü™YÜ›Ý[™›ÝYšXØ][ÛŠ
+Nˆ›ÝYšXØ][ÛˆÂˆ[œÝ\™Q›Ü™YÜ›Ý[™Ú[›™[^\ÝÊ
+Bˆ˜[[™[™ÈBˆ[™[™Ò[[™Ù]XÝ]š]Jˆ\Ëˆˆ[[
+\ËXZ[XÝ]š]NŽ˜Û\ÜËš˜]˜JKˆ[™[™Ò[[‘“Q×ÒSSUUP“Kˆ
+Bˆ™]\›ˆ›ÝYšXØ][ÛÛÛ\]ˆZ[\Š\ËÒS“‘SÒQ
+BˆœÙ]ÛÛ[]JÙ]Ýš[™Ê‹œÝš[™Ë›]\ÚX×Ü^Y\ŠJBˆœÙ]ÛÛ[^
+ˆŠBˆœÙ]ÛX[XÛÛŠ‹™˜]ØX›KœÛX[ÚXÛÛŠBˆœÙ]ÛÛ[[[
+[™[™ÊBˆœÙ]Û™ÛÚ[™ÊYJBˆ˜Z[
+
+BˆB‚ˆš]˜]H[ˆÝ\›Ü™YÜ›Ý[™ØY™[Jˆ›ÝYšXØ][ÛŽˆ›ÝYšXØ][Û‹ˆ[šYYY\ÜØYÙNˆÝš[™Ëˆ˜Z[\™SY\ÜØYÙNˆÝš[™ËˆÝÜÛ‘˜Z[\™Nˆ›ÛÛX[ˆHYKˆ
+Nˆ›ÛÛX[ˆBˆžHÂˆYˆ
+Z[•‘T”ÒSÓ‹”Ñ×ÒS•HZ[•‘T”ÒSÓ—ÐÓÑTË”JHÂˆÝ\›Ü™YÜ›Ý[™
+ˆ“ÕQ’PÐUSÓ—ÒQˆ›ÝYšXØ][Û‹ˆÙ\šXÙR[™›Ë‘“Ô‘QÔ“ÕS‘ÔÑT•’PÑWÕTWÓQQPWÔVPPÒËˆ
+BˆH[ÙHÂˆÝ\›Ü™YÜ›Ý[™
+“ÕQ’PÐUSÓ—ÒQ›ÝYšXØ][ÛŠBˆBˆYBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆYˆ
+Z[•‘T”ÒSÓ‹”Ñ×ÒS•HZ[•‘T”ÒSÓ—ÐÓÑTË”È	‰ˆKš˜]˜PÛ\ÜË›˜[YHOH˜[™›ÚY˜\‘›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[ÛˆŠHÂˆ[X™\‹YÊQÊKÊK[šYYY\ÜØYÙJBˆYˆ
+ÝÜÛ‘˜Z[\™JHÂˆÝÜÙ[Š
+BˆBˆ˜[ÙBˆH[ÙHÂˆ[X™\‹YÊQÊK™JK˜Z[\™SY\ÜØYÙJBˆ™\Ü^Ù\[ÛŠJBˆYˆ
+ÝÜÛ‘˜Z[\™JHÂˆÝÜÙ[Š
+BˆBˆ˜[ÙBˆBˆB‚ˆÝ™\œšYH[ˆÛ‘\Ý›ÞJ
+HÂˆ\Ô[›š[™ÈH˜[ÙBˆÜÝYžPØ[˜\ÐÛY[œÙ]\Ý[š[™Ò\ÝÜžQ˜Z[\™T™\Ü\Š[
+Bˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜË™\Ý›ÞJ
+Bˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜˆH[‚ˆYˆ
+NŽœ^Y\‹š\Ò[š]X[^™Y
+HÂˆžHÂˆØÛÜK˜Ø[˜Ù[
+
+BˆHØ]Ú
+Îˆ^Ù\[ÛŠHÂˆBˆÝ\\‹›Û‘\Ý›ÞJ
+Bˆ™]\›‚ˆB‚ˆËÈØ]™H\\ÛÙHÜÚ][Ûˆ™Y›Ü™H\Ý›ÞZ[™Âˆ˜[Ý\œ™[Y]Y]HH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]BˆYˆ
+Ý\œ™[Y]Y]OËš\Ñ\\ÛÙHOHYH	‰ˆ^Y\‹˜Ý\œ™[ÜÚ][Ûˆˆ
+HÂˆ[›ØÚÚ[™Ê\Ü]Ú\œË’SÊHÂˆ]X˜\ÙK\]T^X˜XÚÔÜÚ][ÛŠÝ\œ™[Y]Y]KšY^Y\‹˜Ý\œ™[ÜÚ][ÛŠBˆBˆB‚ˆžHÂˆ[œ™YÚ\Ý\”™XÙZ]™\ŠØÜ™Y[”Ý]T™XÙZ]™\ŠBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆËÈYÛ›Ü™BˆBˆžHÂˆ[œ™YÚ\Ý\”™XÙZ]™\ŠØ[\\”™\]Y\Ý™XÙZ]™\ŠBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆËÈYÛ›Ü™BˆBˆ]Y[ÓX[˜YÙ\‹[œ™YÚ\Ý\]Y[Ñ]šXÙPØ[˜XÚÊ]Y[Ñ]šXÙPØ[˜XÚÊBˆØ\ÝÛÛ›™XÝ[Û’[™\Ëœ™[X\ÙJ
+BˆYˆ
+]TÝÜ™K™Ù]
+\œÚ\Ý[]Y]YRÙ^KYJJHÂˆØ]™T]Y]YUÑ\ÚÊ
+BˆBˆÛÛ›™XÝ]š]SØœÙ\™\‹[œ™YÚ\Ý\Š
+BˆX˜[™Û]Y[Ñ›ØÝ\Ê
+BˆÛÜÙP]Y[ÑY™™XÝÙ\ÜÚ[ÛŠ
+BˆYYXSXœ˜\žTÙ\ÜÚ[ÛØ[˜XÚËœ™[X\ÙJ
+BˆYYXTÙ\ÜÚ[Û‹œ™[X\ÙJ
+Bˆ^Y\‹œ™[[Ý™S\Ý[™\Š\ÊBˆ^Y\‹œ™[[Ý™S\Ý[™\ŠÛY\[Y\ŠBˆ^Y\”Ú[[˜ÙT›ØÙ\ÜÛÜœËœ™[[Ý™J^Y\ŠBˆØÜ›Ø˜›SX[˜YÙ\Ë™\Ý›ÞJ
+Bˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹™\Ý›ÞJ
+Bˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹™\Ý›ÞJ
+Bˆ\ØÛÜ™\]R›ØË˜Ø[˜Ù[
+
+Bˆ\ØÛÜ™œÓX[˜YÙ\‹˜ÛX\Š
+Bˆ\ØÛÜ™œÓX[˜YÙ\‹™\Ý›ÞJ
+BˆÜÝYžS\Ý[š[™Ò\ÝÜžSX[˜YÙ\Ë™\Ý›ÞJ
+BˆËÈ›ÝNˆ\]X[^™\”Ù\šXÙH]Y[È›ØÙ\ÜÛÜœÈ\™HÛX\™Y[ˆ\]X[^™\”Ù\šXÙKœ™[X\ÙJ
+HYˆ™YYYˆËÈÜˆÙHØ[‰ÝX\Ú[H™Y™\™[˜ÙHHÜXÚYšXÈ›ØÙ\ÜÛÜˆÜ™X]Y[ˆÜ™X]Q^Ô^Y\ˆ\™HÚ]Ý]ÝÜš[™È]‚ˆËÈ]Ú[˜ÙHÙH\™H\Ý›ÞZ[™ÈHÙ\šXÙK]	ÜÈš[™K‚ˆ^Y\‹œ™[X\ÙJ
+BˆØÛÜK˜Ø[˜Ù[
+
+BˆÝ\\‹›Û‘\Ý›ÞJ
+BˆB‚ˆÝ™\œšYH[ˆÛš[™
+[[ˆ[[ÊHHÝ\\‹›Ûš[™
+[[
+HÎˆš[™\‚‚ˆÝ™\œšYH[ˆÛ•\ÚÔ™[[Ý™Y
+›ÛÝ[[ˆ[[ÊHÂˆYˆ
+]TÝÜ™K™Ù]
+ÝÜ]\ÚXÓÛ•\ÚÐÛX\’Ù^K˜[ÙJJHÂˆYˆ
+NŽœ^Y\‹š\Ò[š]X[^™Y
+HÂˆÝÜÙ[Š
+Bˆ™]\›‚ˆBˆËÈ™[[ÝH^X˜XÚÈ
+Ø\Ý
+H\È[™\[™[ÙˆHØØ[^Ô^Y\ŽÈ[™[™ÈHÙ\ÜÚ[Û‚ˆËÈ\È™\]Z\™YÜˆ]Y[ÈÙY\È^Z[™ÈÛˆHØ\Ý]šXÙK‚ˆ[Ø]Ú[™ÈÂˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJHÂˆØ\ÝÛÛ›™XÝ[Û’[™\Ë™\ØÛÛ›™XÝ
+
+BˆBˆ^Y\‹œÝÜ
+
+BˆÙ\šXÙPÛÛ\]œÝÜ›Ü™YÜ›Ý[™
+\ËÙ\šXÙPÛÛ\]”ÕÔÑ“Ô‘QÔ“ÕS‘Ô‘SSÕ‘JBˆËÈYYXLÎˆÛÛÜ™[˜]\È›ÝYšXØ][Û‹Ù›Ü™YÜ›Ý[™X\™ÝÛˆ[™ÝÜÙ[ŽÈ™\]Z\™YÚ[‚ˆËÈ^X˜XÚÈØ\ÈÛ™ÛÚ[™È
+Y˜][Ý\\‹›Û•\ÚÔ™[[Ý™YÙY\ÈHÙ\šXÙH[]™JK‚ˆ]\ÙP[^Y\œÐ[™ÝÜÙ[Š
+BˆK›Û‘˜Z[\™HÈHO‚ˆ[X™\‹YÊQÊK™JK‘˜Z[YÈÝÜ^X˜XÚÈÛˆ\ÚÈÛX\ˆŠBˆ[Ø]Ú[™ÈÈ]\ÙP[^Y\œÐ[™ÝÜÙ[Š
+HK›Û‘˜Z[\™HÈÝÜÙ[Š
+HBˆBˆ™]\›‚ˆBˆÝ\\‹›Û•\ÚÔ™[[Ý™Y
+›ÛÝ[[
+BˆËÈÙY\H›ÝYšXØ][Ûˆ]™[ˆYˆH\ÚÈ\È™[[Ý™Y\ÈÛ™È\ÈH˜XÚÈ\ÈØYY‚ˆËÈ\Ù\ˆØ[ˆÝ[\ÛZ\ÜÈ]šXHH	Ö	ÈÜˆÞ\Ý[H›ÝYšXØ][ÛˆÛÛ›ÛË‚ˆB‚ˆÝ™\œšYH[ˆÛ‘Ù]Ù\ÜÚ[ÛŠÛÛ›Û\’[™›ÎˆYYXTÙ\ÜÚ[Û‹ÛÛ›Û\’[™›ÊHHYYXTÙ\ÜÚ[Û‚‚ˆÝ™\œšYH[ˆÛ•\]S›ÝYšXØ][ÛŠˆÙ\ÜÚ[ÛŽˆYYXTÙ\ÜÚ[Û‹ˆÝ\[‘›Ü™YÜ›Ý[™™\]Z\™Yˆ›ÛÛX[‹ˆ
+HÂˆžHÂˆËÈ\ÜÈÝ\[‘›Ü™YÜ›Ý[™™\]Z\™Y›ÝYÚ[˜Ú[™ÙYÛÈYYXLÈX[˜YÙ\ÈBˆËÈ›Ü™YÜ›Ý[™Ù\šXÙHY™XÞXÛH]Ù[‹ˆÝ™\œšY[™È]È˜[ÙX[™›Û[Ý[™ÂˆËÈX[X[HØ]\Ù\ÈYYXLÈÈ[[ÝHHÙ\šXÙHÛˆ]™\žH›ÝYšXØ][Ûˆ\]BˆËÈ
+˜XÚÈÚ[™ÙKY]Y]H™Yœ™\Ú]ËŠNÈHÝXœÙ\]Y[X[X[™K\›Û[Ý[Ûˆ\ÂˆËÈ[šYYÚ[H˜XÚÙÜ›Ý[™YÛˆ[™›ÚYLŠÈ
+P[ÝÔÝ\›Ü™YÜ›Ý[™Y˜[ÙJKÚXÚˆËÈ[™È˜XÚÙÜ›Ý[™^X˜XÚÈZY\ÛÛ™ÈY\ˆ]]Ü^H˜[œÚ][ÛœË‚ˆËÈYYXLÈKŒLŒØ]Ú\È›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[Ûˆ[\›˜[H[‚ˆËÈÛ•\]S›ÝYšXØ][Û’[\›˜[ÛÈHKËžÜ˜\Ú]ÛÜšØ\›Ý[™\È›ÈÛ™Ù\‚ˆËÈ™YYYÈHžKØØ]Ú™[ÝÈ\ÈÙ\\È™[X[™\Ý\Ü[™\œÈY™[œÙK‚ˆÝ\\‹›Û•\]S›ÝYšXØ][ÛŠÙ\ÜÚ[Û‹Ý\[‘›Ü™YÜ›Ý[™™\]Z\™Y
+BˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆYˆ
+Z[•‘T”ÒSÓ‹”Ñ×ÒS•HZ[•‘T”ÒSÓ—ÐÓÑTË”È	‰ˆKš˜]˜PÛ\ÜË›˜[YHOH˜[™›ÚY˜\‘›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[ÛˆŠHÂˆ[™Q›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY
+JBˆH[ÙHYˆ
+H\È[YØ[Ý]Q^Ù\[Ûˆ	‰ˆ\Ñ›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[ÛŠJJHÂˆ[™Q›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY
+JBˆH[ÙHYˆ
+H\È[YØ[Ý]Q^Ù\[ÛŠHÂˆ›ÝÈBˆH[ÙHÂˆ[X™\‹YÊQÊK™JK‘˜Z[YÈ\]H›ÝYšXØ][ÛˆŠBˆBˆBˆB‚ˆÝ™\œšYH[ˆÛ”Ý\ÛÛ[X[™
+ˆ[[ˆ[[Ëˆ›YÜÎˆ[ˆÝ\Yˆ[ˆ
+Nˆ[Âˆ˜[™\]Z\™\Ñ›Ü™YÜ›Ý[™›Û[Ý[ÛˆBˆZ[•‘T”ÒSÓ‹”Ñ×ÒS•HZ[•‘T”ÒSÓ—ÐÓÑTË”È	‰‚ˆ
+[[Ë˜XÝ[ÛˆOH[[[˜XÝ[ÛˆOHPÕSÓ—ÐST“WÕ’QÑÑTŠBˆYˆ
+™\]Z\™\Ñ›Ü™YÜ›Ý[™›Û[Ý[Ûˆ	‰ˆY[œÝ\™Q›Ü™YÜ›Ý[™Ú]]\Ý›ÝYšXØ][Û“Ü”ÝÜ
+
+JHÂˆ™]\›ˆÕT•Ó“ÕÔÕPÒÖBˆB‚ˆÚ[ˆ
+[[Ë˜XÝ[ÛŠHÂˆPÕSÓ—ÐST“WÕ’QÑÑTˆOˆÂˆ[™P[\›UšYÙÙ\Š[[
+BˆB‚ˆ]\ÚXÕÚYÙ]™XÙZ]™\‹PÕSÓ—ÔVWÔUTÑHOˆÂˆYˆ
+^Y\‹š\Ô^Z[™ÊH^Y\‹œ]\ÙJ
+H[ÙH^Y\‹œ^J
+Bˆ\]UÚYÙ]RJ^Y\‹š\Ô^Z[™ÊBˆB‚ˆ]\ÚXÕÚYÙ]™XÙZ]™\‹PÕSÓ—ÓRÑHOˆÂˆÙÙÛSZÙJ
+BˆB‚ˆ]\ÚXÕÚYÙ]™XÙZ]™\‹PÕSÓ—Ó‘VOˆÂˆ™\\™SX[X[^X˜XÚÕ˜[œÚ][ÛŠ
+Bˆ^Y\‹œÙYZÕÓ™^
+
+Bˆ\]UÚYÙ]RJ^Y\‹š\Ô^Z[™ÊBˆB‚ˆ]\ÚXÕÚYÙ]™XÙZ]™\‹PÕSÓ—Ô‘U’SÕTÈOˆÂˆ™\\™SX[X[^X˜XÚÕ˜[œÚ][ÛŠ
+Bˆ^Y\‹œÙYZÕÔ™]š[Ý\Ê
+Bˆ\]UÚYÙ]RJ^Y\‹š\Ô^Z[™ÊBˆB‚ˆ]\ÚXÕÚYÙ]™XÙZ]™\‹PÕSÓ—ÕTUWÕÒQÑUOˆÂˆ\]UÚYÙ]RJ^Y\‹š\Ô^Z[™ÊBˆBˆB‚ˆ™]\›ˆÝ\\‹›Û”Ý\ÛÛ[X[™
+[[›YÜËÝ\Y
+BˆB‚ˆš]˜]H[ˆ[™P[\›UšYÙÙ\Š[[ˆ[[
+HÂˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÊHÂˆžHÂˆ]\ÚXÐ[\›TØÚY[\‹œØÚY[Qœ›ÛT™Y™\™[˜Ù\Ê\Ð]\ÚXÔÙ\šXÙJBˆHØ]Ú
+ˆ›ÝØX›JHÂˆ[X™\‹YÊQÊK™J‘˜Z[YÈ™\ØÚY[H[\›\ÈY\ˆšYÙÙ\ˆŠBˆBˆBˆ˜[^[\ÝYH[[™Ù]Ýš[™Ñ^˜JVWÐST“WÔVSTÕÒQ
+K›Ü‘[\J
+Bˆ˜[[\›RYH[[™Ù]Ýš[™Ñ^˜JVWÐST“WÒQ
+K›Ü‘[\J
+BˆYˆ
+^[\ÝYš\Ð›[šÊ
+JHÂˆYˆ
+[\›RYš\Ó›Ý›[šÊ
+JHÂˆØÛÜK›][˜Ú
+\Ü]Ú\œË’SÊHÂˆžHÂˆ˜[[\›\ÈH]\ÚXÐ[\›TÝÜ™K›ØY
+\Ð]\ÚXÔÙ\šXÙJBˆ˜[\]YBˆ[\›\Ë›X\È[\›HO‚ˆYˆ
+[\›KšYOH[\›RY
+H[\›K˜ÛÜJ[˜X›YH˜[ÙK™^šYÙÙ\]HLS
+H[ÙH[\›BˆBˆ]\ÚXÐ[\›TØÚY[\‹œØÚY[P[
+\Ð]\ÚXÔÙ\šXÙK\]Y
+BˆHØ]Ú
+ˆ›ÝØX›JHÂˆ[X™\‹YÊQÊK™J‘˜Z[YÈ\ØX›H[\›HÚ][˜[Y^[\ÝŠBˆBˆBˆBˆ™]\›‚ˆBˆ˜[˜[™ÛTÛÛ™ÈH[[™Ù]›ÛÛX[‘^˜JVWÐST“WÔS‘ÓWÔÓÓ‘Ë˜[ÙJBˆØÛÜK›][˜ÚÂˆžHÂˆ˜[^[\ÝÛÛ™ÜÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ]X˜\ÙKœ^[\ÝÛÛ™ÜÊ^[\ÝY
+K™š\œÝ
+
+BˆBˆYˆ
+^[\ÝÛÛ™ÜËš\Ñ[\J
+JHÂˆYˆ
+[\›RYš\Ó›Ý›[šÊ
+JHÂˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ˜[[\›\ÈH]\ÚXÐ[\›TÝÜ™K›ØY
+\Ð]\ÚXÔÙ\šXÙJBˆ˜[\]YBˆ[\›\Ë›X\È[\›HO‚ˆYˆ
+[\›KšYOH[\›RY
+H[\›K˜ÛÜJ[˜X›YH˜[ÙK™^šYÙÙ\]HLS
+H[ÙH[\›BˆBˆ]\ÚXÐ[\›TØÚY[\‹œØÚY[P[
+\Ð]\ÚXÔÙ\šXÙK\]Y
+BˆBˆBˆ™]\›][˜ÚˆBˆ˜[][\ÈH^[\ÝÛÛ™ÜË›X\È]œÛÛ™ËÓYYXR][J
+HBˆ˜[^[\Ý˜[YHBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ]X˜\ÙBˆœ^[\Ý
+^[\ÝY
+Bˆ™š\œÝ
+
+BˆËœ^[\ÝˆË›˜[YBˆBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆ]\ÚXÐ[\›TØÚY[\‹œØÚY[Qœ›ÛT™Y™\™[˜Ù\Ê\Ð]\ÚXÔÙ\šXÙJBˆB‚ˆ˜[[\›R][\ÈBˆYˆ
+˜[™ÛTÛÛ™ÊHÂˆ˜[š\œÝ[™^H˜[™ÛK›™^[
+][\ËœÚ^™JBˆZ[\Ý
+][\ËœÚ^™JHÂˆY
+][\ÖÙš\œÝ[™^JBˆ][\Ë™›Ü‘XXÚ[™^YÈ[™^][HO‚ˆYˆ
+[™^OHš\œÝ[™^
+HY
+][JBˆBˆBˆH[ÙHÂˆ][\ÂˆB‚ˆ^Y\‹œÝÜ
+
+Bˆ^Y\‹˜ÛX\“YYXR][\Ê
+Bˆ^T]Y]YJˆ\Ý]Y]YJˆ]HH^[\Ý˜[YKˆ][\ÈH[\›R][\ËˆÝ\[™^HˆÜÚ][ÛˆHˆ
+Kˆ^UÚ[”™XYHHYKˆ
+BˆHØ]Ú
+ˆ›ÝØX›JHÂˆ[X™\‹YÊQÊK™J‘˜Z[YÈÝ\[\›H^X˜XÚÈŠBˆBˆBˆB‚ˆš]˜]H[ˆ[™Q›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY
+\œ›ÜŽˆ›ÝØX›OÊHÂˆYˆ
+\œ›ÜˆOH[
+HÂˆ[X™\‹YÊQÊKÊ\œ›Ü‹‘›Ü™YÜ›Ý[™Ù\šXÙHÝ\[šYY\š[™È›ÝYšXØ][Ûˆ\]HŠBˆH[ÙHÂˆ[X™\‹YÊQÊKÊ‘›Ü™YÜ›Ý[™Ù\šXÙHÝ\[šYYžHYYXTÙ\ÜÚ[Û”Ù\šXÙH\Ý[™\ˆŠBˆB‚ˆYˆ
+žQ[œÝ\™Q›Ü™YÜ›Ý[™Ú]]\Ý›ÝYšXØ][ÛŠ
+JHÂˆ™]\›‚ˆB‚ˆYˆ
+NŽœ^Y\‹š\Ò[š]X[^™Y
+HÂˆÝÜÙ[Š
+Bˆ™]\›‚ˆB‚ˆYˆ
+^Y\‹š\Ô^Z[™ÊHÂˆ[X™\‹YÊQÊKÊ’ÙY\[™È^X˜XÚÈ[]™HY\ˆ[šYY›Ü™YÜ›Ý[™™\Ý\™\]Y\ÝŠBˆ™]\›‚ˆB‚ˆ[Ø]Ú[™ÈÂˆ]\ÙP[^Y\œÐ[™ÝÜÙ[Š
+BˆK›Û‘˜Z[\™HÂˆ[X™\‹YÊQÊKÊ]‘˜Z[YÈÝÜÙ\šXÙHY\ˆ›Ü™YÜ›Ý[™Ý\[šX[ŠBˆÝÜÙ[Š
+BˆBˆB‚ˆš]˜]H[ˆ\Ñ›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[ÛŠ\œ›ÜŽˆ[YØ[Ý]Q^Ù\[ÛŠNˆ›ÛÛX[ˆBˆZ[•‘T”ÒSÓ‹”Ñ×ÒS•HZ[•‘T”ÒSÓ—ÐÓÑTË”È	‰‚ˆ\œ›Ü‹š˜]˜PÛ\ÜË›˜[YHOH›Ü™YÜ›Ý[™Ù\šXÙTÝ\›Ý[ÝÙY^Ù\[ÛŽŽ˜Û\ÜËš˜]˜K›˜[YB‚ˆÊŠ‚ˆ
+ˆ\]\È[\ÚYÙ]ÈÚ]Ý\œ™[^X˜XÚÈÝ]Bˆ
+‹Âˆš]˜]H[ˆ\]UÚYÙ]RJ\Ô^Z[™Îˆ›ÛÛX[ŠHÂˆØÛÜK›][˜ÚÂˆžHÂˆ˜[ÛÛ™Ñ]HHÝ\œ™[ÛÛ™Ë˜[YBˆ˜[ÛÛ™ÈHÛÛ™Ñ]OËœÛÛ™Âˆ˜[ÛÛ™Õ]HHÛÛ™ÏË]HÎˆÙ]Ýš[™Ê‹œÝš[™Ë››×ÜÛÛ™×Ü^Z[™ÊBˆ˜[\\Ý˜[YHHÛÛ™Ñ]OË˜\\ÝÏËš›Ú[•ÔÝš[™Ê‹ŠHÈ]›˜[YHHÎˆÙ]Ýš[™Ê‹œÝš[™Ë\Ý×ÛÜ[ŠBˆ˜[\ÓZÙYHÛÛ™Ñ]OËœÛÛ™ÏË›ZÙYOHYB‚ˆÚYÙ]X[˜YÙ\‹\]UÚYÙ]Êˆ]HHÛÛ™Õ]Kˆ\\ÝH\\Ý˜[YKˆ\ÛÜšÕ\šHHÛÛ™ÏË[X›˜Z[\›ˆ\Ô^Z[™ÈH\Ô^Z[™Ëˆ\ÓZÙYH\ÓZÙYˆ\˜][ÛˆHYˆ
+^Y\‹™\˜][ÛˆOHË•SQWÕS”ÑU
+H^Y\‹™\˜][Ûˆ[ÙHˆÝ\œ™[ÜÚ][ÛˆH^Y\‹˜Ý\œ™[ÜÚ][Û‹ˆ
+BˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆËÈÚYÙ]›ÝYYÈÛYHØÜ™Y[ˆÜˆÝ\ˆ\œ›Ü‚ˆBˆBˆB‚ˆš]˜]H˜\ˆÚYÙ]\]R›ØŽˆ›ØÈH[‚ˆš]˜]H[ˆÝ\ÚYÙ]\]\Ê
+HÂˆÚYÙ]\]R›ØË˜Ø[˜Ù[
+
+BˆÚYÙ]\]R›ØˆBˆØÛÜK›][˜ÚÂˆÚ[H
+\ÐXÝ]™JHÂˆYˆ
+^Y\‹š\Ô^Z[™ÊHÂˆ\]UÚYÙ]RJYJBˆBˆ[^JÒQÑUÕTUWÒS•T•SÓTÊBˆBˆBˆB‚ˆš]˜]H[ˆÝÜÚYÙ]\]\Ê
+HÂˆÚYÙ]\]R›ØË˜Ø[˜Ù[
+
+BˆÚYÙ]\]R›ØˆH[ˆB‚ˆš]˜]H[ˆÚ\™TÛÛ™Ê
+HÂˆ˜[ÛÛ™Ñ]HHÝ\œ™[ÛÛ™Ë˜[YBˆ˜[ÛÛ™ÒYHÛÛ™Ñ]OËœÛÛ™ÏËšYÎˆ™]\›‚‚ˆ˜[Ú\™R[[Bˆ[[
+[[PÕSÓ—ÔÑS‘
+K˜\HÂˆ\HH^ÜZ[ˆ‚ˆ]^˜J[[‘VWÕVšÎ‹ËÛ]\ÚXËž[Ý]X™K˜ÛÛKÝØ]ÚÝIÛÛ™ÒYŠBˆY›YÜÊ[[‘“Q×ÐPÕU’UWÓ‘U×ÕTÒÊBˆBˆÝ\XÝ]š]Jˆ[[˜Ü™X]PÚÛÜÙ\ŠÚ\™R[[[
+K˜\HÂˆY›YÜÊ[[‘“Q×ÐPÕU’UWÓ‘U×ÕTÒÊBˆKˆ
+BˆB‚ˆÊŠ‚ˆ
+ˆÙ]HÝ™X[HT“›ÜˆHÚ]™[ˆYYXHQ‚ˆ
+ˆ\È\È\ÙY›ÜˆÛÛÙÛHØ\ÝÈÙ[™H]Y[ÈT“ÈÚ›ÛYXØ\Ý‚ˆ
+‹ÂˆÝ\Ü[™[ˆÙ]Ý™X[U\›
+YYXRYˆÝš[™ÊNˆÝš[™ÏÈBˆÚ]ÛÛ^
+\Ü]Ú\œË’SÊHÂˆžHÂˆ˜[ÛÛ™ÈH]X˜\ÙK™Ù]ÛÛ™ÐžRY›ØÚÚ[™ÊYYXRY
+BˆYˆ
+ÛÛ™ÏËœÛÛ™ÏËš\ÓØØ[OHYHÛÛ™ÏËœÛÛ™ÏËš\Ñ\\ÛÙHOHYJHÂˆ™]\›Ú]ÛÛ^[ˆBˆ™\ÛÛ™SÛ›[™TÝ™X[JYYXRYÛÛ™ÊK\šBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ[X™\‹›ÙË•[X™\‹™JK‘˜Z[YÈÙ]Ý™X[HT“›ÜˆØ\ÝŠBˆ[ˆBˆB‚ˆÊŠ‚ˆ
+ˆ[š]X[^™HÛÛÙÛHØ\ÝÝ\Üˆ
+‹Âˆš]˜]H[ˆ[š]X[^™PØ\Ý
+
+HÂˆYˆ
+]TÝÜ™K™Ù]
+ÛÛK›Y]›Û\Ý›]\ÚXË˜ÛÛœÝ[Ë‘[˜X›QÛÛÙÛPØ\ÝÙ^KYJJHÂˆžHÂˆØ\ÝÛÛ›™XÝ[Û’[™\ˆHØ\ÝÛÛ›™XÝ[Û’[™\Š\ËØÛÜK\ÊBˆØ\ÝÛÛ›™XÝ[Û’[™\Ëš[š]X[^™J
+Bˆ[X™\‹›ÙË•[X™\‹™
+‘ÛÛÙÛHØ\Ý[š]X[^™YŠBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ[X™\‹›ÙË•[X™\‹™JK‘˜Z[YÈ[š]X[^™HÛÛÙÛHØ\ÝŠBˆBˆBˆB‚ˆÝ™\œšYH[ˆÛ”ÜÚ][Û‘\ØÛÛ[Z]JˆÛÜÚ][ÛŽˆ^Y\‹”ÜÚ][Û’[™›Ëˆ™]ÔÜÚ][ÛŽˆ^Y\‹”ÜÚ][Û’[™›Ëˆ™X\ÛÛŽˆ[ˆ
+HÂˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HOË›]ÈYYXRYO‚ˆØÚY[P]Y[Ñ›Ü›X]™Yœ™\Ú
+YYXRY
+BˆBˆYˆ
+™X\ÛÛˆOH^Y\‹‘TÐÓÓ•S•RUWÔ‘PTÓÓ—ÔÑQRÊHÂˆ˜[ÙYZÔÜÚ][ÛˆBˆ™]ÔÜÚ][Û‹œÜÚ][Û“\ÂˆZÙU[›\ÜÈÈ]OHË•SQWÕS”ÑUBˆÎˆ^Y\‹˜Ý\œ™[ÜÚ][Û‚ˆÙYZÔÜÝYžS\Ý[š[™Ò\ÝÜžRY[ÝÙY
+ˆÜÚ][Û“\ÈHÙYZÔÜÚ][Û‹ˆ\Ô^Z[™ÈH^Y\‹š\Ô^Z[™ËˆY]Y]HH™]ÔÜÚ][Û‹›YYXR][OË›Y]Y]HÎˆ^Y\‹˜Ý\œ™[Y]Y]Kˆ\˜][ÛˆHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+Kˆ
+BˆØÚY[PÜ›ÜÜÙ˜YJ
+BˆBˆB‚ˆš]˜]H[ˆØÚY[PÜ›ÜÜÙ˜YJ
+HÂˆÜ›ÜÜÙ˜YUšYÙÙ\’›ØË˜Ø[˜Ù[
+
+BˆÜ›ÜÜÙ˜YUšYÙÙ\’›ØˆH[ˆYˆ
+\ÐÜ›ÜÜÙ˜Y[™ÈÙXÛÛ™\žT^Y\ˆOH[
+H™]\›‚ˆ˜[Z^›Ùš[HHÝ\œ™[Y]›ÓZ^›Ùš[J
+BˆYˆ
+XÜ›ÜÜÙ˜YQ[˜X›Y^Y\‹™\˜][ÛˆOHË•SQWÕS”ÑU^Y\‹™\˜][ÛˆHZ^›Ùš[K™\˜][Û“\ÊH™]\›‚ˆYˆ
+Ü›ÜÜÙ˜YQØ\\ÜÈ	‰ˆ\Ó™^][QØ\\ÜÊ
+JH™]\›‚ˆYˆ
+\^Y\‹š\Ó™^YYXR][J
+H	‰ˆ^Y\‹œ™\X][ÙHOH‘TPUÓSÑWÓÓ‘JH™]\›‚‚ˆ˜[šYÙÙ\•[YHH^Y\‹™\˜][ÛˆHZ^›Ùš[K™\˜][Û“\Âˆ˜[˜\ÙP[YÛ™YšYÙÙ\ˆBˆYˆ
+Z^›Ùš[Kœ™\Ù]OHY]›ÓZ^™\Ù]UUÓRV
+HÂˆ[YÛ•Ô˜\ÙTÝ\
+šYÙÙ\•[YK^Y\‹™\˜][ÛŠBˆH[ÙHÂˆšYÙÙ\•[YBˆBˆ˜[[^S\ÈH˜\ÙP[YÛ™YšYÙÙ\ˆH^Y\‹˜Ý\œ™[ÜÚ][Û‚ˆ[™[™ÓY]›ÓZ^›Ùš[HHZ^›Ùš[BˆYˆ
+[^S\ÈHL
+HÂˆÝ\Ü›ÜÜÙ˜YJ
+Bˆ™]\›‚ˆB‚ˆ˜[\™Ù]YYXRYH^Y\‹˜Ý\œ™[YYXR][OË›YYXRY‚ˆÜ›ÜÜÙ˜YUšYÙÙ\’›ØˆBˆØÛÜK›][˜ÚÂˆ[^J[^S\ÊBˆYˆ
+\ÐXÝ]™H	‰ˆ^Y\‹š\Ô^Z[™È	‰ˆ^Y\‹˜Ý\œ™[YYXR][OË›YYXRYOH\™Ù]YYXRY	‰ˆ\ÛY\[Y\‹œ]\ÙUÚ[”ÛÛ™Ñ[™
+HÂˆÝ\Ü›ÜÜÙ˜YJ
+BˆBˆBˆB‚ˆÊŠ‚ˆ
+ˆÛ˜\ÈH˜]\˜[Ü›ÜÜÙ˜YHšYÙÙ\ˆÚ[˜XÚÈÈH™X\™\ÝX˜\‚ˆ
+ˆ˜\ÙH›Ý[™\žHÙˆHÝ\œ™[H^Z[™È˜XÚËÛÈ]]ÛZ^˜[œÚ][ÛœÂˆ
+ˆÝ\Ú\™HHˆXÝX[HÛÝ[H]HÝXÝ\˜[›Ý[™\žHH[œÝXYÙ‚ˆ
+ˆ][ˆ\˜š]˜\žHš^YÙ™œÙ]œ›ÛHH[™ÙˆHš[Kˆ˜[È˜XÚÈÈBˆ
+ˆ˜]\˜[šYÙÙ\ˆ[YHÚ[™]™\ˆ”H\È[˜]˜Z[X›HÜˆÛ˜\[™ÈÛÝ[[™ˆ
+ˆ[\]\ÚX›HÛÜÙHÈHÝ\ÙˆH˜XÚË‚ˆ
+‹Âˆš]˜]H[ˆ[YÛ•Ô˜\ÙTÝ\
+ˆ˜]\˜[šYÙÙ\“\ÎˆÛ™Ëˆ˜XÚÑ\˜][Û“\ÎˆÛ™Ëˆ
+NˆÛ™ÈÂˆ˜[œHH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]OË˜œOËZÙRYˆÈ][ˆ‹‹ŒˆHÎˆ™]\›ˆ˜]\˜[šYÙÙ\“\Âˆ˜[˜\“\ÈHŒÌˆÈœH
+ˆˆËÈÍ\ÜÝ[YYHHÝ™\Ú[Z[™ÈXZ›Üš]HÙˆÝ™X[YY]\ÚXÂˆ˜[˜\ÙS\ÈH
+˜\“\È
+ˆŠKÓÛ™Ê
+K˜ÛÙ\˜ÙP]X\Ý
+S
+HËÈX˜\ˆ˜\ÙKHÝ[™\™ÜÑQH[š]‚ˆËÈÛ˜\ÈH˜\ÙH›Ý[™\žH]Üˆ™Y›Ü™HH˜]\˜[šYÙÙ\ˆÚ[ˆËÈ™]™\ˆ]\ˆHÙHÛ‰ÝØ[ÈÚÜ[ˆHÝ]ÛÚ[™È˜XÚÉÜÈÝÛˆZ[‚ˆ˜[Û˜\YH
+˜]\˜[šYÙÙ\“\ÈÈ˜\ÙS\ÊH
+ˆ˜\ÙS\Âˆ˜[Z[”Ù[œÚX›UšYÙÙ\“\ÈH
+˜XÚÑ\˜][Û“\È
+ˆŒMJKÓÛ™Ê
+Bˆ™]\›ˆYˆ
+Û˜\Y[ˆZ[”Ù[œÚX›UšYÙÙ\“\Ë‹›˜]\˜[šYÙÙ\“\ÊHÛ˜\Y[ÙH˜]\˜[šYÙÙ\“\ÂˆB‚ˆš]˜]H[ˆ›Ü›X][]Kš\Ð[XÑ›Ü›X]
+
+Nˆ›ÛÛX[ˆBˆÛÙXÜË˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJHˆZ[YU\K˜ÛÛZ[œÊ˜[XÈ‹YÛ›Ü™PØ\ÙHHYJB‚ˆš]˜]H[ˆ›Ü›X][]Kš\Ñ›XÑ›Ü›X]
+
+Nˆ›ÛÛX[ˆBˆZ[YU\K˜ÛÛZ[œÊ™›XÈ‹YÛ›Ü™PØ\ÙHHYJHˆÛÙXÜË˜ÛÛZ[œÊ™›XÈ‹YÛ›Ü™PØ\ÙHHYJB‚ˆš]˜]H[ˆ›Ü›X][]Kš\Ô›ÝšY\‘˜[˜XÚÑ›Ü›X]
+
+Nˆ›ÛÛX[ˆBˆ]YÈ[ˆÙ]ÙŠˆSÐ•V—ÑSPÒ×ÒUQËˆQSÑSPÒ×ÒUQËˆQV‘T—ÑSPÒ×ÒUQËˆÓÕS‘ÓÕQÑSPÒ×ÒUQËˆS”ÕQÔSWÑSPÒ×ÒUQËˆTWÓUTÒP×ÑSPÒ×ÒUQËˆT‘PÕÒÐUQS×ÒUQËˆ
+B‚ˆš]˜]H[ˆÝ\œ™[Y]›ÓZ^›Ùš[J
+NˆY]›ÓZ^[[YT›Ùš[HÂˆ˜[Ý\œ™[ÛÛ™ÒYH^Y\‹˜Ý\œ™[YYXR][OË›YYXRYˆ˜[™^[™^H^Y\‹›™^YYXR][R[™^ˆ˜[™^ÛÛ™ÒYHYˆ
+™^[™^OHË’S‘VÕS”ÑU
+H^Y\‹™Ù]YYXR][P]
+™^[™^
+K›YYXRY[ÙH[‚ˆYˆ
+Ý\œ™[ÛÛ™ÒYOH[	‰ˆ™^ÛÛ™ÒYOH[
+HÂˆ˜[˜[œÚ][ÛˆH[›ØÚÚ[™Ê\Ü]Ú\œË’SÊHÈ]X˜\ÙK™Ù]˜[œÚ][ÛŠÝ\œ™[ÛÛ™ÒY™^ÛÛ™ÒY
+HBˆYˆ
+˜[œÚ][ÛˆOH[
+HÂˆ˜[œHH˜[œÚ][Û‹˜œPHÎˆ^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]OË˜œBˆ˜[˜\œÈH˜[œÚ][Û‹›Ý™\›\˜\œË˜ÛÙ\˜ÙR[Š‹ÌŠBˆ˜[˜\‘\˜][Û“\ÈHœOËZÙRYˆÈ][ˆ‹‹ŒˆOË›]È
+ŒÌˆÈ]
+ˆˆ
+ˆ˜\œÊKÓÛ™Ê
+HB‚ˆ˜[Ý[SÝ™\œšYHH˜[œÚ][Û‹›Z^˜[œÚ][Û”Ý[SÝ™\œšYOË›]Âˆ[Ø]Ú[™ÈÈY]›ÓZ^™\Ù]˜[YSÙŠ]
+HK™Ù]Ü“[
+
+BˆB‚ˆ˜[\˜][Û“\ÈH˜[œÚ][Û‹›Z^Ý]Ý\\ÏË›]ÈÝ]Ý\O‚ˆ˜[œÚ][Û‹›Z^[”Ý\\ÏË›]È[”Ý\O‚ˆ
+Ý]Ý\H[”Ý\
+K˜ÛÙ\˜ÙP]X\Ý
+
+BˆBˆHÎˆ˜\‘\˜][Û“\ÈÎˆ
+
+Ý[SÝ™\œšYOË™\˜][Û”ÙXÛÛ™ÈÎˆ
+Ü›ÜÜÙ˜YQ\˜][ÛˆÈLŠJH
+ˆLŠKÓÛ™Ê
+B‚ˆ™]\›ˆY]›ÓZ^[[YT›Ùš[Jˆ™\Ù]HÝ[SÝ™\œšYHÎˆXÝ]™SY]›ÓZ^™\Ù]Ë›]ÈYˆ
+]OHY]›ÓZ^™\Ù]UUÊH[™™\]]ÓY]›ÓZ^™\Ù]
+
+H[ÙH]Kˆ\˜][Û“\ÈH\˜][Û“\Ë˜ÛÙ\˜ÙR[ŠÍLŒÌ
+Kˆ›Û[YPÝ\™HH[Ø]Ú[™ÈÈY]›ÓZ^›Û[YPÝ\™K˜[YSÙŠ˜[œÚ][Û‹›Û[YPÝ\™JHK™Ù]Ü‘Y˜][
+XÝ]™SY]›ÓZ^›Û[YPÝ\™JKˆ\PÝ\™HH[Ø]Ú[™ÈÈY]›ÓZ^\PÝ\™K˜[YSÙŠ˜[œÚ][Û‹™\U[\]JHK™Ù]Ü‘Y˜][
+XÝ]™SY]›ÓZ^\PÝ\™JKˆY™™XÝÝ\™HH[Ø]Ú[™ÈÈY]›ÓZ^Y™™XÝÝ\™K˜[YSÙŠ˜[œÚ][Û‹™Y™™XÝ\JHK™Ù]Ü‘Y˜][
+XÝ]™SY]›ÓZ^Y™™XÝÝ\™JKˆ
+BˆBˆB‚ˆ˜[Ù[XÝY™\Ù]HXÝ]™SY]›ÓZ^™\Ù]ˆ˜[[[YT™\Ù]BˆÚ[ˆ
+Ù[XÝY™\Ù]
+HÂˆ[Oˆ[ˆY]›ÓZ^™\Ù]UUÈOˆ[™™\]]ÓY]›ÓZ^™\Ù]
+
+Bˆ[ÙHOˆÙ[XÝY™\Ù]ˆBˆ˜[œHH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]OË˜œBˆ˜[˜\œÈHXÝ]™SY]›ÓZ^˜\œË˜ÛÙ\˜ÙR[Š‹ÌŠBˆ˜[˜\‘\˜][Û“\ÈHœOËZÙRYˆÈ][ˆ‹‹ŒˆOË›]È
+ŒÌˆÈ]
+ˆˆ
+ˆ˜\œÊKÓÛ™Ê
+HBˆ˜[™\Ù]\˜][Û“\ÈH
+
+[[YT™\Ù]Ë™\˜][Û”ÙXÛÛ™ÈÎˆ
+Ü›ÜÜÙ˜YQ\˜][ÛˆÈLŠJH
+ˆLŠKÓÛ™Ê
+Bˆ˜[\˜][Û“\ÈBˆYˆ
+Ù[XÝY™\Ù]OH[
+HÂˆ˜\‘\˜][Û“\ÈÎˆ
+™\Ù]\˜][Û“\È
+ˆ
+˜\œÈÈŠJKÓÛ™Ê
+BˆH[ÙHÂˆ™\Ù]\˜][Û“\ÂˆK˜ÛÙ\˜ÙR[ŠÍLÌ—Ì
+Bˆ™]\›ˆY]›ÓZ^[[YT›Ùš[Jˆ™\Ù]H[[YT™\Ù]ˆ\˜][Û“\ÈH\˜][Û“\Ëˆ›Û[YPÝ\™HHXÝ]™SY]›ÓZ^›Û[YPÝ\™Kˆ\PÝ\™HHXÝ]™SY]›ÓZ^\PÝ\™KˆY™™XÝÝ\™HHXÝ]™SY]›ÓZ^Y™™XÝÝ\™Kˆ
+BˆB‚ˆš]˜]H[ˆ[™™\]]ÓY]›ÓZ^™\Ù]
+
+NˆY]›ÓZ^™\Ù]Âˆ˜[Ý\œ™[H^Y\‹˜Ý\œ™[YYXR][OË›YYXSY]Y]Bˆ˜[™^[™^H^Y\‹›™^YYXR][R[™^ˆ˜[™^BˆYˆ
+™^[™^OHË’S‘VÕS”ÑU
+HÂˆ^Y\‹™Ù]YYXR][P]
+™^[™^
+K›YYXSY]Y]BˆH[ÙHÂˆ[ˆBˆ˜[Ý\œ™[]HHÝ\œ™[Ë]OËÔÝš[™Ê
+K›Ü‘[\J
+Bˆ˜[™^]HH™^Ë]OËÔÝš[™Ê
+K›Ü‘[\J
+Bˆ˜[]\ÈH‰Ý\œ™[]H	™^]H‹›ÝÙ\˜Ø\ÙJØØ[K•TÊBˆ˜[Ý\œ™[[[HHÝ\œ™[Ë˜[[U]OËÔÝš[™Ê
+K›Ü‘[\J
+Bˆ˜[™^[[HH™^Ë˜[[U]OËÔÝš[™Ê
+K›Ü‘[\J
+Bˆ˜[Ø[YP[[HHÝ\œ™[[[Kš\Ó›Ý›[šÊ
+H	‰ˆÝ\œ™[[[HOH™^[[Bˆ˜[Ý\œ™[\˜][ÛˆH^Y\‹™\˜][Û‹ZÙRYˆÈ]OHË•SQWÕS”ÑUHÎˆ‚ˆ™]\›ˆÚ[ˆÂˆØ[YP[[HOˆY]›ÓZ^™\Ù]”ÓSÓÕˆ]\Ë˜ÛÛZ[œÐ[žJœÚÚ]‹š[\›YH‹š[›ÈŠHÝ\œ™[\˜][Ûˆ[ˆS‹ŽMWÌOˆY]›ÓZ^™\Ù]”URPÒ×ÐÕUˆ]\Ë˜ÛÛZ[œÐ[žJ›Ý]›È‹˜XÛÝ\ÝXÈ‹›]™H‹œ™[X\Ý\ˆŠHOˆY]›ÓZ^™\Ù]•“ÐÐSÐ“S‘ˆ]\Ë˜ÛÛZ[œÐ[žJ˜ÛXˆ‹™^[™Y‹œ™[Z^‹›Z^‹™Y]ŠHOˆY]›ÓZ^™\Ù]ÓP—Ð“S‘ˆÝ\œ™[\˜][ÛˆHÌÌOˆY]›ÓZ^™\Ù]‘PUÐ“S‘ˆÝ\œ™[\˜][Ûˆ[ˆS‹ŒMLÌOˆY]›ÓZ^™\Ù]”QS×ÑQUˆ[ÙHOˆY]›ÓZ^™\Ù]”ÓPT•Ñ‚ˆBˆB‚ˆš]˜]H[ˆÝš[™Ë˜ÛÛZ[œÐ[žJ˜\˜\™È™YY\ÎˆÝš[™ÊNˆ›ÛÛX[ˆBˆ™YY\Ë˜[žHÈÛÛZ[œÊ]
+HB‚ˆš]˜]H[ˆ\Ó™^][QØ\\ÜÊ
+Nˆ›ÛÛX[ˆÂˆ˜[Ý\œ™[H^Y\‹˜Ý\œ™[YYXR][OË›YYXSY]Y]HÎˆ™]\›ˆ˜[ÙBˆ˜[™^[™^H^Y\‹›™^YYXR][R[™^ˆYˆ
+™^[™^OHË’S‘VÕS”ÑU
+H™]\›ˆ˜[ÙBˆ˜[™^H^Y\‹™Ù]YYXR][P]
+™^[™^
+K›YYXSY]Y]Bˆ™]\›ˆÝ\œ™[˜[[U]HOH[	‰ˆÝ\œ™[˜[[U]HOH™^˜[[U]BˆB‚ˆÊŠ‚ˆ
+ˆÛÛ\]\ÈH[]]ÛZ^˜[œÚ][Ûˆ[ˆœ›ÛH”H
+ÈØ[Y[ÝÙ^HÛˆ›Ýˆ
+ˆ˜XÚÜÎˆÚ\™Y\™Ù][\Ë\‹]˜XÚÈÜYY˜][ÜËH™X]\\ÙHÙYZÂˆ
+ˆÙ™œÙ]›ÜˆH[˜ÛÛZ[™È˜XÚË[™H\›[ÛšXË[Z^[™ËYš]™[ˆ\˜][Û‹ÑTBˆ
+ˆY\ÝY[ˆ™]\›œÈ[Ú[ˆZ]\ˆ˜XÚÈ\ÈZ\ÜÚ[™È”H]H
+Bˆ
+ˆØ[\ˆ˜[È˜XÚÈÈHZ[ˆ\]X[\ÝÙ\ˆUUÓRVÝ\™H[ˆ]Ø\ÙJK‚ˆ
+‹Âˆš]˜]H[ˆZ[]]ÛZ^[ŠˆÝ]ÛÚ[™ÎˆYYXSY]Y]OËˆ[˜ÛÛZ[™ÎˆYYXSY]Y]OËˆÝ]ÛÚ[™ÔÜÚ][Û“\ÎˆÛ™Ëˆ
+Nˆ]]ÛZ^[ÈÂˆ˜[œPHHÝ]ÛÚ[™ÏË˜œOËZÙRYˆÈ][ˆ‹‹ŒˆHÎˆ™]\›ˆ[ˆ˜[œPˆH[˜ÛÛZ[™ÏË˜œOËZÙRYˆÈ][ˆ‹‹ŒˆHÎˆ™]\›ˆ[ˆ˜[\™Ù]œHH
+œPH
+ÈœPŠHÈ™‚ˆ˜[ÜYYHH
+\™Ù]œHÈœPJK˜ÛÙ\˜ÙR[ŠŽL™‹KŒŠBˆ˜[ÜYYˆH
+\™Ù]œHÈœPŠK˜ÛÙ\˜ÙR[ŠŽL™‹KŒŠB‚ˆËÈ™X]\\ÙH[YÛ›Y[ˆ\ÜÝ[YH›Ý˜XÚÜÉÈÝÛ˜™X]H[™È]ˆËÈ˜XÚË][YH
+HÝ[™\™\ÜÝ[\[ÛˆXœÙ[HYHÛœÙ]Ø™X]ˆËÈ˜XÚÙ\ŠKš[™ÝÈ˜\ˆ˜XÚÈHÝ\œ™[HÚ]È[È]ÈÝÛˆ™X]ˆËÈÞXÛH][\Ë[X]ÚYÜYY[™Ý\˜XÚÈˆ]H\]Z]˜[[ˆËÈÚ[[ˆ]ÈÞXÛHÛÈHÛÈ™X]ÜšYÈ[™H\œ›ÛHHš\œÝ˜\‹‚ˆ˜[™X]\ÐHHŒÌˆÈ
+œPH
+ˆÜYYJBˆ˜[™X]\ÐˆHŒÌˆÈ
+œPˆ
+ˆÜYYŠBˆ˜[\ÙPHHÝ]ÛÚ[™ÔÜÚ][Û“\ËÑ›Ø]
+
+K›[Ù
+™X]\ÐJBˆ˜[\ÙSÙ™œÙ]\ÈH
+
+\ÙPHÈ™X]\ÐJH
+ˆ™X]\ÐŠKÓÛ™Ê
+K˜ÛÙ\˜ÙR[Š™X]\Ð‹ÓÛ™Ê
+K˜ÛÙ\˜ÙP]X\Ý
+S
+HHS
+B‚ˆ˜[[H\›[ÛšXÓZ^[
+Ý]ÛÚ[™ËšÙ^TÚYÛ˜]\™K[˜ÛÛZ[™ËšÙ^TÚYÛ˜]\™JB‚ˆ™]\›ˆ]]ÛZ^[ŠˆœPHHœPKˆœPˆHœP‹ˆ\™Ù]œHH\™Ù]œKˆÜYYHHÜYYKˆÜYYˆHÜYY‹ˆ\ÙSÙ™œÙ]\ÈH\ÙSÙ™œÙ]\ËˆÙ^PÛÛ\]Xš[]HH[˜ÛÛ\]Xš[]Kˆ\˜][Û”ØØ[HH[™\˜][Û”ØØ[Kˆ˜\ÜÔÙ\\˜][ÛˆH[˜˜\ÜÔÙ\\˜][Û‹ˆ
+BˆB‚ˆš]˜]H[ˆÝ\Ü›ÜÜÙ˜YJ
+HÂˆYˆ
+\ÐÜ›ÜÜÙ˜Y[™ÊH™]\›‚ˆYˆ
+ÙXÛÛ™\žT^Y\ˆOH[
+H™]\›‚ˆYˆ
+Ø\ÝÛÛ›™XÝ[Û’[™\Ëš\ÐØ\Ý[™ÏË˜[YHOHYJH™]\›‚ˆ˜[Z^›Ùš[HH[™[™ÓY]›ÓZ^›Ùš[HÎˆÝ\œ™[Y]›ÓZ^›Ùš[J
+Bˆ[™[™ÓY]›ÓZ^›Ùš[HH[ˆXÝ]™PÜ›ÜÜÙ˜YQ\˜][Û“\ÈHZ^›Ùš[K™\˜][Û“\ÂˆXÝ]™SY]›ÓZ^[[YT™\Ù]HZ^›Ùš[Kœ™\Ù]ˆXÝ]™SY]›ÓZ^[[YT›Ùš[HHZ^›Ùš[BˆXÝ]™P]]ÛZ^[ˆH[‚ˆËÈ™\Ù\™H^Y\ˆÝ]H™Y›Ü™HÜ™X][™ÈHÙXÛÛ™\žH^Y\‚ˆËÈ\ÙH[›ØÚÚ[™ÈÈ[œÝ\™HÙHÙ]HÛÜœ™XÝÝ]Hœ›ÛH]TÝÜ™Bˆ˜[Ø]™Y™\X][ÙHH[›ØÚÚ[™ÈÈ]TÝÜ™K™Ù]
+™\X][ÙRÙ^K‘TPUÓSÑWÓÑ‘ŠHBˆ˜[Ø]™YÚY™›Q[˜X›YH[›ØÚÚ[™ÈÈ]TÝÜ™K™Ù]
+ÚY™›S[ÙRÙ^K˜[ÙJHB‚ˆËÈ›Üˆ™\X][Û™KÜ›ÜÜÙ˜YH˜XÚÈ[ÈHØ[YH˜XÚÂˆ˜[\™Ù][™^BˆYˆ
+Ø]™Y™\X][ÙHOH‘TPUÓSÑWÓÓ‘JHÂˆ^Y\‹˜Ý\œ™[YYXR][R[™^ˆH[ÙHÂˆ^Y\‹›™^YYXR][R[™^ˆBˆYˆ
+\™Ù][™^OHË’S‘VÕS”ÑU
+H™]\›‚ˆ˜[\™Ù]YYXR][HH[Ø]Ú[™ÈÈ^Y\‹™Ù]YYXR][P]
+\™Ù][™^
+HK™Ù]Ü“[
+
+B‚ˆYˆ
+Z^›Ùš[Kœ™\Ù]OHY]›ÓZ^™\Ù]UUÓRV
+HÂˆ˜[[ˆBˆZ[]]ÛZ^[ŠˆÝ]ÛÚ[™ÈH^Y\‹˜Ý\œ™[YYXR][OË›Y]Y]Kˆ[˜ÛÛZ[™ÈH\™Ù]YYXR][OË›Y]Y]KˆÝ]ÛÚ[™ÔÜÚ][Û“\ÈH^Y\‹˜Ý\œ™[ÜÚ][Û‹ˆ
+BˆXÝ]™P]]ÛZ^[ˆH[‚ˆYˆ
+[ˆOH[
+HÂˆËÈ\›[ÛšXÈZ^[™Èš]™\È›[™ÚYˆÛÛ\]X›HÙ^\ÈÝ\ÝZ[ˆBˆËÈÛ™Ù\ˆÝ™\›\Û\Ú[™ÈÙ^\ÈÙ][ˆ[™Ý]˜\Ý‚ˆXÝ]™PÜ›ÜÜÙ˜YQ\˜][Û“\ÈH
+XÝ]™PÜ›ÜÜÙ˜YQ\˜][Û“\È
+ˆ[‹™\˜][Û”ØØ[JKÓÛ™Ê
+K˜ÛÙ\˜ÙR[ŠWÍLŒÌ
+Bˆ[X™\‹YÊQÊK™
+ˆ]]ÛZ^[Žˆ	KŒY‹O‰KŒYˆœH
+\™Ù]	KŒYŠKÜYY	KŒÙ‹ÉKŒÙ‹\ÙH
+ÉY\ËÙ^OI\Ë\˜][ÛIY\È‹ˆ[‹˜œPKˆ[‹˜œP‹ˆ[‹\™Ù]œKˆ[‹œÜYYKˆ[‹œÜYY‹ˆ[‹œ\ÙSÙ™œÙ]\Ëˆ[‹šÙ^PÛÛ\]Xš[]KˆXÝ]™PÜ›ÜÜÙ˜YQ\˜][Û“\Ëˆ
+BˆBˆB‚ˆÙXÛÛ™\žT^Y\ˆHÜ™X]Q^Ô^Y\ŠX›\ÚÕZHH˜[ÙJBˆ˜[ÙXÔ^Y\ˆHÙXÛÛ™\žT^Y\ˆHBˆÙXÔ^Y\‹˜Y\Ý[™\ŠÙXÛÛ™\žT^Y\“\Ý[™\ŠBˆ˜\ˆÝØ\YH˜[ÙBˆ˜[™XY[™\ÜÓ\Ý[™\ˆBˆØš™XÝˆ^Y\‹“\Ý[™\ˆÂˆÝ™\œšYH[ˆÛ”^X˜XÚÔÝ]PÚ[™ÙY
+^X˜XÚÔÝ]Nˆ[
+HÂˆYˆ
+^X˜XÚÔÝ]HOH^Y\‹”ÕUWÔ‘PQHÝØ\Y
+H™]\›‚ˆÝØ\YHYBˆÙXÔ^Y\‹œ™[[Ý™S\Ý[™\Š\ÊBˆÜ›ÜÜÙ˜YT™\\™R›ØË˜Ø[˜Ù[
+
+BˆÜ›ÜÜÙ˜YT™\\™R›ØˆH[ˆ\™›Ü›PÜ›ÜÜÙ˜YTÝØ\
+\™Ù][™^\™Ù]YYXR][JBˆYˆ
+Ø]™YÚY™›Q[˜X›Y
+HÂˆ˜[ÚY™›T^[\Ýš\œÝH]TÝÜ™K™Ù]
+ÚY™›T^[\Ýš\œÝÙ^K˜[ÙJBˆ\TÚY™›SÜ™\Š^Y\‹˜Ý\œ™[YYXR][R[™^^Y\‹›YYXR][PÛÝ[ÚY™›T^[\Ýš\œÝ
+BˆBˆB‚ˆÝ™\œšYH[ˆÛ”^Y\‘\œ›ÜŠ\œ›ÜŽˆ^X˜XÚÑ^Ù\[ÛŠHÂˆÝØ\YHYBˆÙXÔ^Y\‹œ™[[Ý™S\Ý[™\Š\ÊBˆÛX[\ÙXÛÛ™\žPÜ›ÜÜÙ˜YT^Y\Š
+BˆBˆBˆÙXÔ^Y\‹˜Y\Ý[™\Š™XY[™\ÜÓ\Ý[™\ŠB‚ˆ˜[][PÛÝ[H^Y\‹›YYXR][PÛÝ[ˆ˜[][\ÈH]]X›S\ÝÙYYXR][OŠ
+BˆËÈÛÜH[\™H]Y]YH\ÝÜžH
+È]\™Bˆ›Üˆ
+H[ˆ[[][PÛÝ[
+HÂˆ][\Ë˜Y
+^Y\‹™Ù]YYXR][P]
+JJBˆB‚ˆÙXÔ^Y\‹œÙ]YYXR][\Ê][\ÊBˆËÈÙYZÈÈ\™Ù]˜XÚÈ
+™^˜XÚËÜˆÝ\œ™[˜XÚÈ›Üˆ™\X][Û™JK‚ˆËÈ]]ÛZ^YÙ\ÈHÝ\ÜÚ][Ûˆ[ÈH[˜ÛÛZ[™È˜XÚÉÜÈ™X]ˆËÈÞXÛHÛÈ]ÈÝÛ˜™X][™\È\Ú]HÝ]ÛÚ[™È˜XÚÉÜÈÜšY‚ˆÙXÔ^Y\‹œÙYZÕÊ\™Ù][™^XÝ]™P]]ÛZ^[Ëœ\ÙSÙ™œÙ]\ÈÎˆ
+BˆÙXÔ^Y\‹›Û[YHH‚‚ˆËÈÛÜH™\X][™ÚY™›HÝ]HÈH™]È^Y\‚ˆÙXÔ^Y\‹œ™\X][ÙHHØ]™Y™\X][ÙBˆÙXÔ^Y\‹œÚY™›S[ÙQ[˜X›YHØ]™YÚY™›Q[˜X›Y‚ˆÙXÔ^Y\‹œ™\\™J
+BˆÙXÔ^Y\‹œ^UÚ[”™XYHHYBˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜËœ™\]Y\Ý™Yœ™\Ú
+
+B‚ˆÜ›ÜÜÙ˜YT™\\™R›ØˆBˆØÛÜK›][˜ÚÂˆ[^J
+XÝ]™PÜ›ÜÜÙ˜YQ\˜][Û“\È
+ÈWÌ
+K˜ÛÙ\˜ÙP]X\Ý
+Ì
+JBˆYˆ
+\ÝØ\Y	‰ˆÙXÛÛ™\žT^Y\ˆOOHÙXÔ^Y\ŠHÂˆ[X™\‹YÊQÊKÊÜ›ÜÜÙ˜YHÙXÛÛ™\žH^Y\ˆY›Ý™XÛÛYH™XYH[ˆ[YHŠBˆÙXÔ^Y\‹œ™[[Ý™S\Ý[™\Š™XY[™\ÜÓ\Ý[™\ŠBˆÛX[\ÙXÛÛ™\žPÜ›ÜÜÙ˜YT^Y\Š
+BˆBˆBˆB‚ˆš]˜]H[ˆÜ›ÜÜÙ˜YU›Û[YTZ\Šˆ›ÙÜ™\ÜÎˆ›Ø]ˆ™\Ù]ˆY]›ÓZ^™\Ù]Ëˆ›Ùš[NˆY]›ÓZ^[[YT›Ùš[OÈH[ˆ
+NˆZ\›Ø]›Ø]ˆÂˆ˜[H›ÙÜ™\ÜË˜ÛÙ\˜ÙR[Š‹YŠBˆ[ˆÛ[ÛÝ
+˜[YNˆ›Ø]
+HH˜[YH
+ˆ˜[YH
+ˆ
+ÙˆH™ˆ
+ˆ˜[YJBˆ[ˆX\ÙSÝ]
+˜[YNˆ›Ø]
+HHYˆH
+YˆH˜[YJH
+ˆ
+YˆH˜[YJBˆ[ˆX\ÙR[Š˜[YNˆ›Ø]
+HH˜[YH
+ˆ˜[YBˆ[ˆ˜[™ÙJ˜[YNˆ›Ø]Ý\ˆ›Ø][™ˆ›Ø]
+HH
+
+˜[YHHÝ\
+HÈ
+[™HÝ\
+JK˜ÛÙ\˜ÙR[Š‹YŠBˆ[ˆ\]X[ÝÙ\’[Š˜[YNˆ›Ø]
+HHÚ[Š˜[YK˜ÛÙ\˜ÙR[Š‹YŠH
+ˆ
+HÈ‹Œ
+JKÑ›Ø]
+
+Bˆ[ˆ\]X[ÝÙ\“Ý]
+˜[YNˆ›Ø]
+HHÛÜÊ˜[YK˜ÛÙ\˜ÙR[Š‹YŠH
+ˆ
+HÈ‹Œ
+JKÑ›Ø]
+
+Bˆ[ˆÙ[\‘XÚÊ[[Ý[ˆ›Ø]
+Nˆ›Ø]Âˆ˜[\Ý[˜ÙQœ›ÛPÙ[\ˆH
+™ˆ
+ˆHYŠK˜ÛÙ\˜ÙR[ŠLY‹YŠBˆ™]\›ˆYˆH[[Ý[
+ˆ
+YˆH\Ý[˜ÙQœ›ÛPÙ[\ˆ
+ˆ\Ý[˜ÙQœ›ÛPÙ[\ŠBˆBˆ[ˆZ\Š˜YR[Žˆ›Ø]˜YSÝ]ˆ›Ø]XY›ÛÛNˆ›Ø]HYŠNˆZ\›Ø]›Ø]ˆBˆ
+˜YR[‹˜ÛÙ\˜ÙR[Š‹YŠH
+ˆXY›ÛÛJHÈ
+˜YSÝ]˜ÛÙ\˜ÙR[Š‹YŠH
+ˆXY›ÛÛJBˆ˜[Y™™XÝ]™T™\Ù]BˆÚ[ˆÂˆ›Ùš[OË™Y™™XÝÝ\™HOHY]›ÓZ^Y™™XÝÝ\™K‘PÒÈOˆY]›ÓZ^™\Ù]‘PÒ×ÓÕUˆ›Ùš[OË™Y™™XÝÝ\™HOHY]›ÓZ^Y™™XÝÝ\™K•ÐU‘HOˆY]›ÓZ^™\Ù]‘PUÐ“S‘ˆ›Ùš[OË™\PÝ\™HOHY]›ÓZ^\PÝ\™KTÔ×ÔÕÐTOˆY]›ÓZ^™\Ù]TÔ×ÔÕÐTˆ›Ùš[OË™\PÝ\™HOHY]›ÓZ^\PÝ\™K•“ÐÐSÔÔPÑHOˆY]›ÓZ^™\Ù]•“ÐÐSÐ“S‘ˆ›Ùš[OË›Û[YPÝ\™HOHY]›ÓZ^›Û[YPÝ\™K”SÒHOˆY]›ÓZ^™\Ù]‘S‘T‘ÖWÓPUÒˆ›Ùš[OË›Û[YPÝ\™HOHY]›ÓZ^›Û[YPÝ\™K“QSOˆY]›ÓZ^™\Ù]“ÓÔÓÕUˆ›Ùš[OË›Û[YPÝ\™HOHY]›ÓZ^›Û[YPÝ\™K•ÐU‘HOˆY]›ÓZ^™\Ù]‘PUÐ“S‘ˆ›Ùš[OË›Û[YPÝ\™HOHY]›ÓZ^›Û[YPÝ\™KSSÑQOˆY]›ÓZ^™\Ù]”ÓPT•Ñ‚ˆ[ÙHOˆ™\Ù]ˆB‚ˆ™]\›ˆÚ[ˆ
+Y™™XÝ]™T™\Ù]
+HÂˆ[OˆÂˆ˜[˜YR[ˆHX\ÙSÝ]
+
+Bˆ˜[˜YSÝ]H
+YˆH
+H
+ˆ
+YˆH
+BˆZ\Š˜YR[‹˜YSÝ]
+BˆB‚ˆY]›ÓZ^™\Ù]UUËˆY]›ÓZ^™\Ù]”ÓPT•Ñ‹ˆY]›ÓZ^™\Ù]”ÓSÓÕOˆÂˆ˜[XÚÈHÙ[\‘XÚÊŒLŠBˆZ\Š\]X[ÝÙ\’[ŠÛ[ÛÝ
+
+JK\]X[ÝÙ\“Ý]
+Û[ÛÝ
+
+JKXÚÊBˆB‚ˆY]›ÓZ^™\Ù]UUÓRVOˆÂˆËÈ[]ÚY\]X[\ÝÙ\ˆ›[™XÜ›ÜÜÈH[\Ë\Þ[˜ÙYÚ[™ÝÎÈBˆËÈXÝX[™X]Ý[\È[YÛ›Y[\[œÈšXH^X˜XÚÈÜYY˜[\[™ÂˆËÈ[ˆHÜ›ÜÜÙ˜YHXÚÈÛÜ
+ÙYH\P]]ÛZ^[\ÔÞ[˜ÊKÛÈBˆËÈ›Û[YHÝ\™H]Ù[ˆ\Ý™YYÈÈ™HHÛX[‹ÚYKÝËYXÚÂˆËÈ›[™]ÛÛ‰ÝšYÚH[\È˜[\‚ˆ˜[˜YR[ˆH\]X[ÝÙ\’[ŠÛ[ÛÝ
+˜[™ÙJŒ™‹ŽNŠJJBˆ˜[˜YSÝ]H\]X[ÝÙ\“Ý]
+Û[ÛÝ
+˜[™ÙJŒ™‹ŽNŠJJBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒYŠJBˆB‚ˆY]›ÓZ^™\Ù]‘PUÐ“S‘OˆÂˆ˜[˜YR[ˆH\]X[ÝÙ\’[ŠÛ[ÛÝ
+˜[™ÙJŒY‹ŽMYŠJJBˆ˜[˜YSÝ]H\]X[ÝÙ\“Ý]
+Û[ÛÝ
+˜[™ÙJŒY‹ŽMYŠJJBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒŠJBˆB‚ˆY]›ÓZ^™\Ù]‘S‘T‘ÖWÓPUÒOˆÂˆ˜[˜YR[ˆHX\ÙSÝ]
+˜[™ÙJŒ™‹ŽL™ŠJBˆ˜[˜YSÝ]HYˆHX\ÙR[Š˜[™ÙJŒ‹YŠJBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒMŠJBˆB‚ˆY]›ÓZ^™\Ù]ÓP—Ð“S‘OˆÂˆ˜[˜YR[ˆHÛ[ÛÝ
+˜[™ÙJŒ‹Ž™ŠJBˆ˜[˜YSÝ]HYˆHÛ[ÛÝ
+˜[™ÙJŒN‹YŠJBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒM™ŠJBˆB‚ˆY]›ÓZ^™\Ù]•“ÐÐSÐ“S‘OˆÂˆ˜[˜YR[ˆHÛ[ÛÝ
+˜[™ÙJŒÍ‹YŠJBˆ˜[˜YSÝ]HYˆHÛ[ÛÝ
+˜[™ÙJŒ‹Í™ŠJBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒ™ŠJBˆB‚ˆY]›ÓZ^™\Ù]TÔ×ÔÕÐTOˆÂˆ˜[˜YR[ˆHX\ÙSÝ]
+˜[™ÙJŒN‹ÍŠJBˆ˜[˜YSÝ]HYˆHÛ[ÛÝ
+˜[™ÙJŒÎ‹ŽŠJBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒNŠJBˆB‚ˆY]›ÓZ^™\Ù]”QS×ÑQUOˆÂˆ˜[Ý\™HHÛ[ÛÝ
+
+BˆZ\Š\]X[ÝÙ\’[ŠÝ\™JK\]X[ÝÙ\“Ý]
+Ý\™JKÙ[\‘XÚÊŒL™ŠJBˆB‚ˆY]›ÓZ^™\Ù]”URPÒ×ÐÕUOˆÂˆ˜[˜YR[ˆHÛ[ÛÝ
+˜[™ÙJŒ‹L™ŠJBˆ˜[˜YSÝ]HYˆHÛ[ÛÝ
+˜[™ÙJŒŒ‹NŠJBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒYŠJBˆB‚ˆY]›ÓZ^™\Ù]“ÓÔÓÕUOˆÂˆ˜[˜YR[ˆH\]X[ÝÙ\’[ŠÛ[ÛÝ
+
+JBˆ˜[˜YSÝ]H
+YˆHÛ[ÛÝ
+˜[™ÙJŒL‹YŠJJH
+ˆ
+YˆHŒMYˆ
+ˆ
+BˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒNŠJBˆB‚ˆY]›ÓZ^™\Ù]‘QHOˆZ\ŠYˆH
+B‚ˆY]›ÓZ^™\Ù]”’TÑHOˆÂˆ˜[˜YR[ˆHX\ÙSÝ]
+
+Bˆ˜[˜YSÝ]HYˆHÛ[ÛÝ
+
+BˆZ\Š˜YR[‹˜YSÝ]
+BˆB‚ˆY]›ÓZ^™\Ù]“S‘OˆÂˆ˜[˜YR[ˆHÛ[ÛÝ
+
+Bˆ˜[˜YSÝ]H
+YˆHX\ÙR[Š
+JK˜ÛÙ\˜ÙR[Š‹YŠBˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒLŠJBˆB‚ˆY]›ÓZ^™\Ù]‘“ÔOˆÂˆ˜[[^YYH
+
+HŒÍYŠHÈYŠK˜ÛÙ\˜ÙR[Š‹YŠBˆZ\ŠÛ[ÛÝ
+[^YY
+KYˆ
+™ŠHYˆ[ÙH
+YˆHÛ[ÛÝ
+[^YY
+JJBˆB‚ˆY]›ÓZ^™\Ù]‘PÒ×ÓÕUOˆÂˆ˜[˜YR[ˆHÛ[ÛÝ
+
+Bˆ˜[™[XZ[š[™ÈHYˆHˆZ\Š˜YR[‹™[XZ[š[™È
+ˆ™[XZ[š[™È
+ˆ™[XZ[š[™ÊBˆB‚ˆY]›ÓZ^™\Ù]“Ó‘×Ð“S‘OˆÂˆ˜[˜YR[ˆHX\ÙSÝ]
+
+Bˆ˜[˜YSÝ]HYˆHX\ÙR[Š
+BˆZ\Š˜YR[‹˜YSÝ]Ù[\‘XÚÊŒL™ŠJBˆBˆBˆB‚ˆš]˜]H[ˆ\™›Ü›PÜ›ÜÜÙ˜YTÝØ\
+ˆ\™Ù][™^ˆ[ˆ\™Ù]YYXR][NˆYYXR][OËˆ
+HÂˆ˜[™^^Y\ˆHÙXÛÛ™\žT^Y\ˆÎˆ™]\›‚ˆ\ÐÜ›ÜÜÙ˜Y[™ÈHYBˆ˜[Ý\œ™[^Y\ˆH^Y\‚ˆ˜[Y]›ÓZ^™\Ù]HXÝ]™SY]›ÓZ^[[YT™\Ù]ÎˆXÝ]™SY]›ÓZ^™\Ù]ˆ˜[Y]›ÓZ^›Ùš[HHXÝ]™SY]›ÓZ^[[YT›Ùš[B‚ˆ˜Y[™Ô^Y\ˆHÝ\œ™[^Y\‚ˆ^Y\ˆH™^^Y\‚ˆÙXÛÛ™\žT^Y\ˆH[ˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜË\]T^Y\Š^Y\ŠBˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜËœ™\]Y\Ý™Yœ™\Ú
+
+B‚ˆ˜Y[™Ô^Y\Ëœ™[[Ý™S\Ý[™\Š\ÊBˆ˜Y[™Ô^Y\Ëœ™[[Ý™S\Ý[™\ŠÛY\[Y\ŠB‚ˆËÈY\Ý[™\ˆÈÞ[˜È^KÜ]\ÙHÝ]Bˆ^Y\‹˜Y\Ý[™\ŠˆØš™XÝˆ^Y\‹“\Ý[™\ˆÂˆÝ™\œšYH[ˆÛ’\Ô^Z[™ÐÚ[™ÙY
+\Ô^Z[™Îˆ›ÛÛX[ŠHÂˆYˆ
+\ÐÜ›ÜÜÙ˜Y[™È	‰ˆ˜Y[™Ô^Y\ˆOH[
+HÂˆYˆ
+\Ô^Z[™ÊHÂˆ˜Y[™Ô^Y\Ëœ^J
+BˆH[ÙHÂˆ˜Y[™Ô^Y\Ëœ]\ÙJ
+BˆBˆH[ÙHÂˆ^Y\‹œ™[[Ý™S\Ý[™\Š\ÊBˆBˆBˆKˆ
+B‚ˆ™^^Y\‹œ™[[Ý™S\Ý[™\ŠÙXÛÛ™\žT^Y\“\Ý[™\ŠBˆ™^^Y\‹˜Y\Ý[™\Š\ÊBˆ™^^Y\‹˜Y\Ý[™\ŠÛY\[Y\ŠB‚ˆÛY\[Y\‹œ^Y\ˆH^Y\‚‚ˆžHÂˆ
+YYXTÙ\ÜÚ[Ûˆ\ÈYYXTÙ\ÜÚ[ÛŠKœ^Y\ˆH^Y\‚ˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆ[X™\‹›ÙË•[X™\‹™JK‘˜Z[YÈÝØ\^Y\ˆ[ˆYYXTÙ\ÜÚ[ÛˆŠBˆB‚ˆ˜[™]š[Ý\Ð]Y[ÔÙ\ÜÚ[Û’YH˜Y[™Ô^Y\Ë˜]Y[ÔÙ\ÜÚ[Û’YÎˆËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑUˆ™]š[Ý\ÓYYXR][R[™^H\™Ù][™^ˆ˜[˜[œÚ][Û™YY]Y]HH\™Ù]YYXR][OË›Y]Y]HÎˆ^Y\‹˜Ý\œ™[Y]Y]BˆÝ\œ™[YYXSY]Y]K˜[YHH˜[œÚ][Û™YY]Y]Bˆ\]PÝ\œ™[]Y[Ñ›Ü›X]œ›ÛU˜XÚÜÊ^Y\‹˜Ý\œ™[˜XÚÜÊBˆÜ^Y\‘›ÝË˜[YHH^Y\‚ˆ\]S›ÝYšXØ][ÛŠ
+Bˆ\]UÚYÙ]RJ^Y\‹š\Ô^Z[™ÊBˆYˆ
+^Y\‹š\Ô^Z[™È	‰ˆ˜[œÚ][Û™YY]Y]HOH[
+HÂˆ˜[˜[œÚ][Û‘\˜][ÛˆHÝ\œ™[^X˜XÚÑ\˜][Û’Y”™XYJ
+BˆØÜ›Ø˜›SX[˜YÙ\Ë›Û”ÛÛ™ÔÝÜ
+
+BˆØÜ›Ø˜›SX[˜YÙ\Ë›Û”ÛÛ™ÔÝ\
+˜[œÚ][Û™YY]Y]K\˜][ÛˆH˜[œÚ][Û‘\˜][ÛŠBˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝÜ
+
+Bˆ[Ý]X™S]\ÚXÒ\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+˜[œÚ][Û™YY]Y]K\˜][Û“\ÈH˜[œÚ][Û‘\˜][ÛŠBˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝÜ
+
+Bˆ[Ý]X™S]\ÚXÔ›ÙÜ™\ÜÚ]™R\ÝÜžTÞ[˜ÓX[˜YÙ\‹›Û”ÛÛ™ÔÝ\
+ˆ˜[œÚ][Û™YY]Y]Kˆ\˜][Û“\ÈH˜[œÚ][Û‘\˜][Û‹ˆ
+BˆÝ\ÜÝYžS\Ý[š[™Ò\ÝÜžRY[ÝÙY
+ˆY]Y]HH˜[œÚ][Û™YY]Y]Kˆ\˜][ÛˆH˜[œÚ][Û‘\˜][Û‹ˆ
+BˆBˆYˆ
+]TÝÜ™K™Ù]
+\œÚ\Ý[]Y]YRÙ^KYJJHÂˆØ]™T]Y]YUÑ\ÚÊ
+BˆB‚ˆÜ[]Y[ÑY™™XÝÙ\ÜÚ[ÛŠ
+B‚ˆÜ›ÜÜÙ˜YR›ØˆBˆØÛÜK›][˜ÚÂˆ˜[\˜][ÛˆHXÝ]™PÜ›ÜÜÙ˜YQ\˜][Û“\Ë˜ÛÙ\˜ÙP]X\Ý
+ÍL
+Bˆ˜[Ý\ÈH
+\˜][ÛˆÈŒ
+KÒ[
+
+K˜ÛÙ\˜ÙR[ŠL
+Bˆ˜[Ý\[YHH
+\˜][ÛˆÈÝ\ÊK˜ÛÙ\˜ÙP]X\Ý
+L
+Bˆ˜[Ý\›Û[YHBˆžHÂˆ˜Y[™Ô^Y\Ë›Û[YHÎˆY‚ˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆY‚ˆB‚ˆËÈ™\\™HY]›ÓZ^š[\œÈYˆ™\Ù]\ÈXÝ]™Bˆ˜[˜Y[™Ñ\HH^Y\‘\T›ØÙ\ÜÛÜœÖÙ˜Y[™Ô^Y\ˆ\È^Y\—Bˆ˜[Ý\œ™[\HH^Y\‘\T›ØÙ\ÜÛÜœÖÜ^Y\ˆ\È^Y\—B‚ˆYˆ
+Y]›ÓZ^™\Ù]OHY]›ÓZ^™\Ù]TÔ×ÔÕÐTˆ
+Y]›ÓZ^™\Ù]OHY]›ÓZ^™\Ù]UUÓRV	‰ˆ
+XÝ]™P]]ÛZ^[Ë˜˜\ÜÔÙ\\˜][ÛˆÎˆŠHˆŒYŠBˆ
+HÂˆ˜[˜\ÜÑš[\ˆH\˜[Y]šXÑTP˜[™
+œ™\]Y[˜ÞHHLŒØZ[ˆHŒHHËš[\•\HHš[\•\K“ÐÊBˆ˜Y[™Ñ\OËœÙ]Y]›ÓZ^˜[™Ê\ÝÙŠ˜\ÜÑš[\ŠJBˆÝ\œ™[\OËœÙ]Y]›ÓZ^˜[™Ê\ÝÙŠ˜\ÜÑš[\ŠJBˆB‚ˆËÈUUÓRVˆ™]\ÙHH[ˆÛÛ\]Y]Ý\Ü›ÜÜÙ˜YH[YH
+Ø[YBˆËÈ[X™\œÈ]Ù\™H\ÙYÈ\ÙKX[YÛˆH™X]ÜšYÈ]ÙYZÂˆËÈ[YJH˜]\ˆ[ˆ™XÛÛ\][™È”H\™KÛÈH[\È˜[\[™ˆËÈH\ÙH[YÛ›Y[™]™\ˆšY\\ZY]˜[œÚ][Û‹‚ˆ˜[]]ÛZ^[ˆHXÝ]™P]]ÛZ^[‚ˆ˜[]]ÛZ^ÜYYHH]]ÛZ^[ËœÜYYBˆ˜[]]ÛZ^ÜYYˆH]]ÛZ^[ËœÜYY‚ˆËÈÛ\Ú[™ÈÙ^\ÈÙ]^˜HÝËY[™Ù\\˜][ÛˆÛˆHÝ]ÛÚ[™ÂˆËÈ˜XÚÈÚ[HHÛÈÝ™\›\ÛÈH\ÜÛÛ˜[˜ÙH\È\ÜÈ]YX›K‚ˆ˜[]]ÛZ^˜\ÜÑXÚÈH]]ÛZ^[Ë˜˜\ÜÔÙ\\˜][ÛˆÎˆ‚‚ˆ[ˆ˜[™ÙJˆ›Ø]Ý\ˆ›Ø][™ˆ›Ø]
+HH
+
+HÝ\
+HÈ
+[™HÝ\
+JK˜ÛÙ\˜ÙR[Š‹YŠBˆ[ˆÛ[ÛÝ
+˜[YNˆ›Ø]
+HH˜[YK˜ÛÙ\˜ÙR[Š‹YŠK›]È]
+ˆ]
+ˆ
+ÙˆH™ˆ
+ˆ]
+HB‚ˆ›Üˆ
+H[ˆ‹œÝ\ÊHÂˆYˆ
+Z\ÐXÝ]™JHœ™XZÂˆËÈ]\ÙH›Û[YH˜[\Yˆ^Y\ˆ\È]\ÙYˆÚ[H
+\^Y\‹š\Ô^Z[™È	‰ˆ\ÐXÝ]™JHÂˆ[^JL
+BˆB‚ˆ˜[›ÙÜ™\ÜÈHHÈÝ\ËÑ›Ø]
+
+Bˆ˜[
+˜YR[‹˜YSÝ]
+HHÜ›ÜÜÙ˜YU›Û[YTZ\Š›ÙÜ™\ÜËY]›ÓZ^™\Ù]Y]›ÓZ^›Ùš[JB‚ˆžHÂˆ^Y\‹›Û[YHHÝ\›Û[YH
+ˆ˜YR[‚ˆ˜Y[™Ô^Y\Ë›Û[YHHÝ\›Û[YH
+ˆ˜YSÝ]‚ˆYˆ
+]]ÛZ^ÜYYHOH[	‰ˆ]]ÛZ^ÜYYˆOH[
+HÂˆËÈX\ÙH[ÈH[\Ë[X]ÚYÜYY[™X\ÙH˜XÚÈÝ]ÈKŒžBˆËÈHYÙ\ÈÙˆHÚ[™ÝËÛÈH™\žHÝ\Ù[™Ùˆ^X˜XÚÈ›Ü‚ˆËÈXXÚ˜XÚÈ\È™]™\ˆ]YX›H]ÚY‚ˆ˜[[\Ð›[™HÛ[ÛÝ
+˜[™ÙJ›ÙÜ™\ÜËŒY‹YŠJHHÛ[ÛÝ
+˜[™ÙJ›ÙÜ™\ÜËY‹ŽMYŠJBˆ˜[ÜYYHHYˆ
+È
+]]ÛZ^ÜYYHHYŠH
+ˆ[\Ð›[™ˆ˜[ÜYYˆHYˆ
+È
+]]ÛZ^ÜYYˆHYŠH
+ˆ[\Ð›[™ˆËÈ^XÚ]]ÚLYˆ\È™\]Z\™Y\™NˆÛÛšXÈÛ›HÚ]™\ÂˆËÈ]Ú\™\Ù\š[™È[YK\Ý™]ÚÚ[ˆ]Ú\È[›™YÈKˆËÈÝ\Ú\ÙHHÚ[™ÛKX\™ÈÛÛœÝXÝÜˆY\È]ÚÈÜYYˆËÈ[™[ÝHÙ]HÚ\][šËÜÛÝÙÝÛˆY™™XÝ[œÝXY‚ˆ˜Y[™Ô^Y\Ëœ^X˜XÚÔ\˜[Y]\œÈH^X˜XÚÔ\˜[Y]\œÊÜYYK˜ÛÙ\˜ÙR[ŠŽY‹KŒMYŠKYŠBˆ^Y\‹œ^X˜XÚÔ\˜[Y]\œÈH^X˜XÚÔ\˜[Y]\œÊÜYY‹˜ÛÙ\˜ÙR[ŠŽY‹KŒMYŠKYŠBˆB‚ˆËÈ\H[˜[ZXÈTHY™™XÝÂˆÚ[ˆ
+Y]›ÓZ^™\Ù]
+HÂˆY]›ÓZ^™\Ù]TÔ×ÔÕÐTOˆÂˆËÈ˜YHÝ]˜\ÜÈÛˆÛ˜XÚË˜YH[ˆÛˆ™]È˜XÚÂˆËÈ˜\ÜÈÝØ\\[œÈ[ˆHZYBˆ˜[˜YSÝ]˜\ÜÈH
+KŒH˜[™ÙJ›ÙÜ™\ÜËŒÙ‹™ŠJH
+ˆLŒˆ˜[˜YR[˜\ÜÈH
+˜[™ÙJ›ÙÜ™\ÜË‹ÙŠHHKŒ
+H
+ˆLŒˆ˜Y[™Ñ\OË\]SY]›ÓZ^ØZ[Š˜YSÝ]˜\ÜÊBˆÝ\œ™[\OË\]SY]›ÓZ^ØZ[Š˜YR[˜\ÜÊBˆBˆY]›ÓZ^™\Ù]•“ÐÐSÐ“S‘OˆÂˆËÈXÚÈHÛ˜XÚÉÜÈ›ØØ[È\Ú[™ÈH˜[™\ÝÜÜˆYÚ\Ú[‚ˆËÈ“ÐÐSÐ“S‘ˆ˜YHÝ]Û›ØØ[È]ZXÚÛHÚ[HÙY\[™ÈH™X]ˆËÈ[ˆœš[™È[ˆ™]È˜XÚË‚ˆ˜[›ØØ[XÚÈH˜[™ÙJ›ÙÜ™\ÜËŒY‹YŠH
+ˆLŒ‹Œˆ˜Y[™Ñ\OË\]SY]›ÓZ^ØZ[ŠK›ØØ[XÚÊHËÈ\ÜÝ[Z[™È[™^H\È›ØØ[˜[™ˆBˆY]›ÓZ^™\Ù]UUÓRVOˆÂˆYˆ
+]]ÛZ^˜\ÜÑXÚÈˆŒYŠHÂˆËÈXZÜÈ]HÙ[\ˆÙˆH˜[œÚ][ÛˆÚ\™H›Ý˜XÚÜÉÂˆËÈÝÈ[™Ý™\›\È[ÜÝÈÙ^YYÙ™ˆ\›[ÛšXÈÛÛ\]Xš[]HÛÂˆËÈÛ\Ú[™ÈÙ^\ÈÙ][Ü™HÙ\\˜][Ûˆ[ˆÛÛ\]X›HÛ™\Ë‚ˆ˜[Ù[\•ÙZYÚHYˆHÛÝ[‹›X]˜XœÊ™ˆ
+ˆ›ÙÜ™\ÜÈHYŠBˆ˜[XÚÑˆHLŒ
+ˆ]]ÛZ^˜\ÜÑXÚÈ
+ˆÙ[\•ÙZYÚˆ˜Y[™Ñ\OË\]SY]›ÓZ^ØZ[ŠXÚÑŠBˆBˆBˆ[ÙHOˆßBˆBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆœ™XZÂˆB‚ˆ[^JÝ\[YJBˆB‚ˆžHÂˆ˜Y[™Ô^Y\Ë›Û[YHH‚ˆ^Y\‹›Û[YHHÝ\›Û[YBˆ˜Y[™Ñ\OËœÙ]Y]›ÓZ^˜[™Ê[\S\Ý
+
+JBˆÝ\œ™[\OËœÙ]Y]›ÓZ^˜[™Ê[\S\Ý
+
+JBˆYˆ
+]]ÛZ^ÜYYHOH[	‰ˆ]]ÛZ^ÜYYˆOH[
+HÂˆËÈH˜Y[™È^Y\ˆ\ÈX›Ý]È™H™[X\ÙYÈHÝ\š]š[™È^Y\‚ˆËÈ]\Ý[™˜XÚÈÛˆ›Ü›X[ÜYYÜˆ]	ÛÙY\^Z[™È]ÚY‚ˆ^Y\‹œ^X˜XÚÔ\˜[Y]\œÈH^X˜XÚÔ\˜[Y]\œÊY‹YŠBˆBˆHØ]Ú
+Nˆ^Ù\[ÛŠHÂˆB‚ˆÛX[\Ü›ÜÜÙ˜YJ˜Y[™Ô^Y\”Ù\ÜÚ[Û’YH™]š[Ý\Ð]Y[ÔÙ\ÜÚ[Û’Y
+BˆBˆB‚ˆš]˜]H[ˆÛX[\ÙXÛÛ™\žPÜ›ÜÜÙ˜YT^Y\ŠØÚY[S™^ˆ›ÛÛX[ˆHYJHÂˆÜ›ÜÜÙ˜YT™\\™R›ØË˜Ø[˜Ù[
+
+BˆÜ›ÜÜÙ˜YT™\\™R›ØˆH[ˆÙXÛÛ™\žT^Y\Ë›]È^Y\ˆO‚ˆ[Ø]Ú[™ÈÂˆ^Y\‹œ™[[Ý™S\Ý[™\ŠÙXÛÛ™\žT^Y\“\Ý[™\ŠBˆ^Y\‹œÝÜ
+
+Bˆ^Y\‹˜ÛX\“YYXR][\Ê
+Bˆ^Y\‹œ™[X\ÙJ
+BˆBˆBˆÙXÛÛ™\žT^Y\ˆH[ˆ™^˜XÚÔ™[ØYÛÛÜ™[˜]ÜËœ™\]Y\Ý™Yœ™\Ú
+
+Bˆ\ÐÜ›ÜÜÙ˜Y[™ÈH˜[ÙBˆXÝ]™SY]›ÓZ^[[YT™\Ù]H[ˆXÝ]™SY]›ÓZ^[[YT›Ùš[HH[ˆXÝ]™P]]ÛZ^[ˆH[ˆ[™[™ÓY]›ÓZ^›Ùš[HH[ˆYˆ
+ØÚY[S™^
+HÂˆØÚY[PÜ›ÜÜÙ˜YJ
+BˆBˆB‚ˆš]˜]H[ˆÛX[\Ü›ÜÜÙ˜YJˆ˜Y[™Ô^Y\”Ù\ÜÚ[Û’Yˆ[HËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑUˆØÚY[S™^ˆ›ÛÛX[ˆHYKˆ
+HÂˆÜ›ÜÜÙ˜YT™\\™R›ØË˜Ø[˜Ù[
+
+BˆÜ›ÜÜÙ˜YT™\\™R›ØˆH[ˆ˜Y[™Ô^Y\ËœÝÜ
+
+Bˆ˜Y[™Ô^Y\Ë˜ÛX\“YYXR][\Ê
+Bˆ˜Y[™Ô^Y\Ëœ™[X\ÙJ
+Bˆ˜Y[™Ô^Y\ˆH[ˆ\ÐÜ›ÜÜÙ˜Y[™ÈH˜[ÙBˆXÝ]™SY]›ÓZ^[[YT™\Ù]H[ˆXÝ]™SY]›ÓZ^[[YT›Ùš[HH[ˆXÝ]™P]]ÛZ^[ˆH[ˆ[™[™ÓY]›ÓZ^›Ùš[HH[ˆ\QY™™XÝ]™U›Û[YJ
+BˆÛY\[Y\‹››ÝYžTÛÛ™Õ˜[œÚ][ÛŠ
+B‚ˆYˆ
+˜Y[™Ô^Y\”Ù\ÜÚ[Û’YOHËUQS×ÔÑTÔÒSÓ—ÒQÕS”ÑU	‰ˆ˜Y[™Ô^Y\”Ù\ÜÚ[Û’Yˆ
+HÂˆÛÜÙP]Y[ÑY™™XÝÙ\ÜÚ[ÛŠÙ\ÜÚ[Û’YÝ™\œšYHH˜Y[™Ô^Y\”Ù\ÜÚ[Û’YÛX\“›Ü›X[^˜][ÛØXÚHHYJBˆBˆYˆ
+ØÚY[S™^
+HÂˆØÚY[PÜ›ÜÜÙ˜YJ
+BˆBˆB‚ˆÛÛ\[š[ÛˆØš™XÝÂˆÛÛœÝ˜[PÕSÓ—ÐST“WÕ’QÑÑTˆH˜ÛÛK›Y]›Ù\ÙKœ\Ë˜XÝ[Û‹ST“WÕ’QÑÑTˆ‚ˆÛÛœÝ˜[VWÐST“WÒQH™^˜WØ[\›WÚY‚ˆÛÛœÝ˜[VWÐST“WÔVSTÕÒQH™^˜WØ[\›WÜ^[\ÝÚY‚ˆÛÛœÝ˜[VWÐST“WÔS‘ÓWÔÓÓ‘ÈH™^˜WØ[\›WÜ˜[™ÛWÜÛÛ™È‚‚ˆÛÛœÝ˜[“ÓÕHœ›ÛÝ‚ˆÛÛœÝ˜[ÓÓ‘ÈHœÛÛ™È‚ˆÛÛœÝ˜[T•TÕH˜\\Ý‚ˆÛÛœÝ˜[S•SHH˜[[H‚ˆÛÛœÝ˜[VSTÕHœ^[\Ý‚ˆÛÛœÝ˜[SÕUP‘WÔVSTÕHž[Ý]X™WÜ^[\Ý‚ˆÛÛœÝ˜[ÑPTÒHœÙX\˜Ú‚ˆÛÛœÝ˜[ÒQ‘“WÐPÕSÓˆH—×ÜÚY™›W×È‚‚ˆÛÛœÝ˜[ÒS“‘SÒQH›]\ÚX×ØÚ[›™[ÌH‚ˆÛÛœÝ˜[“ÕQ’PÐUSÓ—ÒQHˆÛÛœÝ˜[T”“Ô—ÐÓÑWÓ“×ÔÕ‘PSHHLBˆÛÛœÝ˜[ÒS’×ÓS‘ÕHLLˆ
+ˆLˆÛÛœÝ˜[T”ÒTÕS•ÔUQUQWÑ’SHHœ\œÚ\Ý[Ü]Y]YK™]H‚ˆÛÛœÝ˜[T”ÒTÕS•ÐUUÓRVÑ’SHHœ\œÚ\Ý[Ø]]ÛZ^™]H‚ˆÛÛœÝ˜[T”ÒTÕS•ÔVQT—ÔÕUWÑ’SHHœ\œÚ\Ý[Ü^Y\—ÜÝ]K™]H‚ˆÛÛœÝ˜[PVÐÓÓ”ÑPÕUU‘WÑT”ˆHBˆÛÛœÝ˜[PVÔ‘U–WÐÓÕS•HL‚ˆËÈÛÛœÝ[È›Üˆ]Y[È›Ü›X[^˜][Û‚ˆš]˜]HÛÛœÝ˜[PVÑÐRS—ÓPˆHMLËÈX^[][HØZ[ˆ[ˆZ[X™[È
+MHŠBˆš]˜]HÛÛœÝ˜[RS—ÑÐRS—ÓPˆHLËÈZ[š[][HØZ[ˆ[ˆZ[X™[È
+LŠB‚ˆš]˜]HÛÛœÝ˜[QÈH“]\ÚXÔÙ\šXÙH‚ˆš]˜]HÛÛœÝ˜[ÐPÒWÕQÈH”^X˜XÚÐØXÚH‚ˆš]˜]HÛÛœÝ˜[‘SÐQÕQÈH“™^˜XÚÔ™[ØY‚ˆš]˜]HÛÛœÝ˜[‘SÐQÓRS—ÕT“ÓQ‘USQWÓTÈHŒÌˆš]˜]HÛÛœÝ˜[‘SÐQÔ‘PQÐ•Q‘‘T—Ð–UTÈH
+ˆL‚ˆËÈØ\ÈÌ8 %ÛÈÚÜÚ]™[ˆH[™\›Z[™ÈÚÒÛY[	ÜÈÝÛ‚ˆËÈÈÛÛ›™XÝÈLÈ™XY[Y[Ý]Ë\ÈHÚÙ[ˆ[™Ú[	ÜÈÛÛ\Ý\ˆËÈ][˜ÞH
+]	ÜÈHYÙÚ[™È˜XÙHÜXÙH]Ø[ˆZÙHMKMŒÈÈØZÙJK‚ˆËÈ]Z\ÛX]ÚYX[H™]ÚØ\È[[ÜÝ[Ø^\ÈX›ÜY™Y›Ü™H]ˆËÈYH™X[Ú[˜ÙHÈÛÛ\]KÚXÚÛÛXš[™YÚ]\›X[™[ˆËÈ™YØ]]™KXØXÚ[™ÈXYHHØ[˜\ÈÛÚÈÛÛ\][Hœ›ÚÙ[‹‚ˆš]˜]HÛÛœÝ˜[TWÐÐS•T×Ñ‘UÒÕSQSÕUÓTÈHMWÌˆš]˜]HÛÛœÝ˜[UQS×Ñ“Ô“PUÔ‘U–WÐUSTÈHˆš]˜]HÛÛœÝ˜[UQS×Ñ“Ô“PUÔ‘U–WÑSVWÓTÈHWÌˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÕPÒ×ÓTÈHLSˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÓRS—ÕTUWÓTÈHLˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÓRS—ÑSWÐ”ÈHLˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÓRS—Ð”ÈHÌ—Ìˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÐP”ÓÓUWÓPVÐ”ÈHŒÌÌˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÓPVÔÐSTTÈHLˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÔÐSTWÕÓTÈHˆ
+ˆŒ
+ˆLˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÔ“ÓS‘×ÕÒS‘Õ×ÓTÈH—Ìˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÓ‘PT‘TÕÔÐSTWÓTÈHÌÌˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÔÓSÓÕÐ‘RS‘ÓTÈH—ÌLˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÔÓSÓÕÐRPQÓTÈHLˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÕÑRQÒÑTÕSÑWÓTÈHÌŒˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÓÕUQT—ÓÕ×ÔUSÈHMBˆš]˜]HÛÛœÝ˜[U‘WÔVPPÒ×Ð’UUWÓÕUQT—ÒQÒÔUSÈHKÍBˆš]˜]HÛÛœÝ˜[ÒQÑUÕTUWÒS•T•SÓTÈHWÌˆš]˜]HÛÛœÝ˜[’UUWÔÕ‘PSWÓPT’ÑTˆH—ÛY]›Û\ÝÜš]˜]H‚ˆš]˜]HÛÛœÝ˜[QSÔS‘S‘×ÓPS’Q‘TÕÔÐÒSQHH›Y]›Ù\ÙK]Y[‚ˆš]˜]HÛÛœÝ˜[QSÔS‘S‘×ÓPS’Q‘TÕÒÔÕH›X[šY™\Ý‚ˆš]˜]HÛÛœÝ˜[QSÔS‘S‘×ÓQQPWÒQH›YYXWÚY‚ˆš]˜]HÛÛœÝ˜[QSÔS‘S‘×ÑVPÕÑTÒH™^XÝÙ\Ú‚ˆš]˜]HÛÛœÝ˜[SÐ•V—ÑSPÒ×ÒUQÈHLÌÂˆš]˜]HÛÛœÝ˜[QSÑSPÒ×ÒUQÈHLÌŽBˆš]˜]HÛÛœÝ˜[QV‘T—ÑSPÒ×ÒUQÈHLÌÌÂˆš]˜]HÛÛœÝ˜[ÓÕS‘ÓÕQÑSPÒ×ÒUQÈHLÌÌBˆš]˜]HÛÛœÝ˜[S”ÕQÔSWÑSPÒ×ÒUQÈHLÌBˆš]˜]HÛÛœÝ˜[SPV“Ó—ÑSPÒ×ÒUQÈHLÌBˆš]˜]HÛÛœÝ˜[SPV“Ó—Ñ“P×ÒUQÈHLÌ‚ˆš]˜]HÛÛœÝ˜[SPV“Ó—ÐUSÔ×ÒUQÈHLÌÂˆš]˜]H˜[[ÝUX™UšY[ÒY™YÙ^H™YÙ^
+—–ÐKV˜K^ŒNWËW^ÌL_IŠB‚ˆš]˜]H[ˆÝš[™Ëš\Ö[ÝUX™UšY[ÒY
+
+Nˆ›ÛÛX[ˆBˆ[ÝUX™UšY[ÒY™YÙ^›X]Ú\Ê\ÊB‚ˆš]˜]HÛÛœÝ˜[TWÓUTÒP×ÕÔTT—ÒUQÈHLÌBˆÛÛœÝ˜[TWÓUTÒP×ÑSPÒ×ÒUQÈHLÌLˆš]˜]HÛÛœÝ˜[T‘PÕÒÐUQS×ÒUQÈHLÌLBˆš]˜]HÛÛœÝ˜[TÐÓÔ‘Ô”×ÓPVÒSPQÑWÕT“ÓS‘ÕHÌˆš]˜]HÛÛœÝ˜[ÓÔSÐ•V—ÑSPÒ×ÐÐPÒWÔ‘Q’VHœ[Ø^‹Y˜[˜XÚÎˆ‚ˆš]˜]HÛÛœÝ˜[SPV“Ó—ÑSPÒ×ÐÐPÒWÔ‘Q’VH˜[X^›Û‹Y˜[˜XÚË[MNˆ‚ˆš]˜]HÛÛœÝ˜[SÐ•V—ÑSPÒ×ÐÐPÒWÔ‘Q’VHœ[Ø^‹Y˜[˜XÚË]ŒŽˆ‚ˆš]˜]HÛÛœÝ˜[ÓÕQSÑSPÒ×ÐÐPÒWÔ‘Q’VHY[Y›XËY˜[˜XÚÎˆ‚ˆš]˜]HÛÛœÝ˜[QSÑSPÒ×ÐÐPÒWÔ‘Q’VHY[Y›XËY˜[˜XÚË][\]ŒNˆ‚ˆš]˜]HÛÛœÝ˜[QV‘T—ÑSPÒ×ÐÐPÒWÔ‘Q’VH™Y^™\‹Y˜[˜XÚËX]Y[Îˆ‚ˆš]˜]HÛÛœÝ˜[TWÓUTÒP×ÑSPÒ×ÐÐPÒWÔ‘Q’VH˜\K[]\ÚXËY˜[˜XÚËX]Y[Îˆ‚ˆš]˜]HÛÛœÝ˜[ÓÕS‘ÓÕQÑSPÒ×ÐÐPÒWÔ‘Q’VHœÛÝ[™ÛÝYY˜[˜XÚË[\Îˆ‚ˆš]˜]HÛÛœÝ˜[S”ÕQÔSWÑSPÒ×ÐÐPÒWÔ‘Q’VHš[œÝYÜ˜[KY˜[˜XÚËX]Y[Îˆ‚ˆš]˜]HÛÛœÝ˜[T‘PÕÒÐUQS×ÐÐPÒWÔ‘Q’VH™\™XÝZX]Y[Îˆ‚ˆš]˜]HÛÛœÝ˜[SÕUP‘WÑSPÒ×ÐÐPÒWÔ‘Q’VHž[Ý]X™KY˜[˜XÚËXXXÎˆ‚ˆš]˜]HÛÛœÝ˜[UQS×ÓRS—Ð•Q‘‘T—ÓTÈH—Ìˆš]˜]HÛÛœÝ˜[UQS×ÓPVÐ•Q‘‘T—ÓTÈHŒ—Ìˆš]˜]HÛÛœÝ˜[UQS×Ð•Q‘‘T—Ñ“Ô—ÔVPPÒ×ÓTÈHˆš]˜]HÛÛœÝ˜[UQS×Ð•Q‘‘T—Ñ“Ô—Ô‘P•Q‘‘T—ÓTÈH—ÍLˆš]˜]HÛÛœÝ˜[UQS×ÕT‘ÑUÐ•Q‘‘T—Ð–UTÈH
+ˆL
+ˆLˆš]˜]HÛÛœÝ˜[QÐPÖWÔPÑRÓT—Ð”ÈHÌÌ‚ˆš]˜]H[ˆ[X^›Û‘˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰SPV“Ó—ÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆ[Ø^‘˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰SÐ•V—ÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆY[˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰QSÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆY^™\‘˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰QV‘T—ÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆ\S]\ÚXÑ˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰TWÓUTÒP×ÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆ[™[™ÕY[X[šY™\Ý\šJˆYYXRYˆÝš[™Ëˆ^XÝ\Úˆ›ÛÛX[‹ˆ
+NˆÝš[™ÈBˆ\šKZ[\Š
+BˆœØÚ[YJQSÔS‘S‘×ÓPS’Q‘TÕÔÐÒSQJBˆ˜]]Üš]JQSÔS‘S‘×ÓPS’Q‘TÕÒÔÕ
+Bˆ˜\[™]Y\žT\˜[Y]\ŠQSÔS‘S‘×ÓQQPWÒQYYXRY
+Bˆ˜\[™]Y\žT\˜[Y]\ŠQSÔS‘S‘×ÑVPÕÑTÒYˆ
+^XÝ\Ú
+HŒHˆ[ÙHŒŠBˆ˜Z[
+
+BˆÔÝš[™Ê
+B‚ˆš]˜]H[ˆÛÝ[™ÛÝY˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰ÓÕS‘ÓÕQÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆ[œÝYÜ˜[Q˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰S”ÕQÔSWÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆ\™XÝ]Y[ÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰T‘PÕÒÐUQS×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆ[Ý]X™Q˜[˜XÚÐØXÚRÙ^JYYXRYˆÝš[™ÊHH‰SÕUP‘WÑSPÒ×ÐÐPÒWÔ‘Q’V	YYXRY‚‚ˆš]˜]H[ˆ\ÕY[˜[˜XÚÐØXÚRÙ^JÙ^NˆÝš[™ÊNˆ›ÛÛX[ˆBˆÙ^KœÝ\ÕÚ]
+QSÑSPÒ×ÐÐPÒWÔ‘Q’V
+HˆÙ^KœÝ\ÕÚ]
+ÓÕQSÑSPÒ×ÐÐPÒWÔ‘Q’V
+B‚ˆš]˜]H[ˆ\Ð[X^›Û‘˜[˜XÚÐØXÚRÙ^JÙ^NˆÝš[™ÊNˆ›ÛÛX[ˆBˆÙ^KœÝ\ÕÚ]
+SPV“Ó—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+B‚ˆš]˜]H[ˆ\Ô›ÝšY\‘˜[˜XÚÐØXÚRÙ^JÙ^NˆÝš[™ÊNˆ›ÛÛX[ˆBˆÙ^KœÝ\ÕÚ]
+SÐ•V—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+Hˆ\ÕY[˜[˜XÚÐØXÚRÙ^JÙ^JHˆ\Ð[X^›Û‘˜[˜XÚÐØXÚRÙ^JÙ^JHˆÙ^KœÝ\ÕÚ]
+QV‘T—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+HˆÙ^KœÝ\ÕÚ]
+TWÓUTÒP×ÑSPÒ×ÐÐPÒWÔ‘Q’V
+HˆÙ^KœÝ\ÕÚ]
+ÓÕS‘ÓÕQÑSPÒ×ÐÐPÒWÔ‘Q’V
+HˆÙ^KœÝ\ÕÚ]
+S”ÕQÔSWÑSPÒ×ÐÐPÒWÔ‘Q’V
+HˆÙ^KœÝ\ÕÚ]
+T‘PÕÒÐUQS×ÐÐPÒWÔ‘Q’V
+HˆÙ^KœÝ\ÕÚ]
+SÕUP‘WÑSPÒ×ÐÐPÒWÔ‘Q’V
+B‚ˆš]˜]H[ˆ\šKš\Ô™\ÛÛ™Y›ÝšY\”^X˜XÚÕ\šJ
+Nˆ›ÛÛX[ˆBˆÚ[ˆ
+ØÚ[YOË›ÝÙ\˜Ø\ÙJØØ[K•TÊJHÂˆš‹šÈ‹™]H‹™š[HˆOˆYBˆ[ÙHOˆ˜[ÙBˆB‚ˆš]˜]H[ˆ\šKš\Ñ\™XÝ]Y[Õ\šJ
+Nˆ›ÛÛX[ˆÂˆYˆ
+ØÚ[YOË›ÝÙ\˜Ø\ÙJØØ[K•TÊHZ[ˆÙ]ÙŠš‹šÈŠJH™]\›ˆ˜[ÙBˆ˜[^HÔÝš[™Ê
+K›ÝÙ\˜Ø\ÙJØØ[K•TÊBˆYˆ
+ˆ\ÝÙŠˆ›Ü[‹œÜÝYžK˜ÛÛKÈ‹ˆ‹ÛXÙ[œÙH‹ˆÚY]š[™H‹ˆ‹›\‹ˆ‹›LÝN‹ˆ›X[šY™\Ý‹ˆ™›H‹ˆ
+K˜[žHÈ][ˆ^Bˆ
+HÂˆ™]\›ˆ˜[ÙBˆBˆ™]\›ˆ\ÝÙŠ‹›\È‹‹›MH‹‹˜XXÈ‹‹›ÙÙÈ‹‹›Ü\È‹‹™›XÈŠBˆ˜[žHÈ][ˆ^œÝXœÝš[™Ð™Y›Ü™J	ÏÉÊHHˆ\ÝÙŠ˜]Y[È‹œÙØ\Ý‹™\\ÛÙH‹™ÝÛ›ØYŠBˆ˜[žHÈ][ˆ^BˆB‚ˆš]˜]H[ˆÝš[™Ë™\™XÝ]Y[ÓZ[YU\J
+NˆÝš[™ÈÂˆ˜[ÝÙ\ˆHÝÙ\˜Ø\ÙJØØ[K•TÊKœÝXœÝš[™Ð™Y›Ü™J	ÏÉÊBˆ™]\›ˆÚ[ˆÂˆ‹›\Èˆ[ˆÝÙ\ˆOˆ˜]Y[ËÛ\YÈ‚ˆ‹›MHˆ[ˆÝÙ\ˆOˆ˜]Y[ËÛ\‚ˆ‹˜XXÈˆ[ˆÝÙ\ˆOˆ˜]Y[ËØXXÈ‚ˆ‹›ÙÙÈˆ[ˆÝÙ\ˆ‹›Ü\Èˆ[ˆÝÙ\ˆOˆ˜]Y[ËÛÙÙÈ‚ˆ‹™›XÈˆ[ˆÝÙ\ˆOˆ˜]Y[ËÙ›XÈ‚ˆ[ÙHOˆ˜]Y[ËÛ\YÈ‚ˆBˆB‚ˆš]˜]H[ˆ\šKš\ÕY[^X˜XÚÐÙ•\šJ
+Nˆ›ÛÛX[ˆÂˆ˜[ÜÝHÜÝË›ÝÙ\˜Ø\ÙJØØ[K•TÊHÎˆ™]\›ˆ˜[ÙBˆ™]\›ˆ]Ë˜ÛÛZ[œÊ‹ÛYYX]˜XÚÜËÈ‹YÛ›Ü™PØ\ÙHHYJHOHYH	‰‚ˆ
+ˆÜÝOH˜]Y[ËY[˜ÛÛHˆˆÜÝ™[™ÕÚ]
+‹˜]Y[ËY[˜ÛÛHŠHˆÜÝ™[™ÕÚ]
+‹Y[˜ÛÛHŠBˆ
+BˆB‚ˆš]˜]H[ˆ\šKš\Ô[™[™ÕY[X[šY™\Ý\šJ
+Nˆ›ÛÛX[ˆBˆØÚ[YOË™\]X[ÊQSÔS‘S‘×ÓPS’Q‘TÕÔÐÒSQKYÛ›Ü™PØ\ÙHHYJHOHYH	‰‚ˆÜÝË™\]X[ÊQSÔS‘S‘×ÓPS’Q‘TÕÒÔÕYÛ›Ü™PØ\ÙHHYJHOHYB‚ˆš]˜]H[ˆ\šKš\Ô[™[™ÕY[\Ú™\]Y\Ý
+
+Nˆ›ÛÛX[ˆBˆ\Ô[™[™ÕY[X[šY™\Ý\šJ
+H	‰‚ˆÙ]]Y\žT\˜[Y]\ŠQSÔS‘S‘×ÑVPÕÑTÒ
+HOHŒ‚‚ˆš]˜]H[ˆ\šK›YYXRYœ›ÛT[™[™ÕY[X[šY™\Ý\šJ
+NˆÝš[™ÏÈBˆYˆ
+\Ô[™[™ÕY[X[šY™\Ý\šJ
+JHÂˆÙ]]Y\žT\˜[Y]\ŠQSÔS‘S‘×ÓQQPWÒQ
+OËZÙRYˆÈ]š\Ó›Ý›[šÊ
+HBˆH[ÙHÂˆ[ˆB‚ˆš]˜]H[ˆYYXRYœ›ÛQ]TÜXÒÙ^JÙ^NˆÝš[™ÊNˆÝš[™ÏÈBˆÙ^Bˆœ™[[Ý™T™Yš^
+ÓÔSÐ•V—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+SÐ•V—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+QSÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+ÓÕQSÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+QV‘T—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+TWÓUTÒP×ÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+SPV“Ó—ÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+ÓÕS‘ÓÕQÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+S”ÕQÔSWÑSPÒ×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+T‘PÕÒÐUQS×ÐÐPÒWÔ‘Q’V
+Bˆœ™[[Ý™T™Yš^
+SÕUP‘WÑSPÒ×ÐÐPÒWÔ‘Q’V
+BˆZÙU[›\ÜÈÈ\šKœ\œÙJ]
+Kš\ÕY[^X˜XÚÐÙ•\šJ
+HB‚‚ˆš]˜]H[ˆ[X^›Û‘˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™Yˆ[X^›Û]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+Nˆ›Ü›X][]HBˆ›Ü›X][]JˆYHYYXRYˆ]YÈHSPV“Ó—ÑSPÒ×ÒUQËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HH™\ÛÛ™YœØ[\T˜]KˆÛÛ[[™ÝHˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆ\S]\ÚXÑ˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™Yˆ\P]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+Nˆ›Ü›X][]HBˆ›Ü›X][]JˆYHYYXRYˆ]YÈHTWÓUTÒP×ÑSPÒ×ÒUQËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HHLˆÛÛ[[™ÝHˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆ[Ø^‘˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™Yˆ[Ø^]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+HH›Ü›X][]JˆYHYYXRYˆ]YÈHSÐ•V—ÑSPÒ×ÒUQËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HH™\ÛÛ™YœØ[\T˜]KˆÛÛ[[™ÝHˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆY[˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™YˆY[]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+HH›Ü›X][]JˆYHYYXRYˆ]YÈHQSÑSPÒ×ÒUQËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HH™\ÛÛ™YœØ[\T˜]KˆÛÛ[[™ÝH™\ÛÛ™Y˜ÛÛ[[™ÝÎˆˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆY[\™XÝ^X˜XÚÑ›Ü›X]
+YYXRYˆÝš[™ÊHH›Ü›X][]JˆYHYYXRYˆ]YÈHQSÑSPÒ×ÒUQËˆZ[YU\HHZ[YU\\ËUQS×ÓTˆÛÙXÜÈH›\KŒˆ‹ˆš]˜]HHÌŒÌˆØ[\T˜]HH[ˆÛÛ[[™ÝHˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆ\™XÝ]Y[Ñ›Ü›X]
+ˆYYXRYˆÝš[™ËˆZ[YU\NˆÝš[™Ëˆ
+HH›Ü›X][]JˆYHYYXRYˆ]YÈHT‘PÕÒÐUQS×ÒUQËˆZ[YU\HHZ[YU\KˆÛÙXÜÈHˆ‹ˆš]˜]HHˆØ[\T˜]HH[ˆÛÛ[[™ÝHˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆY^™\‘˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™YˆY^™\]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+HH›Ü›X][]JˆYHYYXRYˆ]YÈHQV‘T—ÑSPÒ×ÒUQËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HH™\ÛÛ™YœØ[\T˜]KˆÛÛ[[™ÝH™\ÛÛ™Y˜ÛÛ[[™ÝÎˆˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆÛÝ[™ÛÝY˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™YˆÛÝ[™ÛÝY]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+HH›Ü›X][]JˆYHYYXRYˆ]YÈHÓÕS‘ÓÕQÑSPÒ×ÒUQËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HH™\ÛÛ™YœØ[\T˜]KˆÛÛ[[™ÝH™\ÛÛ™Y˜ÛÛ[[™ÝÎˆˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆ[œÝYÜ˜[Q˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™Yˆ[œÝYÜ˜[P]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+HH›Ü›X][]JˆYHYYXRYˆ]YÈHS”ÕQÔSWÑSPÒ×ÒUQËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HH™\ÛÛ™YœØ[\T˜]KˆÛÛ[[™ÝH™\ÛÛ™Y˜ÛÛ[[™ÝÎˆˆÝY™\ÜÑˆH[ˆ\˜Ù\X[ÝY™\ÜÑˆH[ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆš]˜]H[ˆ[Ý]X™Q˜[˜XÚÑ›Ü›X]
+ˆYYXRYˆÝš[™Ëˆ™\ÛÛ™Yˆ[ÝUX™P]Y[Ô›ÝšY\‹”™\ÛÛ™Yˆ
+HH›Ü›X][]JˆYHYYXRYˆ]YÈH™\ÛÛ™Yš]YËˆZ[YU\HH™\ÛÛ™Y›Z[YU\KˆÛÙXÜÈH™\ÛÛ™Y˜ÛÙXÜËˆš]˜]HH™\ÛÛ™Y˜š]˜]KˆØ[\T˜]HH™\ÛÛ™YœØ[\T˜]KˆÛÛ[[™ÝH™\ÛÛ™Y˜ÛÛ[[™ÝÎˆˆÝY™\ÜÑˆH™\ÛÛ™Y›ÝY™\ÜÑ‹ˆ\˜Ù\X[ÝY™\ÜÑˆH™\ÛÛ™Yœ\˜Ù\X[ÝY™\ÜÑ‹ˆ^X˜XÚÕ\›H[ˆ
+B‚ˆ›Û][Bˆ˜\ˆ\Ô[›š[™ÈH˜[ÙBˆš]˜]HÙ]ˆBŸB

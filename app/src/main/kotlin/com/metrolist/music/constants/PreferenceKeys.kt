@@ -124,9 +124,6 @@ val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
 val AppleAudioQualityKey = stringPreferencesKey("appleAudioQuality")
 val StopOnProviderErrorKey = booleanPreferencesKey("stopOnProviderError")
-val YtDlpLastManualUpdateAtKey = longPreferencesKey("ytDlpLastManualUpdateAt")
-val YtDlpManualUpdateTimestampsKey = stringPreferencesKey("ytDlpManualUpdateTimestamps")
-val YtDlpUseNightlyChannelKey = booleanPreferencesKey("ytDlpUseNightlyChannel")
 val AudioProviderOrderKey = stringPreferencesKey("audioProviderOrder")
 val AudioProviderMatchOverridesKey = stringPreferencesKey("audioProviderMatchOverrides")
 
