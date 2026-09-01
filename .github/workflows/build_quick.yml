@@ -11,9 +11,15 @@ on:
       - ".github/**/*.md"
       - ".github/FUNDING.yml"
       - ".github/ISSUE_TEMPLATE/**"
+      - "app/build.gradle.kts"
+      - "changelog.md"
 
 permissions:
   contents: write
+
+concurrency:
+  group: quick-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build_quick:

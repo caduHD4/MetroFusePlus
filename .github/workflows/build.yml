@@ -2,26 +2,18 @@ name: Build APKs
 
 on:
   workflow_dispatch:
-  push:
-    branches: ["**"]
-    paths-ignore:
-      - "README.md"
-      - "fastlane/**"
-      - "assets/**"
-      - ".github/**/*.md"
-      - ".github/FUNDING.yml"
-      - ".github/ISSUE_TEMPLATE/**"
 
 permissions:
   contents: write
-  discussions: write
+
+concurrency:
+  group: full-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build_release:
     name: Build Release (${{ matrix.variant }})
-    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         include:
@@ -29,32 +21,26 @@ jobs:
             variantName: Foss
           - variant: gms
             variantName: Gms
-
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
-
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
           java-version: "21"
           distribution: "temurin"
-
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
           cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY }}
           cache-cleanup: on-success
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-
       - name: Restore release keystore
         run: |
           mkdir -p app/keystore
           echo "${{ secrets.KEYSTORE }}" | base64 --decode > app/keystore/release.keystore
-
       - name: Build Release APK and Run Lint
         run: ./gradlew --console=plain assemble${{ matrix.variantName }}Release :app:lint${{ matrix.variantName }}Release --warning-mode summary
         env:
@@ -68,7 +54,6 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
-
       - name: Move signed APK
         run: |
           OUTPUT_DIR="app/build/outputs/apk/${{ matrix.variant }}/release"
@@ -84,18 +69,14 @@ jobs:
           fi
           test -n "$SIGNED_APK"
           mv "$SIGNED_APK" "$OUTPUT_DIR/out/$TARGET_NAME"
-
       - name: Upload Signed APK
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.variant == 'gms' && 'MetroFusePlus-Nightly-with-Google-Cast' || 'MetroFusePlus-Nightly' }}
           path: app/build/outputs/apk/${{ matrix.variant }}/release/out/*
-
   build_debug:
     name: Build Debug (${{ matrix.variant }})
-    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         include:
@@ -103,31 +84,24 @@ jobs:
             variantName: Foss
           - variant: gms
             variantName: Gms
-
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
-
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
           java-version: "21"
           distribution: "temurin"
-
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
           cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY }}
           cache-cleanup: on-success
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-
       - name: Restore Persistent Keystore
-        run: |
-          echo "${{ secrets.DEBUG_KEYSTORE }}" | base64 -d > ./app/persistent-debug.keystore
-
+        run: echo "${{ secrets.DEBUG_KEYSTORE }}" | base64 -d > ./app/persistent-debug.keystore
       - name: Build Debug APK and Run Lint
         run: ./gradlew --console=plain assemble${{ matrix.variantName }}Debug :app:lint${{ matrix.variantName }}Debug --warning-mode summary
         env:
@@ -137,7 +111,6 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
-
       - name: Upload Debug APK
         uses: actions/upload-artifact@v6
         with:
