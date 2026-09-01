@@ -192,10 +192,8 @@ android {
         buildConfigField("long", "DISCORD_RPC_APPLICATION_ID", "${discordRpcApplicationId}L")
         manifestPlaceholders["discordRpcApplicationId"] = discordRpcApplicationId
 
-        if (!releaseBuildRequested) {
-            ndk {
-                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-            }
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
 
         externalNativeBuild {
@@ -207,7 +205,7 @@ android {
 
     splits {
         abi {
-            isEnable = releaseBuildRequested
+            isEnable = false
             reset()
             include("arm64-v8a", "armeabi-v7a")
         isUniversalApk = true
