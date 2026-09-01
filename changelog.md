@@ -1,3 +1,9 @@
+---v7.2.6
+# MetroFuse+ 7.2.6
+
+- Restored the missing Discord API import and updated the YouTube fallback resolver call for the current provider API.
+- Includes the Discord Rich Presence login, token renewal and connection-timeout fix from 7.2.5.
+
 ---v7.2.5
 # MetroFuse+ 7.2.5
 
