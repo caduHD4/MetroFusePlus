@@ -1,3 +1,10 @@
+---v7.2.7
+# MetroFuse+ 7.2.7
+
+- Fixed playback recovery when a cache entry is marked complete but its backing file no longer exists.
+- On `IO_FILE_NOT_FOUND` / `ENOENT`, only the affected track bypasses its stale complete-cache entry once, clears its related resources and resolves a new stream.
+- Normal cache hits and next-track preload behavior are unchanged.
+
 ---v7.2.6
 # MetroFuse+ 7.2.6
 
