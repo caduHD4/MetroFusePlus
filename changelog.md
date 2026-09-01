@@ -1,3 +1,11 @@
+---v7.2.5
+# MetroFuse+ 7.2.5
+
+- Fixed Discord Rich Presence authentication by using the Discord Partner SDK for the PKCE code exchange.
+- Removed the duplicate RPC connect path that caused post-login timeouts.
+- Stores refresh tokens and token expiry, then renews credentials through the Partner SDK before reconnecting.
+- Added a 30-second Ready-state watchdog and keeps the native error detail available for diagnosis.
+
 ---v7.2.4
 # MetroFuse+ 7.2.4
 
@@ -81,6 +89,7 @@
 
 - Replaced the automatic update modal with a persistent in-app update banner at the top of the app.
 - Added inline release notes, in-app update installation controls and swipe-up dismissal for the update banner.
+- Fixed version tracking so the in-app changelog is marked as seen only after it is dismissed.
 
 ---v7.0.8
 # MetroFuse+ 7.0.8
