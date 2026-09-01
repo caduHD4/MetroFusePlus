@@ -5,6 +5,7 @@ on:
       - "main"
     paths:
       - "app/build.gradle.kts"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
@@ -46,19 +47,12 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
 
-          if git show HEAD^:app/build.gradle.kts > /dev/null 2>&1; then
-            OLD_VERSION=$(git show HEAD^:app/build.gradle.kts | grep -oP 'metroFuseVersionName\s*=\s*"\K[^"]+' || echo "")
-            echo "Previous version: $OLD_VERSION"
-            
-            if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-              echo "Version changed from $OLD_VERSION to $NEW_VERSION"
-              echo "version_changed=true" >> $GITHUB_OUTPUT
-            else
-              echo "Version unchanged: $NEW_VERSION"
-              echo "version_changed=false" >> $GITHUB_OUTPUT
-            fi
+          TAG_NAME="v$NEW_VERSION"
+          if git rev-parse -q --verify "refs/tags/$TAG_NAME" > /dev/null; then
+            echo "Release $TAG_NAME already exists"
+            echo "version_changed=false" >> $GITHUB_OUTPUT
           else
-            echo "First version detected: $NEW_VERSION"
+            echo "Release $TAG_NAME does not exist yet"
             echo "version_changed=true" >> $GITHUB_OUTPUT
           fi
 
