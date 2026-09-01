@@ -824,6 +824,8 @@ class MusicService :
 
     // Flag to bypass cache when quality changes - forces fresh stream fetch
     private val bypassCacheForQualityChange = mutableSetOf<String>()
+    // One-shot escape hatch for an index entry marked complete after its backing cache file vanished.
+    private val bypassCompleteCacheForRecovery = ConcurrentHashMap.newKeySet<String>()
     private val skipTidalLiveManifestOnceMediaIds = ConcurrentHashMap.newKeySet<String>()
     private val tidalProgressivePreferredMediaIds = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var isScreenInteractiveForLiveBitrate = true
@@ -4560,6 +4562,8 @@ class MusicService :
 
         incrementRetryCount(mediaId)
         performAggressiveCacheClear(mediaId)
+        // Do not trust a stale "fully cached" index entry on the recovery attempt.
+        bypassCompleteCacheForRecovery.add(mediaId)
 
         retryJob?.cancel()
         retryJob =
@@ -5430,7 +5434,9 @@ class MusicService :
                 }
 
                 val shouldBypassUrlCache = bypassCacheForQualityChange.contains(mediaId)
-                if (!shouldBypassUrlCache) {
+                val shouldBypassCompleteCache = shouldBypassUrlCache ||
+                    bypassCompleteCacheForRecovery.remove(mediaId)
+                if (!shouldBypassCompleteCache) {
                     val cacheLookupStartedAt = SystemClock.elapsedRealtime()
                     findCompleteCachedKey(mediaId, song?.format?.contentLength)?.let { cacheKey ->
                         Timber.tag(CACHE_TAG).d(
