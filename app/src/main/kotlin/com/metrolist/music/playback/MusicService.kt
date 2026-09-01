@@ -159,6 +159,8 @@ import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.DisableLoadMoreWhenRepeatAllKey
 import com.metrolist.music.constants.DiscordAccessTokenKey
+import com.metrolist.music.constants.DiscordRefreshTokenKey
+import com.metrolist.music.constants.DiscordTokenExpiresAtKey
 import com.metrolist.music.constants.DiscordActivityNameKey
 import com.metrolist.music.constants.DiscordActivityTypeKey
 import com.metrolist.music.constants.DiscordAdvancedModeKey
@@ -208,6 +210,7 @@ import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
+import com.metrolist.music.constants.PlayerLegacyQualityLabelKey
 import com.metrolist.music.constants.LivePlaybackBitrateKey
 import com.metrolist.music.constants.TidalAnimatedCoversEnabledKey
 import com.metrolist.music.constants.TidalAudioQuality
@@ -1505,15 +1508,29 @@ class MusicService :
             }
 
         DiscordRpcManager.init()
+        DiscordRpcManager.credentials.collect(scope) { credentials ->
+            dataStore.edit {
+                it[DiscordAccessTokenKey] = credentials.accessToken
+                it[DiscordRefreshTokenKey] = credentials.refreshToken
+                it[DiscordTokenExpiresAtKey] = credentials.expiresAtMillis
+            }
+        }
         dataStore.data
-            .map { it[DiscordAccessTokenKey].orEmpty() to (it[EnableDiscordRPCKey] ?: true) }
+            .map {
+                Triple(
+                    it[DiscordAccessTokenKey].orEmpty(),
+                    it[DiscordRefreshTokenKey].orEmpty(),
+                    it[DiscordTokenExpiresAtKey] ?: 0L,
+                ) to (it[EnableDiscordRPCKey] ?: true)
+            }
             .debounce(300)
             .distinctUntilChanged()
-            .collect(scope) { (accessToken, enabled) ->
+            .collect(scope) { (credentials, enabled) ->
+                val (accessToken, refreshToken, expiresAtMillis) = credentials
                 discordRpcEnabled = accessToken.isNotBlank() && enabled
                 if (discordRpcEnabled) {
                     if (!DiscordRpcManager.isReady()) {
-                        DiscordRpcManager.reconnectWithToken(accessToken)
+                        DiscordRpcManager.reconnectWithToken(accessToken, refreshToken, expiresAtMillis)
                     }
                     if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
                         currentSong.value?.let { song ->
@@ -4743,7 +4760,11 @@ class MusicService :
             return
         }
         if (!DiscordRpcManager.isReady()) {
-            DiscordRpcManager.reconnectWithToken(accessToken)
+            DiscordRpcManager.reconnectWithToken(
+                token = accessToken,
+                refreshToken = dataStore.get(DiscordRefreshTokenKey, ""),
+                expiresAtMillis = dataStore.get(DiscordTokenExpiresAtKey, 0L),
+            )
         }
 
         val useDetails = dataStore.get(DiscordUseDetailsKey, false)
@@ -5538,7 +5559,8 @@ class MusicService :
     }
 
     private fun isLivePlaybackBitrateCollectionEnabled(): Boolean =
-        dataStore.get(LivePlaybackBitrateKey, false)
+        dataStore.get(LivePlaybackBitrateKey, false) &&
+                dataStore.get(PlayerLegacyQualityLabelKey, false)
 
     private fun isLivePlaybackBitrateActive(): Boolean =
         isScreenInteractiveForLiveBitrate &&
@@ -6567,7 +6589,7 @@ class MusicService :
         } else {
             null
         }
-        val resolved = YouTubeAudioProvider.resolve(mediaId, fallbackQuery)
+        val resolved = YouTubeAudioProvider.resolve(mediaId, this@MusicService, fallbackQuery)
         Timber.tag("MusicService").i(
             "Using YouTube AAC fallback for $mediaId: itag=${resolved.itag}, bitrate=${resolved.bitrate}",
         )
@@ -7837,7 +7859,9 @@ class MusicService :
     private fun observeLivePlaybackBitrateSetting() {
         dataStore.data
             .map {
-                it[LivePlaybackBitrateKey] ?: false
+                val liveBitrateEnabled = it[LivePlaybackBitrateKey] ?: false
+                val legacyLabelEnabled = it[PlayerLegacyQualityLabelKey] ?: false
+                liveBitrateEnabled && legacyLabelEnabled
             }
             .distinctUntilChanged()
             .collectLatest(scope) { enabled ->

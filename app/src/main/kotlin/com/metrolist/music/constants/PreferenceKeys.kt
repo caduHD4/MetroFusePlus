@@ -124,6 +124,9 @@ val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
 val AppleAudioQualityKey = stringPreferencesKey("appleAudioQuality")
 val StopOnProviderErrorKey = booleanPreferencesKey("stopOnProviderError")
+val YtDlpLastManualUpdateAtKey = longPreferencesKey("ytDlpLastManualUpdateAt")
+val YtDlpManualUpdateTimestampsKey = stringPreferencesKey("ytDlpManualUpdateTimestamps")
+val YtDlpUseNightlyChannelKey = booleanPreferencesKey("ytDlpUseNightlyChannel")
 val AudioProviderOrderKey = stringPreferencesKey("audioProviderOrder")
 val AudioProviderMatchOverridesKey = stringPreferencesKey("audioProviderMatchOverrides")
 
@@ -395,6 +398,8 @@ val PauseSearchHistoryKey = booleanPreferencesKey("pauseSearchHistory")
 val DisableScreenshotKey = booleanPreferencesKey("disableScreenshot")
 
 val DiscordAccessTokenKey = stringPreferencesKey("discordAccessToken")
+val DiscordRefreshTokenKey = stringPreferencesKey("discordRefreshToken")
+val DiscordTokenExpiresAtKey = longPreferencesKey("discordTokenExpiresAt")
 val DiscordInfoDismissedKey = booleanPreferencesKey("discordInfoDismissed")
 val DiscordUsernameKey = stringPreferencesKey("discordUsername")
 val DiscordNameKey = stringPreferencesKey("discordName")
