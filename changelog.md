@@ -1,3 +1,11 @@
+---v7.2.4
+# MetroFuse+ 7.2.4
+
+- Fixed Discord Rich Presence authentication by moving PKCE token exchange to the Discord Partner SDK.
+- Removed duplicate RPC connection calls; the SDK now owns connection and reconnection.
+- Added access-token expiry tracking and refresh-token renewal through the Partner SDK.
+- Added detailed native Discord connection diagnostics and a Ready-state watchdog.
+
 ---v7.0.25
 # MetroFuse+ 7.0.25
 
