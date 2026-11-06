@@ -64,6 +64,7 @@ object DeezerAudioProvider {
     private const val REJECT_SCORE = -1_000_000
     private const val SEARCH_LIMIT = 4
     private const val RESOLVER_MAX_IN_FLIGHT = 4
+    private const val MAX_RESOLVER_TRACK_ID = 4_294_967_295L
     private const val RESOLVER_PERMIT_TIMEOUT_MS = 4_000L
     private const val RESOLVER_MIN_INTERVAL_MS = 40L
     private const val DEFAULT_PROXY_PORT = 3128
@@ -663,6 +664,10 @@ object DeezerAudioProvider {
         durationMs: Long?,
         proxyUrl: String,
     ): StreamAttempt {
+        if (trackId.toLongOrNull()?.let { it > MAX_RESOLVER_TRACK_ID } == true) {
+            // Public resolvers deserialize ids as u32 and reject newer Deezer tracks outright.
+            return StreamAttempt(error = "Deezer resolver does not support track id $trackId (exceeds u32)")
+        }
         val bodyJson = JSONObject()
             .put(
                 "formats",
