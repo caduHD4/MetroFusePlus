@@ -88,12 +88,14 @@ object YouTubeAudioProvider {
 
     private val extractorDownloader = BravePipeExtractorDownloader(httpClient)
     private val poTokenGenerator = PoTokenGenerator()
+    // Ordered by live reliability (verified against yt-dlp's client list): the first three return
+    // direct URLs without a PO token. The remaining clients are kept as lower-priority fallbacks
+    // because YouTube rotates which clients are bot-checked per network.
     private val innertubePlaybackClients = listOf(
         PlaybackClientCandidate("visionos", YouTubeClient.VISIONOS),
-        PlaybackClientCandidate("android_vr_no_auth", YouTubeClient.ANDROID_VR_NO_AUTH),
+        PlaybackClientCandidate("ipados", YouTubeClient.IPADOS),
+        PlaybackClientCandidate("android_vr_165", YouTubeClient.ANDROID_VR_1_65_10),
         PlaybackClientCandidate("android_vr_143", YouTubeClient.ANDROID_VR_1_43_32),
-        PlaybackClientCandidate("tv_embedded", YouTubeClient.TVHTML5_SIMPLY_EMBEDDED_PLAYER),
-        PlaybackClientCandidate("ios", YouTubeClient.IOS),
         PlaybackClientCandidate("android_music", YouTubeClient.ANDROID_MUSIC),
         PlaybackClientCandidate("web_remix", YouTubeClient.WEB_REMIX),
     )
