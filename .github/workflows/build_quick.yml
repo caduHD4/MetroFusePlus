@@ -65,7 +65,10 @@ jobs:
         run: |
           OUTPUT_DIR="app/build/outputs/apk/foss/release"
           mkdir -p "$OUTPUT_DIR/out"
-          mv "$OUTPUT_DIR/app-universal-foss-release.apk" "$OUTPUT_DIR/out/MetroFuse-nightly-universal.apk"
+          find app/build/outputs/apk -name '*.apk' -print
+          APK="$(find app/build/outputs/apk -name '*universal*.apk' | head -n 1)"
+          if [ -z "$APK" ]; then echo "No universal APK found"; exit 1; fi
+          mv "$APK" "$OUTPUT_DIR/out/MetroFuse-nightly-universal.apk"
           ls -la "$OUTPUT_DIR/out/"
 
       - name: Upload Signed APK
