@@ -143,6 +143,11 @@ internal suspend fun runBestEffortPreload(block: suspend () -> Unit): Result<Uni
         Result.failure(error)
     }
 
+private data class PreloadFailure(
+    val attempts: Int,
+    val lastFailureAtMs: Long,
+)
+
 internal class NextTrackPreloadCoordinator(
     parentScope: CoroutineScope,
     private var player: Player,
@@ -150,6 +155,7 @@ internal class NextTrackPreloadCoordinator(
     private val isPreparedElsewhere: (String) -> Boolean,
     private val preload: suspend (NextTrackPreloadTarget) -> Unit,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : Player.Listener {
     private val coordinatorJob = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + coordinatorJob)
@@ -160,6 +166,7 @@ internal class NextTrackPreloadCoordinator(
     private val semaphore = Semaphore(permits = 1)
     private val activeJobs = linkedMapOf<String, Job>()
     private val completedInWindow = mutableSetOf<String>()
+    private val failures = mutableMapOf<String, PreloadFailure>()
     private var preloadCount = NextTrackPreloadPolicy.DEFAULT_COUNT
     private var lastWindowIds = emptyList<String>()
 
@@ -193,6 +200,7 @@ internal class NextTrackPreloadCoordinator(
         activeJobs.values.forEach(Job::cancel)
         activeJobs.clear()
         completedInWindow.clear()
+        failures.clear()
         lastWindowIds = emptyList()
         requestRefresh()
     }
@@ -202,6 +210,7 @@ internal class NextTrackPreloadCoordinator(
         activeJobs.values.forEach(Job::cancel)
         activeJobs.clear()
         completedInWindow.clear()
+        failures.clear()
         requestRefresh()
         return affected
     }
@@ -237,15 +246,18 @@ internal class NextTrackPreloadCoordinator(
         if (allWindowIds != lastWindowIds) {
             Timber.tag(TAG).d("Preload window: %s", allWindowIds.joinToString(","))
             completedInWindow.retainAll(allWindowIds.toSet())
+            failures.keys.retainAll(allWindowIds.toSet())
             lastWindowIds = allWindowIds
         }
 
         val targetById = targets
             .filterNot { isPreparedElsewhere(it.mediaItem.mediaId) }
             .associateBy { it.mediaItem.mediaId }
+        val nowMs = clock()
         val wantedIds = targets
             .map { it.mediaItem.mediaId }
             .filter { it in targetById }
+            .filterNot { mediaId -> failures[mediaId]?.isRetryBlocked(nowMs) == true }
         val diff = preloadWindowDiff(activeJobs.keys, completedInWindow, wantedIds)
 
         diff.cancel.forEach { mediaId ->
@@ -258,12 +270,14 @@ internal class NextTrackPreloadCoordinator(
             val job = scope.launch(ioDispatcher) {
                 val runningJob = coroutineContext[Job]
                 var completed = true
+                var failed = false
                 try {
                     runBestEffortPreload {
                         semaphore.withPermit {
                             preload(target)
                         }
                     }.exceptionOrNull()?.let { error ->
+                        failed = true
                         Timber.tag(TAG).w(error, "Failed: mediaId=%s distance=%d", mediaId, target.queueDistance)
                     }
                 } catch (error: CancellationException) {
@@ -275,7 +289,15 @@ internal class NextTrackPreloadCoordinator(
                         if (activeJobs[mediaId] === runningJob) {
                             activeJobs.remove(mediaId)
                         }
-                        if (completed && mediaId in lastWindowIds) {
+                        if (failed && mediaId in lastWindowIds) {
+                            val attempts = (failures[mediaId]?.attempts ?: 0) + 1
+                            failures[mediaId] = PreloadFailure(attempts, clock())
+                            if (attempts < MAX_FAILED_ATTEMPTS) {
+                                delay(RETRY_DELAY_MS)
+                                requestRefresh()
+                            }
+                        } else if (completed && mediaId in lastWindowIds) {
+                            failures.remove(mediaId)
                             completedInWindow += mediaId
                         }
                     }
@@ -304,7 +326,12 @@ internal class NextTrackPreloadCoordinator(
         }
     }
 
+    private fun PreloadFailure.isRetryBlocked(nowMs: Long): Boolean =
+        attempts >= MAX_FAILED_ATTEMPTS || nowMs - lastFailureAtMs < RETRY_DELAY_MS
+
     private companion object {
         const val TAG = "NextTrackPreload"
+        const val RETRY_DELAY_MS = 15_000L
+        const val MAX_FAILED_ATTEMPTS = 3
     }
 }

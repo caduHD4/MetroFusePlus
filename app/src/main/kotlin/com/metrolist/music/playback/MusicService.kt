@@ -5997,30 +5997,42 @@ class MusicService :
         val startedAt = System.nanoTime()
         val dataSource = createCacheDataSource().createDataSource()
         var readBytes = 0L
-        runInterruptible(Dispatchers.IO) {
-            try {
-                dataSource.open(
-                    DataSpec.Builder()
-                        .setUri(resolved.uri)
-                        .setKey(resolved.cacheKey)
-                        .setPosition(missingRange.position)
-                        .setLength(missingRange.length)
-                        .build(),
-                )
-                val buffer = ByteArray(PRELOAD_READ_BUFFER_BYTES)
-                while (readBytes < missingRange.length && !Thread.currentThread().isInterrupted) {
-                    val requested = minOf(buffer.size.toLong(), missingRange.length - readBytes).toInt()
-                    val read = dataSource.read(buffer, 0, requested)
-                    if (read == C.RESULT_END_OF_INPUT) break
-                    if (read <= 0) break
-                    readBytes += read
+        try {
+            runInterruptible(Dispatchers.IO) {
+                try {
+                    dataSource.open(
+                        DataSpec.Builder()
+                            .setUri(resolved.uri)
+                            .setKey(resolved.cacheKey)
+                            .setPosition(missingRange.position)
+                            .setLength(missingRange.length)
+                            .build(),
+                    )
+                    val buffer = ByteArray(PRELOAD_READ_BUFFER_BYTES)
+                    while (readBytes < missingRange.length && !Thread.currentThread().isInterrupted) {
+                        val requested = minOf(buffer.size.toLong(), missingRange.length - readBytes).toInt()
+                        val read = dataSource.read(buffer, 0, requested)
+                        if (read == C.RESULT_END_OF_INPUT) break
+                        if (read <= 0) break
+                        readBytes += read
+                    }
+                } finally {
+                    runCatching(dataSource::close)
                 }
-            } finally {
-                runCatching(dataSource::close)
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // The stream URL may have expired or been rejected; force a fresh resolution on retry.
+            songUrlCache.remove(mediaId)
+            throw error
         }
 
         val cachedAfter = contiguousCachedPrefix(resolved.cacheKey, targetBytes)
+        if (readBytes == 0L && cachedAfter <= cachedBefore) {
+            songUrlCache.remove(mediaId)
+            throw IOException("Preload returned no data for $mediaId")
+        }
         val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
         Timber.tag(PRELOAD_TAG).d(
             "Completed: mediaId=%s cachedBefore=%d cachedAfter=%d downloaded=%d elapsedMs=%d provider=%s cacheKey=%s",
