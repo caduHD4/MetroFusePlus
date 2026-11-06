@@ -131,8 +131,10 @@ class NextTrackPreloadPolicyTest {
     }
 
     @Test(expected = CancellationException::class)
-    fun `cancellation is never swallowed`() = runBlocking {
-        runBestEffortPreload { throw CancellationException("left window") }
+    fun `cancellation is never swallowed`() {
+        runBlocking {
+            runBestEffortPreload { throw CancellationException("left window") }
+        }
     }
 
     private fun select(

@@ -555,6 +555,7 @@ dependencies {
     implementation(libs.protobuf.kotlin.lite)
 
     coreLibraryDesugaring(libs.desugaring)
+    testImplementation(libs.junit)
 
     implementation(libs.timber)
 }
